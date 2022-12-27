@@ -5,7 +5,7 @@ Created on Thu Dec  8 16:07:20 2022
 This code is modified to avoid using libtiff
 Instead, package tifffile is used.
 
-@author: WatabeT
+@author: Tetsuya Watabe
 """
 
 # -*- coding: utf-8 -*-

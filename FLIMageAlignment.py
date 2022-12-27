@@ -4,12 +4,10 @@ Created on Thu Dec  8 19:56:34 2022
 
 @author: yasudalab
 """
-import sys,pathlib,os,glob,path,math
-sys.path.append(r"Z:\Yasuda_lab\Data Temp\Tetsuya\Python")
-from FLIMageFileReader_no_libtiff_ver_20221208 import FileReader
+import os,glob,path,math
+from FLIMageFileReader2 import FileReader
 import matplotlib.pyplot as plt
 import numpy as np
-# from skimage.feature import register_translation
 from skimage.registration import phase_cross_correlation
 from scipy.ndimage import fourier_shift
 from datetime import datetime

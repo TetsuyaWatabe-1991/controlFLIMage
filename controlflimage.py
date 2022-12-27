@@ -5,20 +5,17 @@ Created on Wed Dec 21 09:50:51 2022
 @author: yasudalab
 """
 
-import sys,pathlib,os,glob,path,math
-sys.path.append(r"Z:\Yasuda_lab\Data Temp\Tetsuya\Python")
-sys.path.append(r"C:\Users\Yasudalab\Documents\FLIMage\Python Scripts")
+import os
+import glob
+import math
 from FLIMageAlignment import flim_files_to_nparray,Align_4d_array,Align_3d_array,get_xyz_pixel_um,single_plane_align_with3dstack_flimfile
-# from FLIMageFileReader_no_libtiff_ver_20221208 import FileReader
 from FLIM_pipeClient import FLIM_Com,FLIM_message_received
 from time import sleep
 from datetime import datetime
 from find_close_remotecontrol import close_remote_control
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
-from io import BytesIO
 from multidim_tiff_viewer import threeD_array_click
-from tifffile import imwrite,imread
 import numpy as np
 import cv2
 from skimage.measure import label, regionprops
@@ -161,9 +158,9 @@ class control_flimage():
         
         
         
-        x_str=str(x+self.relative_zyx[2])
-        y_str=str(y+self.relative_zyx[1])
-        self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
+        # x_str=str(x+self.relative_zyx[2])
+        # y_str=str(y+self.relative_zyx[1])
+        # self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
 
 
 
