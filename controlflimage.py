@@ -158,15 +158,22 @@ class control_flimage():
         z_str=str(z - self.directionMotorZ * self.relative_zyx_um[0])
         self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
 
-    def go_to_relative_pos_galvo(self,z_move=False):
-        res=self.flim.sendCommand('GetScanVoltageXY')
-        x_galvo_now = float(res.split(',')[1])
-        y_galvo_now = float(res.split(',')[2])        
 
-        # Please take care of these PLUS or MINUS signs. 
-        # This is dependent on the flip X, flip Y, and switch X and Y
-        # x_galvo_relative = x_galvo_now - self.xyflip[0]*5*self.relative_zyx_um[2]/self.FOV_default[0]
-        # y_galvo_relative = y_galvo_now + self.xyflip[1]*5*self.relative_zyx_um[1]/self.FOV_default[1]   
+    def get_galvo_xy(self):
+        for i in range(10):
+            try:
+                res=self.flim.sendCommand('GetScanVoltageXY')
+                x_galvo_now = float(res.split(',')[1])
+                y_galvo_now = float(res.split(',')[2])
+                return x_galvo_now, y_galvo_now
+            except:
+                sleep(0.2)
+                
+        return None
+
+
+    def go_to_relative_pos_galvo(self,z_move=False):
+        x_galvo_now, y_galvo_now = self.get_galvo_xy()
         x_galvo_next = x_galvo_now - self.directionGalvoX*5*self.relative_zyx_um[2]/self.FOV_default[0]
         y_galvo_next = y_galvo_now - self.directionGalvoY*5*self.relative_zyx_um[1]/self.FOV_default[1] 
 
@@ -516,10 +523,11 @@ class control_flimage():
         continue_max = 30
         continue_count = 0
         
-        
         while NthAc<self.RepeatNum:
-            self.wait_while_grabbing(sleep_every_sec=0.01) 
+            sleep(0.1)
+            self.wait_while_grabbing(sleep_every_sec=0.1) 
             self.flimlist=glob.glob(os.path.join(self.folder,f"{self.NameStem}*.flim"))
+
             if len(self.flimlist) == NumFile:
                 sleep(0.1)
                 continue_count+=1
@@ -535,7 +543,7 @@ class control_flimage():
                 self.align_2dframe_with_3d()
                 self.drift_cont_single_plane(xy_stage_move=xy_stage_move)
                 self.flim_connect_check()
-                self.plot_drift(show=False)
+                self.plot_drift(show=True)
 
                 if self.track_uncaging==True:
                     self.AlignSmallRegion_2d()
@@ -606,7 +614,8 @@ if __name__ == "__main__":
     singleplane_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep05_128_singleplane.txt"
     Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128.txt"
     # Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128fast.txt"
-    singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging.txt"
+    # singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging.txt"
+    singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging_test.txt"
     
     FLIMageCont = control_flimage()
     
@@ -616,26 +625,31 @@ if __name__ == "__main__":
     
     # FLIMageCont.define_uncagingPoint()
     
-    FLIMageCont.set_param(RepeatNum=20, interval_sec=20, ch_1or2=2,
+    FLIMageCont.Spine_ZYX = [4, 76, 67]
+    FLIMageCont.Dendrite_ZYX = [0, 72, 73]
+    FLIMageCont.set_param(RepeatNum=2, interval_sec=20, ch_1or2=2,
                           LoadSetting=True,SettingPath=Zstack_ini,
-                          track_uncaging=False,drift_control=True,
-                          ShowUncagingDetection=False,drift_cont_galvo=False)
+                          track_uncaging=True,drift_control=True,
+                          ShowUncagingDetection=True,drift_cont_galvo=True)
     
+    # FLIMageCont.directionMotorZ=-1 #FLIMage 4.0.1  after debug, this should be +1
     FLIMageCont.start_repeat()
 
 
-
     
-    # FLIMageCont.go_to_uncaging_plane()
+    FLIMageCont.go_to_uncaging_plane()
     
-    # FLIMageCont.set_param(RepeatNum=30, interval_sec=2, ch_1or2=2,
-    #                       LoadSetting=True,SettingPath=singleplane_uncaging,
-    #                       track_uncaging=True,drift_control=True,
-    #                       ShowUncagingDetection=False,DoUncaging=False)
+    FLIMageCont.set_param(RepeatNum=30, interval_sec=2, ch_1or2=2,
+                          LoadSetting=True,SettingPath=singleplane_uncaging,
+                          track_uncaging=False,drift_control=False,
+                          ShowUncagingDetection=False,DoUncaging=False)
     
-    # FLIMageCont.start_repeat_singleplane(xy_stage_move=False)
+    FLIMageCont.start_repeat_singleplane(xy_stage_move=False)
     
-    # FLIMageCont.back_to_stack_plane()
+    
+    
+    
+    FLIMageCont.back_to_stack_plane()
     
     # FLIMageCont.set_param(RepeatNum=50, interval_sec=30, ch_1or2=2,
     #                       LoadSetting=True,SettingPath=Zstack_ini,
