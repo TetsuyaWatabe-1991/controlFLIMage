@@ -19,7 +19,7 @@ from multidim_tiff_viewer import threeD_array_click
 import numpy as np
 import cv2
 from skimage.measure import label, regionprops
-
+import configparser
 
 
 def long_axis_detection(props,HalfLen_c=0.35):
@@ -97,17 +97,26 @@ class control_flimage():
         self.SpineHeadToUncaging_um=0.2
         self.uncaging_relativeZ_moved = 0
         
+        self.Spine_ZYX=False
+        
         FOVres = self.get_val_sendCommand('State.Acq.FOV_default')
         self.FOV_default= [float(val) for val in FOVres.strip('][').split(', ')] 
         
-        flipres =self.get_val_sendCommand('State.Acq.flipXYScan')
-        self.xyflip= [] 
-        for TF in [val for val in flipres.strip('][').split(', ')] :
-            if TF=="True":
-                self.xyflip.append(-1)
-            elif TF=="False":
-                self.xyflip.append(+1)
+        ini_path=r'DirectionSetting.ini'
+        self.config_ini(ini_path)        
+    
+    def config_ini(self,ini_path):
+        config = configparser.ConfigParser()
+        config.read(ini_path)
+        self.directionMotorX=int(config['Direction']['MotorX'])
+        self.directionMotorY=int(config['Direction']['MotorY'])
+        self.directionMotorZ=int(config['Direction']['MotorZ'])
+        self.directionGalvoX=int(config['Direction']['GalvoX'])
+        self.directionGalvoY=int(config['Direction']['GalvoY'])
         
+        print("\n\nDirection setting was modified at ",config['ModifiedDate']['Date'],"\n\n")
+
+    
     def example_image(self):
         self.Spine_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Spine_example.png"
         self.Dendrite_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Dendrite_example.png"
@@ -144,9 +153,9 @@ class control_flimage():
     
     def go_to_relative_pos(self):
         x,y,z=self.get_position()
-        x_str=str(x+self.relative_zyx[2])
-        y_str=str(y+self.relative_zyx[1])
-        z_str=str(z+self.relative_zyx[0])
+        x_str=str(x - self.directionMotorX * self.relative_zyx_um[2])
+        y_str=str(y - self.directionMotorY * self.relative_zyx_um[1])
+        z_str=str(z - self.directionMotorZ * self.relative_zyx_um[0])
         self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
 
     def go_to_relative_pos_galvo(self,z_move=False):
@@ -156,22 +165,20 @@ class control_flimage():
 
         # Please take care of these PLUS or MINUS signs. 
         # This is dependent on the flip X, flip Y, and switch X and Y
-        x_galvo_relative = x_galvo_now - self.xyflip[0]*5*self.relative_zyx[2]/self.FOV_default[0]
-        y_galvo_relative = y_galvo_now + self.xyflip[1]*5*self.relative_zyx[1]/self.FOV_default[1]   
-        
-        x_galvo_relative = round(x_galvo_relative,12)
-        y_galvo_relative = round(y_galvo_relative,12)
-        
-        x_galvo_str = str(x_galvo_relative)
-        y_galvo_str = str(y_galvo_relative)
+        # x_galvo_relative = x_galvo_now - self.xyflip[0]*5*self.relative_zyx_um[2]/self.FOV_default[0]
+        # y_galvo_relative = y_galvo_now + self.xyflip[1]*5*self.relative_zyx_um[1]/self.FOV_default[1]   
+        x_galvo_next = x_galvo_now - self.directionGalvoX*5*self.relative_zyx_um[2]/self.FOV_default[0]
+        y_galvo_next = y_galvo_now - self.directionGalvoY*5*self.relative_zyx_um[1]/self.FOV_default[1] 
+
+        x_galvo_str = str(round(x_galvo_next,12))
+        y_galvo_str = str(round(y_galvo_next,12))
         self.flim.sendCommand(f"SetScanVoltageXY,{x_galvo_str},{y_galvo_str}")
         print("y_galvo_now, ",y_galvo_now)
-        print("y_galvo_relative, ",y_galvo_relative)
-        print("y_galvo_str, ",y_galvo_str)
+        print("y_galvo_next, ",y_galvo_next)
         
         if z_move == True:
-            self.relative_zyx[1]=0
-            self.relative_zyx[2]=0
+            self.relative_zyx_um[1]=0
+            self.relative_zyx_um[2]=0
             self.go_to_relative_pos()
             
     def get_val_sendCommand(self,command):
@@ -198,17 +205,21 @@ class control_flimage():
         else:
             print("ERROR 101 - - - - - - ")
     
-    def get_relative_zyx(self, shifts_zyx_pixel):
+    def convert_shifts_pix_to_micro(self, shifts_zyx_pixel):
         # These + and - are dependent of the direction, so might be different in each stage.
-        x_relative = + self.x_um*shifts_zyx_pixel[-1][2]
-        y_relative = - self.y_um*shifts_zyx_pixel[-1][1]
-        z_relative = - self.z_um*shifts_zyx_pixel[-1][0]
-        self.relative_zyx = [z_relative,y_relative,x_relative]
+        # x_relative = + self.x_um*shifts_zyx_pixel[-1][2]
+        # y_relative = - self.y_um*shifts_zyx_pixel[-1][1]
+        # z_relative = - self.z_um*shifts_zyx_pixel[-1][0]
+        x_relative = self.x_um*shifts_zyx_pixel[-1][2]
+        y_relative = self.y_um*shifts_zyx_pixel[-1][1]
+        z_relative = self.z_um*shifts_zyx_pixel[-1][0]     
+        
+        self.relative_zyx_um = [z_relative,y_relative,x_relative]
         
     def append_drift_list(self):
         FileNumber = int(self.flimlist[-1][-8:-5])
         self.Num_zyx_drift[FileNumber]=[]
-        for drift in self.relative_zyx:
+        for drift in self.relative_zyx_um:
             self.Num_zyx_drift[FileNumber].append(drift)
     
     def plot_drift(self,show=True):
@@ -240,7 +251,7 @@ class control_flimage():
         self.shifts_zyx_pixel, self.Aligned_4d_array=Align_4d_array(Tiff_MultiArray)              
         self.x_um, self.y_um, self.z_um = get_xyz_pixel_um(iminfo)
         
-        self.get_relative_zyx(self.shifts_zyx_pixel)
+        self.convert_shifts_pix_to_micro(self.shifts_zyx_pixel)
         self.append_drift_list()
       
 
@@ -255,7 +266,7 @@ class control_flimage():
         self.shifts_zyx_pixel = [[0,0,0],[self.Z_plane-self.Spine_ZYX[0],
                                      single_shift[0],single_shift[1]]]
             
-        # self.get_relative_zyx(self.shifts_zyx_pixel)
+        # self.convert_shifts_pix_to_micro(self.shifts_zyx_pixel)
       
     
     def flim_connect_check(self):
@@ -454,14 +465,14 @@ class control_flimage():
         NumZ = self.Aligned_4d_array.shape[1]
         z_move_um = self.z_um * (-(NumZ - 1)/2 + z)
         z_relative = - self.z_um*self.shifts_zyx_pixel[-1][0]
-        self.relative_zyx = [z_move_um + z_relative,0,0]
+        self.relative_zyx_um = [z_move_um + z_relative,0,0]
         self.go_to_relative_pos()
         self.uncaging_relativeZ_moved = z_move_um
 
 
 
     def back_to_stack_plane(self):
-        self.relative_zyx = [-self.uncaging_relativeZ_moved,0,0]
+        self.relative_zyx_um = [-self.uncaging_relativeZ_moved,0,0]
         self.go_to_relative_pos()
 
         
@@ -477,15 +488,15 @@ class control_flimage():
             temporary_shift_z = 0 
         
         if xy_stage_move==False:
-            self.get_relative_zyx([[0,0,0],[temporary_shift_z,0,0]])
+            self.convert_shifts_pix_to_micro([[0,0,0],[temporary_shift_z,0,0]])
         else:
-            self.get_relative_zyx([[0,0,0],[temporary_shift_z,
+            self.convert_shifts_pix_to_micro([[0,0,0],[temporary_shift_z,
                                     self.single_shift[0],
                                     self.single_shift[1]]])
 
         self.append_drift_list()
         self.go_to_relative_pos()
-        self.get_relative_zyx([[0,0,0],[shift_z,
+        self.convert_shifts_pix_to_micro([[0,0,0],[shift_z,
                                 self.single_shift[0],
                                 self.single_shift[1]]])        
         
@@ -541,7 +552,6 @@ class control_flimage():
 
     def start_repeat(self,single_plane_align=True):
         self.start=datetime.now()
-        # x,y,z=self.get_position()
         
         self.folder = self.get_val_sendCommand("State.Files.pathName")
         self.NameStem = self.get_val_sendCommand("State.Files.baseName")
@@ -571,6 +581,9 @@ class control_flimage():
                             self.go_to_relative_pos()        
                 
                 if self.track_uncaging==True:
+                    if self.Spine_ZYX==False:
+                        print("\n\n\n Spine position is not assigned. Continue.\n\n\n")
+                        
                     self.AlignSmallRegion()
                     self.analyze_uncaging_point()
                     self.send_uncaging_pos()
@@ -591,42 +604,45 @@ class control_flimage():
 if __name__ == "__main__":
     
     singleplane_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep05_128_singleplane.txt"
-    # Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128.txt"
-    Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128fast.txt"
+    Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128.txt"
+    # Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128fast.txt"
     singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging.txt"
     
     FLIMageCont = control_flimage()
     
-    FLIMageCont.set_param(RepeatNum=1, interval_sec=60, ch_1or2=2,
-                          LoadSetting=True,SettingPath=Zstack_ini)
-    FLIMageCont.start_repeat()
+    # FLIMageCont.set_param(RepeatNum=1, interval_sec=60, ch_1or2=2,
+    #                       LoadSetting=True,SettingPath=Zstack_ini)
+    # FLIMageCont.start_repeat()
     
-    FLIMageCont.define_uncagingPoint()
+    # FLIMageCont.define_uncagingPoint()
     
-    FLIMageCont.set_param(RepeatNum=3, interval_sec=15, ch_1or2=2,
+    FLIMageCont.set_param(RepeatNum=20, interval_sec=20, ch_1or2=2,
                           LoadSetting=True,SettingPath=Zstack_ini,
                           track_uncaging=False,drift_control=True,
-                          ShowUncagingDetection=True,drift_cont_galvo=True)
+                          ShowUncagingDetection=False,drift_cont_galvo=False)
     
     FLIMageCont.start_repeat()
+
+
+
     
-    FLIMageCont.go_to_uncaging_plane()
+    # FLIMageCont.go_to_uncaging_plane()
     
-    FLIMageCont.set_param(RepeatNum=30, interval_sec=2, ch_1or2=2,
-                          LoadSetting=True,SettingPath=singleplane_uncaging,
-                          track_uncaging=True,drift_control=True,
-                          ShowUncagingDetection=False,DoUncaging=False)
+    # FLIMageCont.set_param(RepeatNum=30, interval_sec=2, ch_1or2=2,
+    #                       LoadSetting=True,SettingPath=singleplane_uncaging,
+    #                       track_uncaging=True,drift_control=True,
+    #                       ShowUncagingDetection=False,DoUncaging=False)
     
-    FLIMageCont.start_repeat_singleplane(xy_stage_move=False)
+    # FLIMageCont.start_repeat_singleplane(xy_stage_move=False)
     
-    FLIMageCont.back_to_stack_plane()
+    # FLIMageCont.back_to_stack_plane()
     
-    FLIMageCont.set_param(RepeatNum=50, interval_sec=30, ch_1or2=2,
-                          LoadSetting=True,SettingPath=Zstack_ini,
-                          track_uncaging=True,drift_control=True,
-                          ShowUncagingDetection=True,drift_cont_galvo=True)
+    # FLIMageCont.set_param(RepeatNum=50, interval_sec=30, ch_1or2=2,
+    #                       LoadSetting=True,SettingPath=Zstack_ini,
+    #                       track_uncaging=True,drift_control=True,
+    #                       ShowUncagingDetection=True,drift_cont_galvo=True)
     
-    FLIMageCont.start_repeat()
+    # FLIMageCont.start_repeat()
     
     # FLIMageCont.flim.sendCommand(f'LoadSetting, {Zstack_ini}')
     
