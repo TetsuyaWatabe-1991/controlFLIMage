@@ -114,7 +114,9 @@ class control_flimage():
         
 
     def set_param(self,RepeatNum,interval_sec,ch_1or2,LoadSetting=False,SettingPath="",
-                  track_uncaging=False, drift_control=True, ShowUncagingDetection=False, DoUncaging=False):
+                  track_uncaging=False, drift_control=True, 
+                  ShowUncagingDetection=False, DoUncaging=False,
+                  drift_cont_galvo=False):
         self.RepeatNum=RepeatNum
         self.interval_sec=interval_sec
         self.ch=ch_1or2-1
@@ -123,6 +125,7 @@ class control_flimage():
         self.drift_control=drift_control
         self.ShowUncagingDetection=ShowUncagingDetection
         self.DoUncaging=DoUncaging
+        self.drift_cont_galvo=drift_cont_galvo
         
         if LoadSetting==True:
             self.flim.sendCommand(f'LoadSetting, {SettingPath}')
@@ -153,18 +156,24 @@ class control_flimage():
 
         # Please take care of these PLUS or MINUS signs. 
         # This is dependent on the flip X, flip Y, and switch X and Y
-        x_galvo_relative = + 5*self.relative_zyx[2]/self.FOV_default[0]
-        y_galvo_relative = + 5*self.relative_zyx[1]/self.FOV_default[1]   
+        x_galvo_relative = x_galvo_now - self.xyflip[0]*5*self.relative_zyx[2]/self.FOV_default[0]
+        y_galvo_relative = y_galvo_now + self.xyflip[1]*5*self.relative_zyx[1]/self.FOV_default[1]   
         
+        x_galvo_relative = round(x_galvo_relative,12)
+        y_galvo_relative = round(y_galvo_relative,12)
         
+        x_galvo_str = str(x_galvo_relative)
+        y_galvo_str = str(y_galvo_relative)
+        self.flim.sendCommand(f"SetScanVoltageXY,{x_galvo_str},{y_galvo_str}")
+        print("y_galvo_now, ",y_galvo_now)
+        print("y_galvo_relative, ",y_galvo_relative)
+        print("y_galvo_str, ",y_galvo_str)
         
-        # x_str=str(x+self.relative_zyx[2])
-        # y_str=str(y+self.relative_zyx[1])
-        # self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
-
-
-
-        
+        if z_move == True:
+            self.relative_zyx[1]=0
+            self.relative_zyx[2]=0
+            self.go_to_relative_pos()
+            
     def get_val_sendCommand(self,command):
         Reply = self.flim.sendCommand(command)
         value = Reply[len(command)+3:]
@@ -276,7 +285,7 @@ class control_flimage():
     def define_uncagingPoint(self):
         self.wait_while_grabbing()
         
-        Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([self.flimlist[0]],ch=0)
+        Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([self.flimlist[0]],ch=self.ch)
         FirstStack=Tiff_MultiArray[0]
         
         text = "Click the center of the spine you will stimulate. (Not the uncaging position itself)"
@@ -319,7 +328,11 @@ class control_flimage():
                                                 self.Spine_ZYX[2]-self.cuboid_ZYX[2]:self.Spine_ZYX[2]+self.cuboid_ZYX[2],
                                                 ]        
         self.shifts_2d_fromSmall, self.Small_Aligned_3d_array=Align_3d_array(TrimmedAroundSpine)
-
+        
+        changeto3dlist=[[0,0]]
+        for eachshift in self.shifts_2d_fromSmall:
+            changeto3dlist.append(list(eachshift))
+        self.shifts_fromSmall = np.array(changeto3dlist)
 
 
     def analyze_uncaging_point(self,threshold_coordinate=0.5,Gaussian_pixel=3):
@@ -520,10 +533,11 @@ class control_flimage():
             
                 if self.drift_control==True:
                     if NthAc < self.RepeatNum-1:
-                        self.go_to_relative_pos()
+                        self.go_to_relative_pos_galvo(z_move=False)
                         
         self.flim.sendCommand("StopLoop")            
           
+        
 
     def start_repeat(self,single_plane_align=True):
         self.start=datetime.now()
@@ -537,7 +551,7 @@ class control_flimage():
         
         for NthAc in range(self.RepeatNum):
             each_acquisition_from=datetime.now()        
-            sleep(0.5) #### This small sleep will prevent from crash, sometimes....
+            # sleep(0.5) #### This small sleep will prevent from crash, sometimes....
             self.flim_connect_check()        
             self.flim.sendCommand('StartGrab')  
             
@@ -551,7 +565,10 @@ class control_flimage():
 
                 if self.drift_control==True:
                     if NthAc < self.RepeatNum-1:
-                        self.go_to_relative_pos()        
+                        if self.drift_cont_galvo==True:
+                            self.go_to_relative_pos_galvo(z_move=True)
+                        else:
+                            self.go_to_relative_pos()        
                 
                 if self.track_uncaging==True:
                     self.AlignSmallRegion()
@@ -574,7 +591,8 @@ class control_flimage():
 if __name__ == "__main__":
     
     singleplane_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep05_128_singleplane.txt"
-    Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128.txt"
+    # Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128.txt"
+    Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128fast.txt"
     singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging.txt"
     
     FLIMageCont = control_flimage()
@@ -585,10 +603,10 @@ if __name__ == "__main__":
     
     FLIMageCont.define_uncagingPoint()
     
-    FLIMageCont.set_param(RepeatNum=5, interval_sec=30, ch_1or2=2,
+    FLIMageCont.set_param(RepeatNum=3, interval_sec=15, ch_1or2=2,
                           LoadSetting=True,SettingPath=Zstack_ini,
-                          track_uncaging=True,drift_control=True,
-                          ShowUncagingDetection=True)
+                          track_uncaging=False,drift_control=True,
+                          ShowUncagingDetection=True,drift_cont_galvo=True)
     
     FLIMageCont.start_repeat()
     
@@ -603,10 +621,10 @@ if __name__ == "__main__":
     
     FLIMageCont.back_to_stack_plane()
     
-    FLIMageCont.set_param(RepeatNum=15, interval_sec=30, ch_1or2=2,
+    FLIMageCont.set_param(RepeatNum=50, interval_sec=30, ch_1or2=2,
                           LoadSetting=True,SettingPath=Zstack_ini,
                           track_uncaging=True,drift_control=True,
-                          ShowUncagingDetection=True)
+                          ShowUncagingDetection=True,drift_cont_galvo=True)
     
     FLIMageCont.start_repeat()
     
