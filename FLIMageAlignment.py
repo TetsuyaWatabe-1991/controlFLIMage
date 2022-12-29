@@ -90,6 +90,7 @@ def flim_files_to_nparray(filelist,ch=0):
         relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds) 
         
     RawArray=np.array(FourDimList,dtype=np.uint16)
+    print(RawArray.shape)
     Tiff_MultiArray=RawArray[:,:,0,ch,:,:]
     return Tiff_MultiArray, iminfo, relative_sec_list
 

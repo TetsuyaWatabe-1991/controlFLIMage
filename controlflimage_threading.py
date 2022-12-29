@@ -98,6 +98,7 @@ class control_flimage():
         self.uncaging_relativeZ_moved = 0        
         self.Spine_ZYX=False
         self.NthAc=0
+        self.Num_zyx_drift = {}
         
         FOVres = self.get_val_sendCommand('State.Acq.FOV_default')
         self.FOV_default= [float(val) for val in FOVres.strip('][').split(', ')] 
@@ -623,7 +624,6 @@ class control_flimage():
         self.folder = self.get_val_sendCommand("State.Files.pathName")
         self.NameStem = self.get_val_sendCommand("State.Files.baseName")
         self.childname = self.NameStem + str(int(self.get_val_sendCommand("State.Files.fileCounter"))).zfill(3)+".flim"
-        self.Num_zyx_drift = {}
         self.uncaging_each=[]
         
         thread1 = threading.Thread(target=self.acquire_independent)
@@ -652,7 +652,6 @@ class control_flimage():
         self.folder = self.get_val_sendCommand("State.Files.pathName")
         self.NameStem = self.get_val_sendCommand("State.Files.baseName")
         self.childname = self.NameStem + str(int(self.get_val_sendCommand("State.Files.fileCounter"))).zfill(3)+".flim"
-        self.Num_zyx_drift = {}
         
         
         for NthAc in range(self.RepeatNum):
