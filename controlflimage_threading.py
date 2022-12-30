@@ -515,7 +515,7 @@ class control_flimage():
         print(self.relative_zyx_um)
         self.go_to_relative_pos_motor()
         sleep(2)
-        self.flim.sendCommand('SetCenter')
+        self.flim.sendCommand('SetCenter') #This is required. Otherwize, Z stage movement do not affect the Z stack center.
         sleep(1)
         
         
