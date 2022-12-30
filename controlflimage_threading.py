@@ -99,6 +99,7 @@ class control_flimage():
         self.Spine_ZYX=False
         self.NthAc=0
         self.Num_zyx_drift = {}
+        self.x_um = 0 #For detecting not assigned value
         
         FOVres = self.get_val_sendCommand('State.Acq.FOV_default')
         self.FOV_default= [float(val) for val in FOVres.strip('][').split(', ')] 
@@ -334,10 +335,9 @@ class control_flimage():
         self.uncaging_y=y
         
         print("\n\n\n","self.Spine_ZYX=",self.Spine_ZYX)
-        print("self.Dendrite_ZYX=",self.Dendrite_ZYX,"\n\n\n\n")
-        # self.send_uncaging_pos()
-        # self.AlignSmallRegion(FirstStack)
-        # self.analyze_uncaging_point()
+        print("self.Dendrite_ZYX=",self.Dendrite_ZYX,"\n\n\n\n")        
+
+        
         
     def AlignSmallRegion(self):
         TrimmedAroundSpine=self.Aligned_4d_array[
@@ -581,9 +581,9 @@ class control_flimage():
     
     def drift_uncaging_process(self):
         self.flimlist=glob.glob(os.path.join(self.folder,f"{self.NameStem}*.flim"))
-        Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([self.flimlist[0]],ch=self.ch)
-        self.x_um, self.y_um, self.z_um = get_xyz_pixel_um(iminfo)
-        
+        if self.x_um == 0:
+            Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([self.flimlist[0]],ch=self.ch)
+            self.x_um, self.y_um, self.z_um = get_xyz_pixel_um(iminfo)
 
         checkedNth=-1        
         for i in range(1000):
@@ -640,7 +640,7 @@ class control_flimage():
         thread1.join()
         print("thread1 END")
         self.loop=False
-        print("thread2 END")
+        print("drift_uncaging_process END")
         
         plt.plot(self.uncaging_each)
         plt.ylabel("Each interval (sec)")
