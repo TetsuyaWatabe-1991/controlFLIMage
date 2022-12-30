@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from skimage.registration import phase_cross_correlation
 from scipy.ndimage import fourier_shift
+from scipy.signal import medfilt
 from datetime import datetime
 
 def get_flimfile_list(one_file_path):
@@ -31,9 +32,17 @@ def NthDim_Center(shape,NthDim,ratio=0.5):
     to=int(center*(1+ratio))
     return start,to
 
-def fft_drift_3d(ref_array,query_array):
-    # shift, error, diffphase = register_translation(ref_array, query_array)
-    shift, error, diffphase = phase_cross_correlation(ref_array, query_array)
+def fft_drift_3d(ref_array ,query_array,
+                 MedianFilter = True, Ksize = 3):
+    if MedianFilter==True:
+        ref_array_for_correlation = medfilt(ref_array, kernel_size = Ksize)
+        query_array_for_correlation  = medfilt(query_array, kernel_size = Ksize)
+    else:
+        ref_array_for_correlation = ref_array
+        query_array_for_correlation  = query_array
+    # shift, error, diffphase = phase_cross_correlation(ref_array, query_array)
+    shift, error, diffphase = phase_cross_correlation(ref_array_for_correlation,
+                                                      query_array_for_correlation)
     img_corr = fourier_shift(np.fft.fftn(query_array), shift)
     aligned_array = np.fft.ifftn(img_corr).real
     return aligned_array, shift
@@ -76,12 +85,19 @@ def flim_files_to_nparray(filelist,ch=0,normalize_by_averageNum=True):
         iminfo.read_imageFile(file_path, True) 
         # Get intensity only data
         imagearray=np.array(iminfo.image)
+        
+        nAveFrame = iminfo.State.Acq.nAveFrame
+        if normalize_by_averageNum==False:
+            DivBy = 1
+        else:
+            DivBy = nAveFrame
+            
         if First:
             First=False
             imageshape=imagearray.shape
         
         if imagearray.shape == imageshape:
-            intensityarray=np.sum(imagearray,axis=-1)
+            intensityarray=np.sum(imagearray,axis=-1)/DivBy
             FourDimList.append(intensityarray)
         else:
             print(file_path,'<- skipped read')
@@ -89,13 +105,9 @@ def flim_files_to_nparray(filelist,ch=0,normalize_by_averageNum=True):
         timestamp_list.append(datetime.strptime(iminfo.acqTime[0],'%Y-%m-%dT%H:%M:%S.%f'))
         relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds) 
         
-    RawArray=np.array(FourDimList,dtype=np.uint16)    
-    nAveFrame = iminfo.State.Acq.nAveFrame
-    if normalize_by_averageNum==False:
-        DivBy = 1
-    else:
-        DivBy = nAveFrame
-    Tiff_MultiArray=RawArray[:,:,0,ch,:,:]/DivBy
+    # RawArray=np.array(FourDimList,dtype=np.uint16)
+    # Tiff_MultiArray=RawArray[:,:,0,ch,:,:]
+    Tiff_MultiArray=np.array(FourDimList,dtype=np.uint16)[:,:,0,ch,:,:]
     return Tiff_MultiArray, iminfo, relative_sec_list
     
 
@@ -212,14 +224,14 @@ if __name__=='__main__':
     vmax_auto=True
     vmax_coefficient=0.8
     
-    one_file_path=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221208\Test294_043.flim"
+    one_file_path=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221228\SampleCase\GFPslice3_dendrite8_035.flim"
     saveFolder, EachImgsaveFolder = make_save_folders(one_file_path)
     
     iminfo = FileReader()
     iminfo.read_imageFile(one_file_path, True) 
     
     filelist=get_flimfile_list(one_file_path)
-    Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(filelist,ch=ch)
+    Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(filelist,ch=ch,normalize_by_averageNum=True)
     
     ShowZ=int(Tiff_MultiArray.shape[1]/2)
     if vmax_auto==True:
@@ -229,6 +241,7 @@ if __name__=='__main__':
     plot_alignment_shifts(shifts,iminfo, saveFolder=saveFolder,savefigure=True,
                           relative_sec_list=relative_sec_list)
     
+    
     """
     
     # below code is for plotting aligned image        
@@ -236,9 +249,15 @@ if __name__=='__main__':
     """
     
     
-    plot_aligned_image_test = False
+    plot_aligned_image_test = True
 
     if plot_aligned_image_test==True:
+        z_start, z_to, y_start, y_to, x_start, x_to=CenterPosGet(Tiff_MultiArray,ratio=0.5)
+        
+        FindBrightBase=Tiff_MultiArray[0,z_start:z_to,y_start:y_to,x_start:x_to]
+        max_index_original=np.unravel_index(FindBrightBase.argmax(), FindBrightBase.shape)
+        ShowZ=max_index_original[0]+z_start
+        
         for i in range(Aligned_4d_array.shape[0]):
             plt.figure()
         
@@ -265,11 +284,7 @@ if __name__=='__main__':
         # To avoid that,  I made codes below
         
         
-        z_start, z_to, y_start, y_to, x_start, x_to=CenterPosGet(Tiff_MultiArray,ratio=0.5)
-        
-        FindBrightBase=Tiff_MultiArray[0,z_start:z_to,y_start:y_to,x_start:x_to]
-        max_index_original=np.unravel_index(FindBrightBase.argmax(), FindBrightBase.shape)
-        
+
         Slice_x=max_index_original[1]+y_start
         Slice_y=max_index_original[2]+x_start
         ShowZ=max_index_original[0]+z_start
@@ -316,13 +331,13 @@ if __name__=='__main__':
         
         plt.imshow(Tiff_MultiArray[0,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
         plt.plot([Slice_y+1,Slice_y-1,Slice_y-1,Slice_y+1,Slice_y+1],         
-                 [Slice_x+1,Slice_x+1,Slice_x-1,Slice_x-1,Slice_x+1],'r-')
+                  [Slice_x+1,Slice_x+1,Slice_x-1,Slice_x-1,Slice_x+1],'r-')
         savepath=os.path.join(saveFolder,"TZimage_showingPoint.png")
         plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
         plt.show()
         
         plt.imshow(Tiff_MultiArray[:,:,Slice_x,Slice_y],
-                   cmap=cmap, vmin=vmin, vmax=vmax)
+                    cmap=cmap, vmin=vmin, vmax=vmax)
         plt.xlabel("z");plt.ylabel('t')
         savepath=os.path.join(saveFolder,"TZimage_original.png")
         plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
@@ -330,7 +345,7 @@ if __name__=='__main__':
         
         
         plt.imshow(Aligned_4d_array[:,:,Slice_x,Slice_y],
-                   cmap=cmap, vmin=vmin, vmax=vmax)
+                    cmap=cmap, vmin=vmin, vmax=vmax)
         plt.xlabel("z");plt.ylabel('t')
         savepath=os.path.join(saveFolder,"TZimage_aligned.png")
         plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')

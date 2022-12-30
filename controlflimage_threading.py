@@ -287,6 +287,7 @@ class control_flimage():
         for i in range(int(self.interval_sec/sleep_every_sec)):
             try:
                 if self.get_01_sendCommand('IsGrabbing')==0:
+                    print("BREAK wait_while_grabbing")
                     break
             except:
                 print("ERROR on getting a reply for 'IsGrabbing'. Try again.")
@@ -402,28 +403,19 @@ class control_flimage():
         blur = cv2.GaussianBlur(single_plane,(Gaussian_pixel,Gaussian_pixel),0)
         self.blur=blur
         
-        dend_coord = [self.cuboid_ZYX[1] - (self.Spine_ZYX[1]-self.Dendrite_ZYX[1]),
-                      self.cuboid_ZYX[2] - (self.Spine_ZYX[2]-self.Dendrite_ZYX[2])]
-        
-        # Threshold =  min(blur[self.cuboid_ZYX[1],self.cuboid_ZYX[2]],blur[dend_coord[0],dend_coord[1]])*threshold_coordinate
         Threshold = blur[self.cuboid_ZYX[1],self.cuboid_ZYX[2]]*threshold_coordinate
         print(Threshold)
         ret3,th3 = cv2.threshold(blur,Threshold,255,cv2.THRESH_BINARY)
-        label_img = label(th3)
             
-        self.binary_include_dendrite=np.zeros(label_img.shape)    
+        self.binary_include_dendrite=th3
+        self.binarized=th3
         
-        for each_label in range(1,label_img.max()+1):
-            if label_img[dend_coord[0],dend_coord[1]] == each_label:
-                self.binary_include_dendrite[label_img==each_label]=1
-
         if self.binary_include_dendrite.max() == 0:
-            print("\n\n ERROR 102,  Cannot find dendrite \n No update in uncaging position. \n")
+            print("\n\n ERROR 104,  Cannot find spine \n No update in uncaging position. \n")
         
         else:
-            regions = regionprops(label(self.binary_include_dendrite))
+            regions = regionprops(label(self.binary_include_dendrite))            
             self.props=regions[0]
-            self.binarized=th3>0
             
             if self.drift_control==False:
                 ignore_stage_drift=False
@@ -491,11 +483,11 @@ class control_flimage():
 
 
     def go_to_uncaging_plane(self):
-        sleep(2)
+        # sleep(2)
         print("go_to_uncaging_plane")
         z=self.Spine_ZYX[0]
         NumZ = self.Aligned_4d_array.shape[1]
-        z_move_um =  - self.z_um * (-(NumZ - 1)/2 + z)
+        z_move_um =  - self.z_um * (z -(NumZ - 1)/2)
         z_relative = self.z_um*self.shifts_zyx_pixel[-1][0]
         print("z_move_um ",z_move_um)
         print("z_relative ",z_relative)
@@ -503,20 +495,20 @@ class control_flimage():
         print(self.relative_zyx_um)
         self.go_to_relative_pos_motor()
         # self.uncaging_relativeZ_moved = z_move_um
-        sleep(2)
+        # sleep(2)
 
 
     def back_to_stack_plane(self):
-        sleep(2)
         print("back_to_stack_plane")
+        z=self.Spine_ZYX[0]
         NumZ = self.Aligned_4d_array.shape[1]
-        z_move_um = self.z_um * ((NumZ - 1)/2)
-        self.relative_zyx_um = [z_move_um,0,0]
+        z_move_um =  - self.z_um * (z -(NumZ + 1)/2)
+        self.relative_zyx_um = [-z_move_um,0,0]
         print(self.relative_zyx_um)
         self.go_to_relative_pos_motor()
-        sleep(2)
+        # sleep(0.4)
         self.flim.sendCommand('SetCenter') #This is required. Otherwize, Z stage movement do not affect the Z stack center.
-        sleep(1)
+        # sleep(0.4)
         
         
     def drift_cont_single_plane(self,xy_stage_move=True,
@@ -586,11 +578,11 @@ class control_flimage():
             self.x_um, self.y_um, self.z_um = get_xyz_pixel_um(iminfo)
 
         checkedNth=-1        
-        for i in range(1000):
+        for i in range(6000):
             if self.loop==False:
                 print("BREAK  drift_uncaging_process")
                 break
-            print("DRIFT CHECK, ",i)
+            # print("DRIFT CHECK, ",i)
             
             if self.NthAc>0 and checkedNth!=self.NthAc:
                 checkedNth=self.NthAc
