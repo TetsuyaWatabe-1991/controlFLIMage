@@ -515,6 +515,8 @@ class control_flimage():
         print(self.relative_zyx_um)
         self.go_to_relative_pos_motor()
         sleep(2)
+        self.flim.sendCommand('SetCenter')
+        sleep(1)
         
         
     def drift_cont_single_plane(self,xy_stage_move=True,
