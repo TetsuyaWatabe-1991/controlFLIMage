@@ -15,7 +15,7 @@ import numpy as np
 
 
 onefilelist=[
-            r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221228\GFPslice3_dendrite4_001.flim",
+            r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221230\Rab10CY_Ca0,3_Neuron1_dendrite3_001.flim",
             # r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221228\GFPslice3_dendrite6_001.flim",
             # r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221228\GFPslice3_dendrite7_001.flim",
             # r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221228\GFPslice3_dendrite8_001.flim",
@@ -27,6 +27,7 @@ for one_file_path in onefilelist:
     saveFolder, EachImgsaveFolder = make_save_folders(one_file_path)
     
     filelist=glob.glob(one_file_path[:-8]+'*.flim')
+    
     uncaging_filelist=[]
     uncagingpos=[]
     

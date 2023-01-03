@@ -21,7 +21,7 @@ import cv2
 from skimage.measure import label, regionprops
 import configparser
 import threading
-
+from tkinter_textinfowindow import TextWindow
 
 def long_axis_detection(props,HalfLen_c=0.35):
     y0, x0 = props.centroid
@@ -99,6 +99,7 @@ class control_flimage():
         self.Spine_ZYX=False
         self.NthAc=0
         self.Num_zyx_drift = {}
+        self.showWindow = False
         self.x_um = 0 #For detecting not assigned value
         
         FOVres = self.get_val_sendCommand('State.Acq.FOV_default')
@@ -298,6 +299,7 @@ class control_flimage():
     
     def wait_until_next(self,each_acquisition_from,sleep_every_sec=0.01):
         # print("wait from ",datetime.now()-each_acquisition_from)
+        remainingSeconds = -1234
         for i in range(int(self.interval_sec/sleep_every_sec)):
             each_acquisition_len=(datetime.now()-each_acquisition_from)
             if each_acquisition_len.seconds>=self.interval_sec:
@@ -306,6 +308,10 @@ class control_flimage():
                 except:
                     pass
                 break
+            if self.showWindow ==True:
+                if remainingSeconds != int(each_acquisition_len.seconds - self.interval_sec):
+                    remainingSeconds = int(each_acquisition_len.seconds - self.interval_sec)
+                    self.TxtWind.udpate(f"Time {remainingSeconds}")
             sleep(sleep_every_sec)
             
             
@@ -347,6 +353,7 @@ class control_flimage():
                                                 self.Spine_ZYX[1]-self.cuboid_ZYX[1]:self.Spine_ZYX[1]+self.cuboid_ZYX[1],
                                                 self.Spine_ZYX[2]-self.cuboid_ZYX[2]:self.Spine_ZYX[2]+self.cuboid_ZYX[2],
                                                 ]
+        
         self.shifts_fromSmall, self.Small_Aligned_4d_array=Align_4d_array(TrimmedAroundSpine)
 
 
@@ -646,7 +653,8 @@ class control_flimage():
         self.folder = self.get_val_sendCommand("State.Files.pathName")
         self.NameStem = self.get_val_sendCommand("State.Files.baseName")
         self.childname = self.NameStem + str(int(self.get_val_sendCommand("State.Files.fileCounter"))).zfill(3)+".flim"
-        
+        self.TxtWind = TextWindow()
+        self.showWindow =True
         
         for NthAc in range(self.RepeatNum):
             each_acquisition_from=datetime.now()        
@@ -684,21 +692,22 @@ class control_flimage():
             
             if NthAc < self.RepeatNum-1:
                 self.wait_until_next(each_acquisition_from)
-
+                
 
 
 if __name__ == "__main__":
     
     singleplane_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep05_128_singleplane.txt"
     # Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128.txt"
-    Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep05_128.txt"
+    # Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep05_128.txt".
+    Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128fast.txt"
     singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging.txt"
     # singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging_test.txt"
     
     FLIMageCont = control_flimage()
     # FLIMageCont.directionMotorZ=-1 #sometimes, it changes. Why?
     
-    FLIMageCont.set_param(RepeatNum=1, interval_sec=60, ch_1or2=2,
+    FLIMageCont.set_param(RepeatNum=5, interval_sec=30, ch_1or2=2,
                           LoadSetting=True,SettingPath=Zstack_ini)
     FLIMageCont.start_repeat()
     

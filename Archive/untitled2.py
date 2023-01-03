@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Dec  8 19:56:34 2022
+Created on Fri Dec 30 17:10:17 2022
 
 @author: yasudalab
 """
+
 import os,glob,path,math
 from FLIMageFileReader2 import FileReader
 import matplotlib.pyplot as plt
@@ -104,7 +105,8 @@ def flim_files_to_nparray(filelist,ch=0,normalize_by_averageNum=True):
         else:
             print(file_path,'<- skipped read')
             
-     
+
+        
     # RawArray=np.array(FourDimList,dtype=np.uint16)
     # Tiff_MultiArray=RawArray[:,:,0,ch,:,:]
     Tiff_MultiArray=np.array(FourDimList,dtype=np.uint16)[:,:,0,ch,:,:]
@@ -223,7 +225,7 @@ if __name__=='__main__':
     cmap='gray'
     vmin=0
     vmax_auto=True
-    vmax_coefficient=0.8
+    vmax_coefficient=0.1
     
     one_file_path=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221230\Rab10CY_Ca0,3_Neuron1_dendrite2_001.flim"
     saveFolder, EachImgsaveFolder = make_save_folders(one_file_path)
@@ -277,80 +279,3 @@ if __name__=='__main__':
             plt.savefig(savepath,dpi=150,transparent=True,bbox_inches='tight')
             plt.show()
         
-        
-        # Print the first position of the maximum value in the array
-        # max_index_original=np.unravel_index(Tiff_MultiArray.argmax(), Tiff_MultiArray.shape)
-        # From this code above, the brightest point might exist near edge. 
-        # To avoid that,  I made codes below
-        
-        
-
-        Slice_x=max_index_original[1]+y_start
-        Slice_y=max_index_original[2]+x_start
-        ShowZ=max_index_original[0]+z_start
-        # Slice_y=60
-        # Slice_x=155
-        # Slice_x=64
-        # Slice_y=40
-        
-        plt.imshow(Tiff_MultiArray[0,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.plot([0,Tiff_MultiArray.shape[3]-1],[Slice_x,Slice_x],'r-')
-        savepath=os.path.join(saveFolder,"XZimage_showingSliceX.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        plt.imshow(Tiff_MultiArray[:,ShowZ,Slice_x,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("x");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"XZimage_original.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        plt.imshow(Aligned_4d_array[:,ShowZ,Slice_x,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("x");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"XZimage_aligned.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        
-        
-        plt.imshow(Tiff_MultiArray[0,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.plot([Slice_y,Slice_y],[0,Tiff_MultiArray.shape[2]-1],'r-')
-        savepath=os.path.join(saveFolder,"YZimage_showingSliceX.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        plt.imshow(Tiff_MultiArray[:,ShowZ,:,Slice_y],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("y");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"YZimage_original.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        plt.imshow(Aligned_4d_array[:,ShowZ,:,Slice_y],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("y");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"YZimage_aligned.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        plt.imshow(Tiff_MultiArray[0,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.plot([Slice_y+1,Slice_y-1,Slice_y-1,Slice_y+1,Slice_y+1],         
-                  [Slice_x+1,Slice_x+1,Slice_x-1,Slice_x-1,Slice_x+1],'r-')
-        savepath=os.path.join(saveFolder,"TZimage_showingPoint.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        plt.imshow(Tiff_MultiArray[:,:,Slice_x,Slice_y],
-                    cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("z");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"TZimage_original.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        
-        plt.imshow(Aligned_4d_array[:,:,Slice_x,Slice_y],
-                    cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("z");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"TZimage_aligned.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-    
-    
-    
-    

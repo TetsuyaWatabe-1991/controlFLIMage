@@ -99,12 +99,12 @@ def flim_files_to_nparray(filelist,ch=0,normalize_by_averageNum=True):
         if imagearray.shape == imageshape:
             intensityarray=np.sum(imagearray,axis=-1)/DivBy
             FourDimList.append(intensityarray)
-            timestamp_list.append(datetime.strptime(iminfo.acqTime[0],'%Y-%m-%dT%H:%M:%S.%f'))
-            relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds) 
         else:
             print(file_path,'<- skipped read')
             
-     
+        timestamp_list.append(datetime.strptime(iminfo.acqTime[0],'%Y-%m-%dT%H:%M:%S.%f'))
+        relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds) 
+        
     # RawArray=np.array(FourDimList,dtype=np.uint16)
     # Tiff_MultiArray=RawArray[:,:,0,ch,:,:]
     Tiff_MultiArray=np.array(FourDimList,dtype=np.uint16)[:,:,0,ch,:,:]
@@ -206,7 +206,7 @@ def single_plane_align_with3dstack(ZYX_Stack_array,YX_SinglePlane_array):
                                   cut_region[1]:-cut_region[1]]
         
         mse = mean_square_error(ref_array,query_array)
-        
+
         if mse < min_mse:
             min_mse=mse
             Z_plane=i
@@ -216,141 +216,9 @@ def single_plane_align_with3dstack(ZYX_Stack_array,YX_SinglePlane_array):
     Aligned_TYX_array=np.array([ZYX_Stack_array[Z_plane,:,:],aligned_array_Z_plane])
     return Z_plane,single_shift, Aligned_TYX_array
 
-   
     
 if __name__=='__main__':
-    ch=1
-    cmap='gray'
-    vmin=0
-    vmax_auto=True
-    vmax_coefficient=0.8
     
-    one_file_path=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221230\Rab10CY_Ca0,3_Neuron1_dendrite2_001.flim"
-    saveFolder, EachImgsaveFolder = make_save_folders(one_file_path)
-    
-    iminfo = FileReader()
-    iminfo.read_imageFile(one_file_path, True) 
-    
-    filelist=get_flimfile_list(one_file_path)
-    Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(filelist,ch=ch,normalize_by_averageNum=True)
-    
-    ShowZ=int(Tiff_MultiArray.shape[1]/2)
-    if vmax_auto==True:
-        vmax=Tiff_MultiArray.max()*vmax_coefficient    
-    
-    shifts, Aligned_4d_array=Align_4d_array(Tiff_MultiArray)
-    plot_alignment_shifts(shifts,iminfo, saveFolder=saveFolder,savefigure=True,
-                          relative_sec_list=relative_sec_list)
-    
-    """
-    
-    # below code is for plotting aligned image        
-    
-    """
-    
-    
-    plot_aligned_image_test = True
-
-    if plot_aligned_image_test==True:
-        z_start, z_to, y_start, y_to, x_start, x_to=CenterPosGet(Tiff_MultiArray,ratio=0.5)
-        
-        FindBrightBase=Tiff_MultiArray[0,z_start:z_to,y_start:y_to,x_start:x_to]
-        max_index_original=np.unravel_index(FindBrightBase.argmax(), FindBrightBase.shape)
-        ShowZ=max_index_original[0]+z_start
-        
-        for i in range(Aligned_4d_array.shape[0]):
-            plt.figure()
-        
-            #subplot(r,c) provide the no. of rows and columns
-            f, axarr = plt.subplots(1,2) 
-            
-            # use the created array to output your multiple images. In this case I have stacked 4 images vertically
-            axarr[0].imshow(Tiff_MultiArray[i,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-            axarr[0].text(Tiff_MultiArray.shape[3],-10,str(i))
-            axarr[0].text(0,-10,str("original"))
-            
-            axarr[1].imshow(Aligned_4d_array[i,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-            axarr[1].text(0,-10,str("aligned"))
-            
-            # plt.imshow(Tiff_MultiArray[i,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-            savepath=os.path.join(EachImgsaveFolder,f"{str(i).zfill(3)}.png")
-            plt.savefig(savepath,dpi=150,transparent=True,bbox_inches='tight')
-            plt.show()
-        
-        
-        # Print the first position of the maximum value in the array
-        # max_index_original=np.unravel_index(Tiff_MultiArray.argmax(), Tiff_MultiArray.shape)
-        # From this code above, the brightest point might exist near edge. 
-        # To avoid that,  I made codes below
-        
-        
-
-        Slice_x=max_index_original[1]+y_start
-        Slice_y=max_index_original[2]+x_start
-        ShowZ=max_index_original[0]+z_start
-        # Slice_y=60
-        # Slice_x=155
-        # Slice_x=64
-        # Slice_y=40
-        
-        plt.imshow(Tiff_MultiArray[0,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.plot([0,Tiff_MultiArray.shape[3]-1],[Slice_x,Slice_x],'r-')
-        savepath=os.path.join(saveFolder,"XZimage_showingSliceX.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        plt.imshow(Tiff_MultiArray[:,ShowZ,Slice_x,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("x");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"XZimage_original.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        plt.imshow(Aligned_4d_array[:,ShowZ,Slice_x,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("x");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"XZimage_aligned.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        
-        
-        plt.imshow(Tiff_MultiArray[0,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.plot([Slice_y,Slice_y],[0,Tiff_MultiArray.shape[2]-1],'r-')
-        savepath=os.path.join(saveFolder,"YZimage_showingSliceX.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        plt.imshow(Tiff_MultiArray[:,ShowZ,:,Slice_y],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("y");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"YZimage_original.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        plt.imshow(Aligned_4d_array[:,ShowZ,:,Slice_y],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("y");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"YZimage_aligned.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        plt.imshow(Tiff_MultiArray[0,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.plot([Slice_y+1,Slice_y-1,Slice_y-1,Slice_y+1,Slice_y+1],         
-                  [Slice_x+1,Slice_x+1,Slice_x-1,Slice_x-1,Slice_x+1],'r-')
-        savepath=os.path.join(saveFolder,"TZimage_showingPoint.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        plt.imshow(Tiff_MultiArray[:,:,Slice_x,Slice_y],
-                    cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("z");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"TZimage_original.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        
-        plt.imshow(Aligned_4d_array[:,:,Slice_x,Slice_y],
-                    cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("z");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"TZimage_aligned.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-    
-    
-    
-    
+    StackFilePath=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221230\test1\test9_001.flim"
+    SinglePlaneFilePath=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221230\test1\test9_010.flim"
+    Z_plane,single_shift, Aligned_TYX_array = single_plane_align_with3dstack_flimfile(StackFilePath,SinglePlaneFilePath,ch=1)
