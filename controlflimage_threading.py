@@ -115,10 +115,8 @@ class control_flimage():
         self.directionMotorY = int(config['Direction']['MotorY'])
         self.directionMotorZ = int(config['Direction']['MotorZ'])
         self.directionGalvoX = int(config['Direction']['GalvoX'])
-        self.directionGalvoY = int(config['Direction']['GalvoY'])
-        
+        self.directionGalvoY = int(config['Direction']['GalvoY'])        
         print("\n\nDirection setting was modified at ",config['ModifiedDate']['Date'],"\n\n")
-
     
     def example_image(self):
         self.Spine_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Spine_example.png"

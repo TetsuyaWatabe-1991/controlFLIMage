@@ -38,7 +38,6 @@ FLIMageCont.start_repeat()
 
 for i in range(15):
     FLIMageCont.go_to_uncaging_plane()
-    
     FLIMageCont.set_param(RepeatNum=6, interval_sec=10, ch_1or2=2,
                           LoadSetting=True,SettingPath=singleplane_uncaging,
                           track_uncaging=True,drift_control=False,drift_cont_galvo=True,

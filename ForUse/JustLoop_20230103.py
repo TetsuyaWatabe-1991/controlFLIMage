@@ -4,7 +4,8 @@ Created on Tue Jan  3 12:28:44 2023
 
 @author: yasudalab
 """
-
+import sys
+sys.path.append("../")
 from controlflimage_threading import control_flimage
 
 FLIMageCont = control_flimage()
