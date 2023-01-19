@@ -168,7 +168,8 @@ def mean_square_error(img1,img2,intensity_threshold=5,required_pixel=100):
      if math.prod(img1.shape)!=math.prod(img2.shape):        
          raise TypeError("Given images have different shapes")
          
-     Mask = (img1>intensity_threshold)|(img2>intensity_threshold)
+     # Mask = (img1>intensity_threshold)|(img2>intensity_threshold)
+     Mask = (img1>intensity_threshold)
      pixel_size = Mask.sum()
      
      if pixel_size<required_pixel:

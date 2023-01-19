@@ -42,8 +42,8 @@ for one_file_path in onefilelist:
             Zstack_filelist.append(path)
     # filelist = get_flimfile_list(one_file_path)
     
-    Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(uncaging_filelist)
-    Tiff_MultiArray_2, iminfo_2, relative_sec_list_2 = flim_files_to_nparray(Zstack_filelist)
+    Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(uncaging_filelist,ch=1)
+    Tiff_MultiArray_2, iminfo_2, relative_sec_list_2 = flim_files_to_nparray(Zstack_filelist,ch=1)
     x_um, y_um, z_um = get_xyz_pixel_um(iminfo)
     
     vmax=Tiff_MultiArray.max()*0.3
@@ -77,13 +77,16 @@ for one_file_path in onefilelist:
         plt.scatter(uncagingpos[i][0],
                     uncagingpos[i][1],
                     **kwargs_uncag)
+        
+        
+        plt.text(xlim[0],ylim[1],s=f"{str(relative_sec_list[i]+relative_sec_list_2[10]+30).zfill(4)} sec")
         plt.plot(xbar_pos,ybar_pos,**kwargs_bar)
         plt.ylim(ylim)
         plt.xlim(xlim)
         plt.axis('off')
         
         savepath = os.path.join(EachImgsaveFolder,uncaging_filelist[i][-8:-5]+".png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
+        plt.savefig(savepath,dpi=100,transparent=True,bbox_inches='tight')
         plt.show()
           
     for i in range(Tiff_MultiArray_2.shape[0]):
@@ -94,13 +97,14 @@ for one_file_path in onefilelist:
         # plt.scatter(uncagingpos[i][0],
         #             uncagingpos[i][1],
         #             **kwargs_uncag)
+        plt.text(xlim[0],ylim[1],s=f"{str(relative_sec_list_2[i]).zfill(4)} sec")
         plt.plot(xbar_pos,ybar_pos,**kwargs_bar)    
         plt.ylim(ylim)
         plt.xlim(xlim)
         plt.axis('off')
         
         savepath = os.path.join(EachImgsaveFolder,Zstack_filelist[i][-8:-5]+".png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
+        plt.savefig(savepath,dpi=100,transparent=True,bbox_inches='tight')
         plt.show()
     
     

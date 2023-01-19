@@ -81,7 +81,7 @@ def plot_uncaging_point(props, binary, blur, image, candi_y,
 
 class control_flimage():
 
-    def __init__(self):
+    def __init__(self,ini_path=r'DirectionSetting.ini'):
         print("START")
         self.flim = FLIM_Com()
         self.flim.start()
@@ -104,11 +104,12 @@ class control_flimage():
         
         FOVres = self.get_val_sendCommand('State.Acq.FOV_default')
         self.FOV_default= [float(val) for val in FOVres.strip('][').split(', ')] 
-        ini_path=r'DirectionSetting.ini'
+        
         self.config_ini(ini_path)        
     
     def config_ini(self,ini_path):
         config = configparser.ConfigParser()
+        self.config=config
         config.read(ini_path)
         self.directionMotorX = int(config['Direction']['MotorX'])
         self.directionMotorY = int(config['Direction']['MotorY'])
@@ -300,6 +301,7 @@ class control_flimage():
     def wait_until_next(self,each_acquisition_from,sleep_every_sec=0.01):
         # print("wait from ",datetime.now()-each_acquisition_from)
         remainingSeconds = -1234
+        previous_sec = -9876
         for i in range(int(self.interval_sec/sleep_every_sec)):
             each_acquisition_len=(datetime.now()-each_acquisition_from)
             if each_acquisition_len.seconds>=self.interval_sec:
@@ -310,8 +312,15 @@ class control_flimage():
                 break
             if self.showWindow ==True:
                 if remainingSeconds != int(each_acquisition_len.seconds - self.interval_sec):
-                    remainingSeconds = int(each_acquisition_len.seconds - self.interval_sec)
-                    self.TxtWind.udpate(f"Time {remainingSeconds}")
+                    remainingSeconds = int(self.interval_sec - each_acquisition_len.seconds)                        
+                    if remainingSeconds != previous_sec:
+                        previous_sec = remainingSeconds
+                        try:
+                            self.TxtWind.udpate(f"Time {remainingSeconds}")
+                        except:
+                            print("No tkinter window.", f"Reamining seconds: {remainingSeconds}")
+                        
+                            
             sleep(sleep_every_sec)
             
             
@@ -657,9 +666,10 @@ class control_flimage():
         self.showWindow =True
         
         for NthAc in range(self.RepeatNum):
-            each_acquisition_from=datetime.now()        
+            each_acquisition_from=datetime.now()      
+            self.TxtWind.udpate("Now Grabbing")
             # sleep(0.5) #### This small sleep will prevent from crash, sometimes....
-            self.flim_connect_check()        
+            self.flim_connect_check()
             self.flim.sendCommand('StartGrab')  
 
             self.wait_while_grabbing()

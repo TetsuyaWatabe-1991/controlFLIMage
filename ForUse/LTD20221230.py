@@ -22,7 +22,6 @@ FLIMageCont.set_param(RepeatNum=1, interval_sec=60, ch_1or2=2,
                       LoadSetting=True,SettingPath=Zstack_ini,
                       expected_grab_duration_sec=20)
 
-
 FLIMageCont.start_repeat()
 
 FLIMageCont.define_uncagingPoint()
