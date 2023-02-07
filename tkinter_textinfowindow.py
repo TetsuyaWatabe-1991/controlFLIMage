@@ -11,6 +11,42 @@ import threading
 
 class TextWindow(threading.Thread):
     def __init__(self):
+        self.running=False
+        # self.run()
+        
+    # def callback(self):
+    #     self.root.destroy()
+        
+    # def close(self):
+    #     print("CLOSE TextWindow")
+    #     self.running=False
+    #     self.callback()
+      
+    # def run(self):
+    #     pass
+    
+    def run(self):
+        # self.root = tk.Tk()
+        # self.root.geometry("200x100")
+        # self.root.protocol("WM_DELETE_WINDOW", self.close)
+        # self.textvar=tk.StringVar()
+        # self.textvar.set("INFO")
+        # self.TextShow = tk.Label(self.root, width=15, font=("Arial",18,""),
+        #                           textvariable=self.textvar)
+        # self.TextShow.pack(side="top")
+        pass
+    # def udpate(self,text):
+    #     print(text)
+    def udpate(self,text):
+        # if self.running==False:
+            # print("No window for countdown")
+        print(text)
+        return
+
+        
+        
+class TextWindow_original(threading.Thread):
+    def __init__(self):
         self.running=True
         self.run()
         
@@ -21,7 +57,10 @@ class TextWindow(threading.Thread):
         print("CLOSE TextWindow")
         self.running=False
         self.callback()
-        
+      
+    # def run(self):
+    #     pass
+    
     def run(self):
         self.root = tk.Tk()
         self.root.geometry("200x100")
@@ -29,9 +68,10 @@ class TextWindow(threading.Thread):
         self.textvar=tk.StringVar()
         self.textvar.set("INFO")
         self.TextShow = tk.Label(self.root, width=15, font=("Arial",18,""),
-                                 textvariable=self.textvar)
+                                  textvariable=self.textvar)
         self.TextShow.pack(side="top")
-        
+    # def udpate(self,text):
+    #     print(text)
     def udpate(self,text):
         if self.running==False:
             print("No window for countdown")

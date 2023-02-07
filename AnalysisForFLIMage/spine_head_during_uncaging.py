@@ -15,18 +15,20 @@ import numpy as np
 
 
 onefilelist=[
-            r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221230\Rab10CY_Ca0,3_Neuron1_dendrite3_001.flim",
+            r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230125\PTEN_Slice1_neuron1_dendrite1_stack_054.flim",
             # r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221228\GFPslice3_dendrite6_001.flim",
             # r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221228\GFPslice3_dendrite7_001.flim",
             # r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221228\GFPslice3_dendrite8_001.flim",
             # r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221228\GFPslice3_dendrite9_001.flim",
             ]
 bar_um = 1
+channel = 0 # 0 or 1
 for one_file_path in onefilelist:
     
     saveFolder, EachImgsaveFolder = make_save_folders(one_file_path)
     
-    filelist=glob.glob(one_file_path[:-8]+'*.flim')
+    # filelist=glob.glob(one_file_path[:-8]+'*.flim')
+    filelist=glob.glob(one_file_path[:-8]+'*.flim')[:-1]
     
     uncaging_filelist=[]
     uncagingpos=[]
@@ -42,8 +44,8 @@ for one_file_path in onefilelist:
             Zstack_filelist.append(path)
     # filelist = get_flimfile_list(one_file_path)
     
-    Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(uncaging_filelist,ch=1)
-    Tiff_MultiArray_2, iminfo_2, relative_sec_list_2 = flim_files_to_nparray(Zstack_filelist,ch=1)
+    Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(uncaging_filelist,ch=channel)
+    Tiff_MultiArray_2, iminfo_2, relative_sec_list_2 = flim_files_to_nparray(Zstack_filelist,ch=channel)
     x_um, y_um, z_um = get_xyz_pixel_um(iminfo)
     
     vmax=Tiff_MultiArray.max()*0.3

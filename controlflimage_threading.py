@@ -626,6 +626,7 @@ class control_flimage():
                 
         print("thread2 while loop end")
 
+
     def start_repeat_short(self,single_plane_align=True):
         self.start=datetime.now()
         
@@ -694,9 +695,11 @@ class control_flimage():
                     self.send_uncaging_pos()
                     
                     if self.ShowUncagingDetection==True:
-                        
-                        plot_uncaging_point(self.props, self.binarized, self.blur, self.SpinePlaneImg, 
+                        try:
+                            plot_uncaging_point(self.props, self.binarized, self.blur, self.SpinePlaneImg, 
                                             self.candi_y, self.candi_x, self.cuboid_ZYX)
+                        except:
+                            print("ERROR on plotting")
             
             if NthAc < self.RepeatNum-1:
                 self.wait_until_next(each_acquisition_from)

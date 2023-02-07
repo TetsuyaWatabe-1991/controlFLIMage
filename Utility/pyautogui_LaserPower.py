@@ -58,8 +58,8 @@ class LaserSettingAuto():
 if __name__ == '__main__':
     LaserAuto = LaserSettingAuto()
     
-    laser_1or2 = 2
+    laser_1or2 = 1
     
     percent_list = [0,10,20,30,40,50]
-    LaserAuto.gui_auto(laser_1or2,percent_list,interval=10)
+    LaserAuto.gui_auto(laser_1or2,percent_list,interval=5)
 
