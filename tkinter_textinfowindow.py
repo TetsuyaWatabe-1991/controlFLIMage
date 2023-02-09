@@ -40,7 +40,7 @@ class TextWindow(threading.Thread):
     def udpate(self,text):
         # if self.running==False:
             # print("No window for countdown")
-        print(text)
+        print(text, end='\r')
         return
 
         

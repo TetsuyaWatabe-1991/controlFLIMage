@@ -23,10 +23,10 @@ import configparser
 import threading
 from tkinter_textinfowindow import TextWindow
 
+
 def long_axis_detection(props,HalfLen_c=0.35):
     y0, x0 = props.centroid
     orientation = props.orientation
-    
     x1 = x0 + math.cos(orientation) * HalfLen_c * props.minor_axis_length
     y1 = y0 - math.sin(orientation) * HalfLen_c * props.minor_axis_length
     x2 = x0 - math.sin(orientation) * HalfLen_c * props.major_axis_length
@@ -41,11 +41,11 @@ def long_axis_detection(props,HalfLen_c=0.35):
 def plot_uncaging_point(props, binary, blur, image, candi_y,
                         candi_x, cuboid_ZYX,just_plot=True):
     vmax=blur.max()
-    kwargs_ex = {'cmap':'gray', 
+    kwargs_ex = {'cmap':'gray',
                  'vmin':0,
                  'vmax':vmax,
                  'interpolation':'none'}
-    kwargs_bin = {'cmap':'gray', 
+    kwargs_bin = {'cmap':'gray',
                  'vmin':0,
                  'vmax':1,
                  'interpolation':'none'}
@@ -62,21 +62,18 @@ def plot_uncaging_point(props, binary, blur, image, candi_y,
                   c="m",marker=".",lw=1)
     axarr[2].scatter(cuboid_ZYX[2],cuboid_ZYX[1],c="r",marker="*")
     axarr[2].scatter(candi_x,candi_y,**kwargs_uncag)
-    
     axarr[1].imshow(blur,**kwargs_ex)
     axarr[1].scatter(candi_x,candi_y,**kwargs_uncag)
 
     axarr[0].imshow(image,**kwargs_ex);
     axarr[0].scatter(candi_x,candi_y,**kwargs_uncag)
-    
     for j in range(3):
         axarr[j].axis('off')
-        
     if just_plot==True:
         plt.show()
         return
     else:
-        return f, axarr        
+        return f, axarr
 
 
 class control_flimage():
@@ -90,12 +87,12 @@ class control_flimage():
             self.flim.messageReceived += FLIM_message_received #Add your function to  handle.
         else:
             self.reconnect()
-        self.example_image()   
+        self.example_image()
         self.cuboid_ZYX=[2,20,20]
         self.uncaging_x=0
         self.uncaging_y=0
         self.SpineHeadToUncaging_um=0.2
-        self.uncaging_relativeZ_moved = 0        
+        self.uncaging_relativeZ_moved = 0
         self.Spine_ZYX=False
         self.NthAc=0
         self.Num_zyx_drift = {}
@@ -131,14 +128,12 @@ class control_flimage():
         self.RepeatNum=RepeatNum
         self.interval_sec=interval_sec
         self.ch=ch_1or2-1
-        
-        self.track_uncaging=track_uncaging 
+        self.track_uncaging=track_uncaging
         self.drift_control=drift_control
         self.ShowUncagingDetection=ShowUncagingDetection
         self.DoUncaging=DoUncaging
         self.drift_cont_galvo=drift_cont_galvo
         self.expected_grab_duration_sec=expected_grab_duration_sec
-        
         if LoadSetting==True:
             self.flim.sendCommand(f'LoadSetting, {SettingPath}')
             
@@ -172,7 +167,6 @@ class control_flimage():
                 return x_galvo_now, y_galvo_now
             except:
                 sleep(0.2)
-                
         return None
 
 
@@ -186,7 +180,6 @@ class control_flimage():
         self.flim.sendCommand(f"SetScanVoltageXY,{x_galvo_str},{y_galvo_str}")
         print("y_galvo_now, ",y_galvo_now)
         print("y_galvo_next, ",y_galvo_next)
-        
         if z_move == True:
             self.relative_zyx_um[1]=0
             self.relative_zyx_um[2]=0
@@ -220,7 +213,7 @@ class control_flimage():
     def convert_shifts_pix_to_micro(self, shifts_zyx_pixel):
         x_relative = self.x_um*shifts_zyx_pixel[-1][2]
         y_relative = self.y_um*shifts_zyx_pixel[-1][1]
-        z_relative = self.z_um*shifts_zyx_pixel[-1][0]     
+        z_relative = self.z_um*shifts_zyx_pixel[-1][0]
         
         self.relative_zyx_um = [z_relative,y_relative,x_relative]
         
@@ -238,7 +231,7 @@ class control_flimage():
         for Num in self.Num_zyx_drift:
             FileNum.append(Num)
             for i in range(3):
-                zyx_drift_list[i].append(self.Num_zyx_drift[Num][i])       
+                zyx_drift_list[i].append(self.Num_zyx_drift[Num][i])
                 
         for i in range(3):
             plt.plot(FileNum, zyx_drift_list[i], c=col_list[i], ls="-", label=label_list[i])
@@ -256,7 +249,7 @@ class control_flimage():
         print(filelist)
         # FileNum.append(int(flimlist[-1][-8:-5]))
         Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(filelist,ch=self.ch)
-        self.shifts_zyx_pixel, self.Aligned_4d_array=Align_4d_array(Tiff_MultiArray)              
+        self.shifts_zyx_pixel, self.Aligned_4d_array=Align_4d_array(Tiff_MultiArray)
         self.x_um, self.y_um, self.z_um = get_xyz_pixel_um(iminfo)
         
         self.convert_shifts_pix_to_micro(self.shifts_zyx_pixel)
@@ -266,11 +259,10 @@ class control_flimage():
     def align_2dframe_with_3d(self,ref_t=0,query_t=-1,ModifyZ=False):
         StackFilePath=self.flimlist[ref_t]
         SinglePlaneFilePath=self.flimlist[query_t]
-        Z_plane,single_shift,Aligned_TYX_array = single_plane_align_with3dstack_flimfile(StackFilePath,SinglePlaneFilePath,ch=self.ch)        
-        
+        Z_plane,single_shift,Aligned_TYX_array = single_plane_align_with3dstack_flimfile(StackFilePath,SinglePlaneFilePath,ch=self.ch)
         self.Z_plane = Z_plane
         self.single_shift = single_shift
-        self.Aligned_TYX_array = Aligned_TYX_array 
+        self.Aligned_TYX_array = Aligned_TYX_array
         
         self.shifts_zyx_pixel = [[0,0,0],[self.Z_plane-self.Spine_ZYX[0],
                                      single_shift[0],single_shift[1]]]
@@ -294,7 +286,7 @@ class control_flimage():
             sleep(sleep_every_sec)
             
     def send_uncaging_pos(self):
-        self.flim.sendCommand(f"SetUncagingLocation, {self.uncaging_x}, {self.uncaging_y}")    
+        self.flim.sendCommand(f"SetUncagingLocation, {self.uncaging_x}, {self.uncaging_y}")
     
     def wait_until_next(self,each_acquisition_from,sleep_every_sec=0.01):
         # print("wait from ",datetime.now()-each_acquisition_from)
@@ -308,17 +300,16 @@ class control_flimage():
                 except:
                     pass
                 break
+            
             if self.showWindow ==True:
                 if remainingSeconds != int(each_acquisition_len.seconds - self.interval_sec):
-                    remainingSeconds = int(self.interval_sec - each_acquisition_len.seconds)                        
+                    remainingSeconds = int(self.interval_sec - each_acquisition_len.seconds)
                     if remainingSeconds != previous_sec:
                         previous_sec = remainingSeconds
                         try:
-                            self.TxtWind.udpate(f"Time {remainingSeconds}")
+                            self.TxtWind.udpate(f"  Time {remainingSeconds} ")
                         except:
-                            print("No tkinter window.", f"Reamining seconds: {remainingSeconds}")
-                        
-                            
+                            print("No tkinter window.", f" Reamining seconds: {remainingSeconds} ")
             sleep(sleep_every_sec)
             
             
@@ -344,12 +335,12 @@ class control_flimage():
                 text2 = "Click the dendrite, which MUST be near the spine"
         
         self.Spine_ZYX=[z,y,x]
-        self.Dendrite_ZYX=[z_dend,y_dend,x_dend]   
+        self.Dendrite_ZYX=[z_dend,y_dend,x_dend]
         self.uncaging_x=x
         self.uncaging_y=y
         
         print("\n\n\n","self.Spine_ZYX=",self.Spine_ZYX)
-        print("self.Dendrite_ZYX=",self.Dendrite_ZYX,"\n\n\n\n")        
+        print("self.Dendrite_ZYX=",self.Dendrite_ZYX,"\n\n\n\n")
 
         
         
@@ -428,7 +419,7 @@ class control_flimage():
             print("\n\n ERROR 104,  Cannot find spine \n No update in uncaging position. \n")
         
         else:
-            regions = regionprops(label(self.binary_include_dendrite))            
+            regions = regionprops(label(self.binary_include_dendrite))
             self.props=regions[0]
             
             if self.drift_control==False:
@@ -468,7 +459,7 @@ class control_flimage():
 
         while True:
             try:
-                if self.binarized[int(candi_y),int(candi_x)]>0:   
+                if self.binarized[int(candi_y),int(candi_x)]>0:
                     candi_x = candi_x + math.cos(orientation)*direction
                     candi_y = candi_y - math.sin(orientation)*direction
                 else:
@@ -528,12 +519,12 @@ class control_flimage():
     def drift_cont_single_plane(self,xy_stage_move=True,
                                 z_stage_move=False):
         z=self.Spine_ZYX[0]
-        shift_z = (self.Z_plane - z)       
+        shift_z = (self.Z_plane - z)
 
         if z_stage_move==True:
-            temporary_shift_z = shift_z 
+            temporary_shift_z = shift_z
         else:
-            temporary_shift_z = 0 
+            temporary_shift_z = 0
         
         if xy_stage_move==False:
             self.convert_shifts_pix_to_micro([[0,0,0],[temporary_shift_z,0,0]])
@@ -548,7 +539,7 @@ class control_flimage():
         if xy_stage_move==False:
             self.convert_shifts_pix_to_micro([[0,0,0],[shift_z,
                                     self.single_shift[0],
-                                    self.single_shift[1]]])        
+                                    self.single_shift[1]]])
             
     
           
@@ -556,7 +547,7 @@ class control_flimage():
         for NthAc in range(self.RepeatNum):
             self.NthAc=NthAc
             print("NthAc - - - - ,",NthAc)
-            each_acquisition_from=datetime.now()  
+            each_acquisition_from=datetime.now()
             
             self.wait_stop_acquisition_python()
             
@@ -564,13 +555,10 @@ class control_flimage():
             
             self.flim.sendCommand('StartGrab')
             self.wait_while_grabbing(sleep_every_sec=0.2)
- 
             self.nowGrabbing=False
-            
             if NthAc < self.RepeatNum-1:
                 self.wait_until_next(each_acquisition_from)
-        self.loop=False    
-                
+        self.loop=False
         
     def wait_stop_acquisition_python(self):
          print("wait_stop_acquisition_python")
@@ -591,7 +579,7 @@ class control_flimage():
             Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([self.flimlist[0]],ch=self.ch)
             self.x_um, self.y_um, self.z_um = get_xyz_pixel_um(iminfo)
 
-        checkedNth=-1        
+        checkedNth = -1
         for i in range(6000):
             if self.loop==False:
                 print("BREAK  drift_uncaging_process")
