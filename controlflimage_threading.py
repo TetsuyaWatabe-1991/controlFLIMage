@@ -15,7 +15,7 @@ from datetime import datetime
 from find_close_remotecontrol import close_remote_control
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
-from multidim_tiff_viewer import threeD_array_click
+from multidim_tiff_viewer import threeD_array_click, multiple_uncaging_click
 import numpy as np
 import cv2
 from skimage.measure import label, regionprops
@@ -97,11 +97,16 @@ class control_flimage():
         self.NthAc=0
         self.Num_zyx_drift = {}
         self.showWindow = False
+        
         self.x_um = 0 #For detecting not assigned value
         
         FOVres = self.get_val_sendCommand('State.Acq.FOV_default')
         self.FOV_default= [float(val) for val in FOVres.strip('][').split(', ')] 
-        
+        self.XMaxVoltage = self.get_val_sendCommand('State.Acq.XMaxVoltage')
+        self.YMaxVoltage = self.get_val_sendCommand('State.Acq.YMaxVoltage')
+        self.pixelsPerLine = self.get_val_sendCommand('State.Acq.pixelsPerLine')
+        self.zoom = self.get_val_sendCommand('State.Acq.zoom')
+
         self.config_ini(ini_path)        
     
     def config_ini(self,ini_path):
@@ -120,13 +125,16 @@ class control_flimage():
         self.Dendrite_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Dendrite_example.png"
         
 
-    def set_param(self,RepeatNum,interval_sec,ch_1or2,LoadSetting=False,SettingPath="",
+    def set_param(self,RepeatNum,interval_sec,ch_1or2,
+                  uncaging_power = 20,
+                  LoadSetting=False,SettingPath="",
                   expected_grab_duration_sec=0.5,
-                  track_uncaging=False, drift_control=True, 
+                  track_uncaging=False, drift_control=True,
                   ShowUncagingDetection=False, DoUncaging=False,
                   drift_cont_galvo=False):
         self.RepeatNum=RepeatNum
         self.interval_sec=interval_sec
+        self.uncaging_power = uncaging_power
         self.ch=ch_1or2-1
         self.track_uncaging=track_uncaging
         self.drift_control=drift_control
@@ -173,8 +181,7 @@ class control_flimage():
     def go_to_relative_pos_galvo(self,z_move=False):
         x_galvo_now, y_galvo_now = self.get_galvo_xy()
         x_galvo_next = x_galvo_now - self.directionGalvoX*5*self.relative_zyx_um[2]/self.FOV_default[0]
-        y_galvo_next = y_galvo_now - self.directionGalvoY*5*self.relative_zyx_um[1]/self.FOV_default[1] 
-
+        y_galvo_next = y_galvo_now - self.directionGalvoY*5*self.relative_zyx_um[1]/self.FOV_default[1]
         x_galvo_str = str(round(x_galvo_next,12))
         y_galvo_str = str(round(y_galvo_next,12))
         self.flim.sendCommand(f"SetScanVoltageXY,{x_galvo_str},{y_galvo_str}")
@@ -185,6 +192,7 @@ class control_flimage():
             self.relative_zyx_um[2]=0
             self.go_to_relative_pos_motor()
             
+            
     def get_val_sendCommand(self,command):
         Reply = self.flim.sendCommand(command)
         value = Reply[len(command)+3:]
@@ -192,11 +200,13 @@ class control_flimage():
             return float(value)
         except:
             return value.replace('"','')
+        
     
     def get_01_sendCommand(self,command):
         Reply = self.flim.sendCommand(command)
         value = Reply[len(command)+2:]
         return int(value)
+    
     
     def reconnect(self):
         print("\n - - - Reconnect - - - \n")
@@ -377,11 +387,11 @@ class control_flimage():
         self.SpinePlaneImg=self.Small_Aligned_4d_array[-1,self.cuboid_ZYX[0],:,:]
         # single_plane_img = self.Small_Aligned_4d_array[self.cuboid_ZYX[0],:,:]
         blur = cv2.GaussianBlur(max_proj,(Gaussian_pixel,Gaussian_pixel),0)
-        self.blur=blur;self.max_proj=max_proj
+        self.blur=blur; self.max_proj=max_proj
         
         dend_coord = [self.cuboid_ZYX[1] - (self.Spine_ZYX[1]-self.Dendrite_ZYX[1]),
-                      self.cuboid_ZYX[2] - (self.Spine_ZYX[2]-self.Dendrite_ZYX[2])]        
-        Threshold =  min(blur[self.cuboid_ZYX[1],self.cuboid_ZYX[2]],blur[dend_coord[0],dend_coord[1]])*threshold_coordinate   
+                      self.cuboid_ZYX[2] - (self.Spine_ZYX[2]-self.Dendrite_ZYX[2])]
+        Threshold =  min(blur[self.cuboid_ZYX[1],self.cuboid_ZYX[2]],blur[dend_coord[0],dend_coord[1]])*threshold_coordinate
         ret3,th3 = cv2.threshold(blur,Threshold,255,cv2.THRESH_BINARY)
         label_img = label(th3)
             
@@ -691,7 +701,190 @@ class control_flimage():
             
             if NthAc < self.RepeatNum-1:
                 self.wait_until_next(each_acquisition_from)
+
+
+
+class FourSplitScanningFLIMage(control_flimage):
+    def __init__(self,ini_path=r'DirectionSetting.ini'):
+        super().__init__(ini_path=r'DirectionSetting.ini')
+        
+        nsplit = self.get_val_sendCommand("State.Acq.nSplitScanning")
+        if nsplit != 4:
+            raise Exception("Please check whether the number of split scanning is 4.")
+            
+    def define_spine_multipoints(self):
+        self.wait_while_grabbing()
+        
+        Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([self.flimlist[0]],ch=self.ch)
+        FirstStack = Tiff_MultiArray[0]
+        
+        text = "Click the center of the spine you will stimulate. (Not the uncaging position itself)"
+        z, ylist, xlist = multiple_uncaging_click(FirstStack,text,
+                                 SampleImg=self.Spine_example,ShowPoint=False)
+        
+        self.Spine_Z = z
+        self.Spine_Ylist = ylist
+        self.Spine_Xlist = xlist
+        
+        print("\n\n\n","self.Spine_ZYX=",self.Spine_ZYX)
+        print("self.Dendrite_ZYX=",self.Dendrite_ZYX,"\n\n\n\n")
+
+
+    def set_param(self, RepeatNum,interval_sec, ch_1or2,
+                  LoadSetting = False, SettingPath = "",
+                  expected_grab_duration_sec = 0.5,
+                  track_uncaging = False, ShowUncagingDetection = False, 
+                  DoUncaging = False):
+        self.RepeatNum=RepeatNum
+        self.interval_sec=interval_sec
+        self.ch=ch_1or2-1
+        self.track_uncaging=track_uncaging
+        self.ShowUncagingDetection=ShowUncagingDetection
+        self.DoUncaging=DoUncaging
+
+        self.expected_grab_duration_sec=expected_grab_duration_sec
+        if LoadSetting==True:
+            self.flim.sendCommand(f'LoadSetting, {SettingPath}')
+
+
+    def start_repeat_split(self):
+        self.start=datetime.now()
+        
+        self.folder = self.get_val_sendCommand("State.Files.pathName")
+        self.NameStem = self.get_val_sendCommand("State.Files.baseName")
+        self.childname = self.NameStem + str(int(self.get_val_sendCommand("State.Files.fileCounter"))).zfill(3)+".flim"
+        self.TxtWind = TextWindow()
+        self.showWindow =True
+        
+        for NthAc in range(self.RepeatNum):
+            each_acquisition_from=datetime.now()      
+            self.TxtWind.udpate("Now Grabbing")
+            self.flim_connect_check()
+            self.flim.sendCommand('StartGrab')
+
+            self.wait_while_grabbing()
+            self.flimlist=glob.glob(os.path.join(self.folder,f"{self.NameStem}*.flim"))
+            self.XOffset_Split = list(map(float,self.get_val_sendCommand('State.Acq.XOffset_Split')[1:-1].split(",")))
+            self.YOffset_Split = list(map(float,self.get_val_sendCommand('State.Acq.YOffset_Split')[1:-1].split(",")))
+            self.Rotation_Split = list(map(int,self.get_val_sendCommand('State.Acq.Rotation_Split')[1:-1].split(",")))
+
+            if len(self.flimlist)>1:
+                self.align_split_flimfile()
+                self.flim.sendCommand('ClearUncagingLocation')
                 
+                if self.track_uncaging==True:
+                    
+                    for NthSplit in range(4):
+                        self.AlignSmallRegion_split()
+                        uncaging_yx = self.analyze_uncaging_point_split()
+                        self.flim.sendCommand("CreateUncagingLocation, {uncaging_yx[1]}, {uncaging_yx[0]}")
+                
+                    self.send_uncaging_pos()
+            
+            if NthAc < self.RepeatNum-1:
+                self.wait_until_next(each_acquisition_from)
+
+
+    
+    def align_split_flimfile(self,last_flimNth=-1):
+        filelist=[self.flimlist[0],self.flimlist[last_flimNth]]
+        print(filelist)
+        
+        Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(filelist,ch=self.ch)
+        
+        z_drift_list=[]
+        Next_XOffset_Split = []
+        Next_YOffset_Split = []
+        
+        for NthSplit in range(4):            
+            each_shift_zyx_pixel, _ = Align_4d_array(Tiff_MultiArray)
+            z_drift_list.append(each_shift_zyx_pixel[0])
+            
+            angle = math.pi * self.Rotation_Split[NthSplit] / 180
+            cos_val = math.cos(angle)
+            sin_val = math.sin(angle)
+
+            xpixel_shift = +cos_val * each_shift_zyx_pixel[2]
+            ypixel_shift = -sin_val * each_shift_zyx_pixel[1]
+        
+            x_shift_galvounit = round(self.XMaxVoltage*(xpixel_shift)/(self.zoom * self.pixelsPerLine),8)
+            y_shift_galvounit = round(self.YMaxVoltage*(ypixel_shift)/(self.zoom * self.pixelsPerLine),8)
+
+            Next_XOffset_Split.append(self.XOffset_Split[NthSplit] + x_shift_galvounit)
+            Next_YOffset_Split.append(self.YOffset_Split[NthSplit] + y_shift_galvounit)
+        
+        self.flim_connect_check()
+        Z_shift = np.median(np.array(z_drift_list))
+        self.flim.sendCommand(f"State.Acq.XOffset_Split = {str(Next_XOffset_Split)}")
+        self.flim.sendCommand(f"State.Acq.YOffset_Split = {str(Next_YOffset_Split)}")
+        
+
+    def AlignSmallRegion_split(self):
+        TrimmedAroundSpine=self.Aligned_4d_array[
+                                                :,
+                                                self.Spine_ZYX[0]-self.cuboid_ZYX[0]:self.Spine_ZYX[0]+self.cuboid_ZYX[0]+1,
+                                                self.Spine_ZYX[1]-self.cuboid_ZYX[1]:self.Spine_ZYX[1]+self.cuboid_ZYX[1],
+                                                self.Spine_ZYX[2]-self.cuboid_ZYX[2]:self.Spine_ZYX[2]+self.cuboid_ZYX[2],
+                                                ]
+        
+        self.shifts_fromSmall, self.Small_Aligned_4d_array=Align_4d_array(TrimmedAroundSpine)
+
+
+    def find_best_point_split(self,TwoD=False, ignore_stage_drift=False):
+
+        if TwoD==False:
+            orientation = self.props.orientation
+            y0,x0 = self.props.centroid
+            self.orientation_based_on_3d = orientation
+            self.dendrite_Centroid=[y0,x0]
+            
+        else:
+            try:
+                orientation = self.orientation_based_on_3d
+                y0,x0 = self.dendrite_Centroid[0],self.dendrite_Centroid[1]
+            except:
+                orientation = self.props.orientation  
+                y0,x0 = self.props.centroid
+            
+        candi_x, candi_y = self.cuboid_ZYX[2],self.cuboid_ZYX[1]
+        
+        x_moved = x0 - self.cuboid_ZYX[2]
+        y_moved = y0 - self.cuboid_ZYX[1]
+
+        x_rotated = x_moved*math.cos(orientation) - y_moved*math.sin(orientation)
+
+        if x_rotated<=0:
+            direction = 1
+        else:
+            direction = -1
+
+        while True:
+            try:
+                if self.binarized[int(candi_y),int(candi_x)]>0:
+                    candi_x = candi_x + math.cos(orientation)*direction
+                    candi_y = candi_y - math.sin(orientation)*direction
+                else:
+                    # Assuming that x and y have same resolution
+                    distance_pixel = self.SpineHeadToUncaging_um/self.x_um
+                    candi_x = int(candi_x + math.cos(orientation)*direction*distance_pixel)
+                    candi_y = int(candi_y - math.sin(orientation)*direction*distance_pixel)
+                    break
+            except:
+                print("Error 103 - -  ")
+                candi_x, candi_y = self.cuboid_ZYX[2],self.cuboid_ZYX[1]
+                break
+        
+        self.candi_x = candi_x
+        self.candi_y = candi_y
+
+        if ignore_stage_drift==False:
+            self.uncaging_x=self.Spine_ZYX[2]-self.cuboid_ZYX[2] +candi_x - self.shifts_zyx_pixel[-1][2] - self.shifts_fromSmall[-1][2]
+            self.uncaging_y=self.Spine_ZYX[1]-self.cuboid_ZYX[1] +candi_y - self.shifts_zyx_pixel[-1][1] - self.shifts_fromSmall[-1][1]
+        else:
+            self.uncaging_x=self.Spine_ZYX[2]-self.cuboid_ZYX[2] +candi_x - self.shifts_fromSmall[-1][2]
+            self.uncaging_y=self.Spine_ZYX[1]-self.cuboid_ZYX[1] +candi_y - self.shifts_fromSmall[-1][1]
+        
+
 
 
 if __name__ == "__main__":

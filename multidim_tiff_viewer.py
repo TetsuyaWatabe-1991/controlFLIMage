@@ -184,9 +184,8 @@ def threeD_array_click(stack_array,Text="Click",SampleImg=None,ShowPoint=False,S
                 return z,int((512-y)/resize_ratio_yx[0]),int(x/resize_ratio_yx[1])
                 break
 
-def MultipleUncaging_click(tiffpath,Text="Click",SampleImg=None,ShowPoint=False,ShowPoint_YX=[0,0]):
-    # stack_array= first_tiff_read(tiffpath)
-    stack_array = np.array(imread(tiffpath))
+def multiple_uncaging_click(stack_array,Text="Click",SampleImg=None,ShowPoint=False,ShowPoint_YX=[0,0]):
+
     TiffShape= stack_array.shape
     col_list=['red','cyan']
     ShowPointsYXlist = []
