@@ -61,6 +61,7 @@ def Align_3d_array(Tiff_MultiArray):
     Aligned_3d_array = np.array(Aligned_4d)
     return shifts, Aligned_3d_array
 
+
 def Align_4d_array(Tiff_MultiArray):
     shifts = []
     Aligned_4d = []

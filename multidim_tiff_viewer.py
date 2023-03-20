@@ -78,6 +78,7 @@ def tiffarray_to_PIL(stack_array,Percent=100,show_size_xy=[512,512],
 
 
 def threeD_array_click(stack_array,Text="Click",SampleImg=None,ShowPoint=False,ShowPoint_YX=[0,0]):
+    
     TiffShape= stack_array.shape
     col_list=['red','cyan']
     
@@ -183,6 +184,140 @@ def threeD_array_click(stack_array,Text="Click",SampleImg=None,ShowPoint=False,S
                 return z,int((512-y)/resize_ratio_yx[0]),int(x/resize_ratio_yx[1])
                 break
 
+def MultipleUncaging_click(tiffpath,Text="Click",SampleImg=None,ShowPoint=False,ShowPoint_YX=[0,0]):
+    # stack_array= first_tiff_read(tiffpath)
+    stack_array = np.array(imread(tiffpath))
+    TiffShape= stack_array.shape
+    col_list=['red','cyan']
+    ShowPointsYXlist = []
+    
+    if len(TiffShape)==3:
+        NumOfZ = TiffShape[0]
+        Z_change=[sg.Text("Z position", size=(20, 1)),
+                  sg.Slider(orientation ='horizontal', key='Z',
+                            default_value=int(NumOfZ/2), range=(1,NumOfZ),enable_events = True)            
+                  ]
+        im_PIL,resize_ratio_yx = tiffarray_to_PIL(stack_array,Percent=100, show_size_xy=[512,512],
+                                                  return_ratio=True,NthSlice=int(NumOfZ/2))
+    else:
+        NumOfZ = 1
+        Z_change=[]
+        im_PIL,resize_ratio_yx = tiffarray_to_PIL(stack_array,Percent=100, show_size_xy=[512,512],
+                                                  return_ratio=True,NthSlice=1)
+
+    data =  PILimg_to_data(im_PIL)    
+    
+    data_sample = OpenPNG(pngpath=SampleImg)
+
+    sg.theme('Dark Blue 3')
+
+    layout = [
+                [sg.Text(Text, font='Arial 10', text_color='black', background_color='white', size=(60, 2))],
+                [
+                sg.Graph(
+                canvas_size=(512, 512), graph_bottom_left=(0, 0),
+                graph_top_right=(512, 512),
+                key="-GRAPH-",
+                enable_events=True,background_color='lightblue',
+                drag_submits=True,motion_events=True,
+                ),
+                sg.Graph(
+                canvas_size=(512, 512), graph_bottom_left=(0, 0),
+                graph_top_right=(512, 512),
+                key="-Sample-",
+                enable_events=True,background_color='black',
+                drag_submits=True,motion_events=True,
+                )
+                ],
+              [
+               sg.Text("Contrast", size=(20, 1)),
+               sg.Slider(orientation ='horizontal', key='Intensity',default_value=100,
+                         range=(1,100),enable_events = True),
+              ],
+               Z_change
+              ,
+            [sg.Text(key='-INFO-', size=(60, 1)),sg.Button('Assign', size=(20, 2)),sg.Button('Reset', size=(20, 2)),sg.Button('OK', size=(20, 2))]
+            ]
+    
+    window = sg.Window("Spine selection", layout, finalize=True)
+    graph = window["-GRAPH-"]       # type: sg.Graph
+    graph.draw_image(data=data, location=(0,512))
+    
+    window["-Sample-"].draw_image(data=data_sample, location=(0,512))
+   
+    if len(ShowPointsYXlist)>0:
+        col_list=['cyan','red']
+        y_2 = 512 - ShowPoint_YX[0]*resize_ratio_yx[0]
+        x_2 = ShowPoint_YX[1]*resize_ratio_yx[1]
+        graph.draw_point((x_2,y_2), size=5, color = col_list[1])
+        
+    x=-1;y=-1;fixedSlice=-1;
+
+    NthSlice = 1
+    fixZ = False
+    
+    while True:
+        event, values = window.read()
+        ShowIntensityMax = values['Intensity']
+
+        if len(TiffShape)==3:
+            if fixZ == False:
+                NthSlice = int(values['Z'])
+            else:
+                NthSlice = fixedSlice          
+
+        if event == sg.WIN_CLOSED:
+            break
+
+        if event == "-GRAPH-":
+            x, y = values["-GRAPH-"]
+            im_PIL = tiffarray_to_PIL(stack_array,Percent=ShowIntensityMax,NthSlice=NthSlice)
+            data =  PILimg_to_data(im_PIL)
+            graph.erase()
+            graph.draw_image(data=data, location=(0,512))
+            graph.draw_point((x,y), size=5, color = col_list[0])
+
+            if len(ShowPointsYXlist)>0:
+                for EachYX in ShowPointsYXlist:
+                    graph.draw_point((EachYX[1],EachYX[0]), size=5, color = col_list[1])
+
+        if event ==  'Update' or 'Z' or "Intensity":
+            im_PIL = tiffarray_to_PIL(stack_array,Percent=ShowIntensityMax,NthSlice=NthSlice)
+            data =  PILimg_to_data(im_PIL)
+            graph.draw_image(data=data, location=(0,512))
+            graph.draw_point((x,y), size=5, color = col_list[0])
+            if len(ShowPointsYXlist)>0:
+                for EachYX in ShowPointsYXlist:
+                    graph.draw_point((EachYX[1],EachYX[0]), size=5, color = col_list[1])
+
+        if event ==  'Assign':
+            z,y,x=NthSlice-1, y, x
+            ShowPointsYXlist.append([y,x])
+            fixZ = True
+            fixedSlice = NthSlice
+            
+            
+        if event ==  'Reset':
+            ShowPointsYXlist = []
+            fixZ = False
+            
+        if event ==  'OK':
+            if x==-1:
+                window["-INFO-"].update(value="Please click",text_color='red', background_color='white')
+                continue
+            else:
+                z = fixedSlice-1
+                window.close()
+                xlist, ylist = [], []
+                for EachYX in ShowPointsYXlist:
+                    xlist.append(EachYX[1]/resize_ratio_yx[1])
+                    ylist.append(EachYX[0]/resize_ratio_yx[0])
+                
+                return z,ylist,xlist
+                break
+            
+            
+
 def threeD_img_click(tiffpath,Text="Click",SampleImg=None,ShowPoint=False,ShowPoint_YX=[0,0]):
     TiffShape= first_tiff_read(tiffpath)
     col_list=['red','cyan']
@@ -279,6 +414,7 @@ def threeD_img_click(tiffpath,Text="Click",SampleImg=None,ShowPoint=False,ShowPo
             if ShowPoint==True:
                 graph.draw_point((x_2,y_2), size=5, color = col_list[1])
 
+            
         if event ==  'OK':
             if x==-1:
                 window["-INFO-"].update(value="Please click")
@@ -379,20 +515,22 @@ def TwoD_2ch_img_click(transparent_tiffpath, fluorescent_tiffpath, Text="Click",
 
 
 def main():
-    # tiffpath=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221215\Intensity\CAGGFP_Slice2_dendrite1__Ch1_018.tif"
-    # Spine_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Spine_example.png"
-    # Dendrite_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Dendrite_example.png"
-    # z,y,x = threeD_img_click(tiffpath,SampleImg=Spine_example,ShowPoint=True,ShowPoint_YX=[110,134])
+    tiffpath=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221215\Intensity\CAGGFP_Slice2_dendrite1__Ch1_018.tif"
+    Spine_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Spine_example.png"
+    Dendrite_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Dendrite_example.png"
+    # z,y,x = threeD_img_click(tiffpath,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])
+    
+    z, ylist, xlist = MultipleUncaging_click(tiffpath,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])
     
     # stack_array = np.array(imread(tiffpath))
     # z,y,x = threeD_array_click(stack_array,SampleImg=Spine_example,ShowPoint=True,ShowPoint_YX=[110,134])
-    transparent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_142934.tif"
-    fluorescent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_143344_99.99norm.tif"
+    # transparent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_142934.tif"
+    # fluorescent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_143344_99.99norm.tif"
     # transparent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_143344_99.99norm-1.tif"
     # fluorescent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_142934-1.tif"
     
-    y, x = TwoD_2ch_img_click(transparent_tiffpath, fluorescent_tiffpath, Text="Click")
-    print(y,x)
+    # y, x = TwoD_2ch_img_click(transparent_tiffpath, fluorescent_tiffpath, Text="Click")
+    # print(y,x)
 
 if __name__=="__main__":
     main()

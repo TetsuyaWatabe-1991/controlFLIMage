@@ -82,7 +82,7 @@ class LaserSettingAuto():
 def main1():
     LaserAuto = LaserSettingAuto()
     
-    laser_1or2 = 2
+    laser_1or2 = 1
     
     
     percent_list = [0,10,20,30,40,50]
