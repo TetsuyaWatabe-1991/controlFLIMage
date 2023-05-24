@@ -123,7 +123,7 @@ class control_flimage():
     def example_image(self):
         self.Spine_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Spine_example.png"
         self.Dendrite_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Dendrite_example.png"
-        
+        self.Uncaging_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Uncaging_example.png"
 
     def set_param(self,RepeatNum,interval_sec,ch_1or2,
                   uncaging_power = 20,
@@ -324,7 +324,9 @@ class control_flimage():
             
             
     def define_uncagingPoint(self):
-        self.wait_while_grabbing()
+        # print("define uncaging point")
+        # self.wait_while_grabbing()
+        # print("END waiting")
         
         Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([self.flimlist[0]],ch=self.ch)
         FirstStack=Tiff_MultiArray[0]
@@ -551,7 +553,12 @@ class control_flimage():
                                     self.single_shift[0],
                                     self.single_shift[1]]])
             
-    
+    def set_uncaging_power(self,power_percent):
+        if power_percent not in range(101):
+            raise Exception("power_percent should be integer and from 0 to 100.")
+        else:
+            self.flim.sendCommand(f"State.Uncaging.Power = {power_percent}")
+            
           
     def acquire_independent(self):
         for NthAc in range(self.RepeatNum):

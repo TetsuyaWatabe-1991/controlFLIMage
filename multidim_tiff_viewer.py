@@ -65,6 +65,7 @@ def tiffarray_to_PIL(stack_array,Percent=100,show_size_xy=[512,512],
         im_array = stack_array
     
     norm_array = (100/Percent)*255*(im_array/im_array.max())
+    print(norm_array)
     norm_array[norm_array>255]=255
     rgb_array = cv2.cvtColor(norm_array.astype(np.uint8),cv2.COLOR_GRAY2RGB)
     im_PIL = Image.fromarray(rgb_array)
@@ -314,8 +315,10 @@ def multiple_uncaging_click(stack_array,Text="Click",SampleImg=None,ShowPoint=Fa
                 
                 return z,ylist,xlist
                 break
+
+
             
-            
+
 
 def threeD_img_click(tiffpath,Text="Click",SampleImg=None,ShowPoint=False,ShowPoint_YX=[0,0]):
     TiffShape= first_tiff_read(tiffpath)
@@ -511,18 +514,48 @@ def TwoD_2ch_img_click(transparent_tiffpath, fluorescent_tiffpath, Text="Click",
                 return int((show_size_xy[0]-y)/resize_ratio_yx[0]),int(x/resize_ratio_yx[1])
                 break
 
+def tiffarray_to_PIL2(stack_array,Percent=100,show_size_xy=[512,512],
+                     return_ratio=False,NthSlice=1):
+    # This can be used for two D image also.
+    
+    if Percent<1 or Percent>100:
+        Percent=100
+        
+    if len(stack_array.shape)== 3:
+        im_array = stack_array[NthSlice-1,:,:]
+    else:
+        im_array = stack_array
+    
+    norm_array = (100/Percent)*255*(im_array/im_array.max())
+    print(norm_array)
+    norm_array[norm_array>255]=255
+    rgb_array = cv2.cvtColor(norm_array.astype(np.uint8),cv2.COLOR_GRAY2RGB)
+    im_PIL = Image.fromarray(rgb_array)
+    
+    im_PIL = im_PIL.resize(show_size_xy)
+    resize_ratio_yx = (show_size_xy[0]/im_array.shape[0],show_size_xy[1]/im_array.shape[1])
+    if return_ratio==True:    
+        return im_PIL,resize_ratio_yx
+    else:
+        return im_PIL 
 
 
 def main():
+    from FLIMageAlignment import flim_files_to_nparray
     tiffpath=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221215\Intensity\CAGGFP_Slice2_dendrite1__Ch1_018.tif"
     Spine_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Spine_example.png"
     Dendrite_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Dendrite_example.png"
     # z,y,x = threeD_img_click(tiffpath,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])
     
-    z, ylist, xlist = MultipleUncaging_click(tiffpath,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])
+    # z, ylist, xlist = MultipleUncaging_click(tiffpath,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])
+    Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230508\Rab10CY_slice1_dend1_timelapse2_001.flim"],
+                                                                       ch=0)
+    FirstStack=Tiff_MultiArray[0]
+    stack_array = np.array(imread(tiffpath))
     
-    # stack_array = np.array(imread(tiffpath))
-    # z,y,x = threeD_array_click(stack_array,SampleImg=Spine_example,ShowPoint=True,ShowPoint_YX=[110,134])
+    tiffarray_to_PIL2(FirstStack,NthSlice=4)
+    
+    z,y,x = threeD_array_click(FirstStack,SampleImg=Spine_example,ShowPoint=True,ShowPoint_YX=[110,134])
     # transparent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_142934.tif"
     # fluorescent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_143344_99.99norm.tif"
     # transparent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_143344_99.99norm-1.tif"
@@ -530,7 +563,11 @@ def main():
     
     # y, x = TwoD_2ch_img_click(transparent_tiffpath, fluorescent_tiffpath, Text="Click")
     # print(y,x)
+    
+    
 
 if __name__=="__main__":
     main()
 # print(z,y,x)
+
+
