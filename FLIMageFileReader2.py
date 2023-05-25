@@ -24,8 +24,26 @@ import os,codecs,re
 import numpy as np
 from datetime import datetime
 import tifffile
+import ast
 
-
+def convert_string(s):
+    try:
+        return int(s)
+    except ValueError:
+        try:
+            return float(s)
+        except ValueError:
+            if s.lower() == 'true':
+                return True
+            elif s.lower() == 'false':
+                return False
+            else:
+                if len(s)>2:
+                    if s[0]=='"' and s[-1] == '"':
+                        s = s[1:-1]
+                return s
+            
+            
 class FileReader:
     def __init__(self):        
         self.n_images = 1
@@ -56,6 +74,8 @@ class FileReader:
         #Format
         self.ImageFormat = 'Linear'
         self.State = microscope_parameters() #All the detailed information is in State parameters.
+        self.statedict = dict()
+        
         #See 
         '''
         Parameters are in:
@@ -87,6 +107,7 @@ class FileReader:
     def decode_header(self, header, new = True):
         # infos = header.decode('ASCII').split('\r\n')
         infos = header.split('\r\n')
+        statedict = dict()
         for info in infos:
             info = info.replace(";", "")
             #eq1 = info.split(' = ')
@@ -97,7 +118,14 @@ class FileReader:
             if 'Format' in info:
                 format_str = info.split(' = ')
                 self.ImageFormat = format_str[1]
-                
+            if "State." in info:
+                keyitem = info.split(' = ')
+                if "[" in keyitem[1]:
+                    keyitem[1] = ast.literal_eval(keyitem[1])
+                else:
+                    keyitem[1] = convert_string(keyitem[1])
+                self.statedict[keyitem[0]] = keyitem[1]
+
             #Acquired time will be read in other function
             # if 'Acquired_Time' in info:
             #     format_str = info.split(' = ')
