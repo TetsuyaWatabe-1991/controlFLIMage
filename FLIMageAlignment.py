@@ -75,6 +75,22 @@ def Align_4d_array(Tiff_MultiArray):
     Aligned_4d_array = np.array(Aligned_4d)
     return shifts, Aligned_4d_array
 
+def align_two_flimfile(flim_1, flim_2, iminfo, ch, return_pixel = False):
+    filelist = [flim_1, flim_2]
+    Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(filelist,ch=ch)
+    shifts_zyx_pixel, Aligned_4d_array=Align_4d_array(Tiff_MultiArray)
+    # print(shifts_zyx_pixel)
+    x_um, y_um, z_um = get_xyz_pixel_um(iminfo)
+    
+    x_relative = x_um*shifts_zyx_pixel[-1][2]
+    y_relative = y_um*shifts_zyx_pixel[-1][1]
+    z_relative = z_um*shifts_zyx_pixel[-1][0]
+    
+    if return_pixel == True:
+        return [z_relative, y_relative, x_relative], Aligned_4d_array, shifts_zyx_pixel
+    else:
+        return [z_relative, y_relative, x_relative], Aligned_4d_array
+
 
 def flim_files_to_nparray(filelist,ch=0,normalize_by_averageNum=True):
     FourDimList=[]
@@ -96,9 +112,15 @@ def flim_files_to_nparray(filelist,ch=0,normalize_by_averageNum=True):
         if First:
             First=False
             imageshape=imagearray.shape
-        
+
+        # 2023/5/31        
+        # if imagearray.shape == imageshape:
+        #     intensityarray=np.sum(imagearray,axis=-1)/DivBy
+        #     FourDimList.append(intensityarray)
+        #     timestamp_list.append(datetime.strptime(iminfo.acqTime[0],'%Y-%m-%dT%H:%M:%S.%f'))
+        #     relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds) 
         if imagearray.shape == imageshape:
-            intensityarray=np.sum(imagearray,axis=-1)/DivBy
+            intensityarray=(12*np.sum(imagearray,axis=-1))/DivBy
             FourDimList.append(intensityarray)
             timestamp_list.append(datetime.strptime(iminfo.acqTime[0],'%Y-%m-%dT%H:%M:%S.%f'))
             relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds) 

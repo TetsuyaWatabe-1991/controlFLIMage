@@ -589,11 +589,15 @@ class control_flimage():
         print('break  wait_grab_status_python')
     
     
+    def set_xyz_um(self,iminfo):
+        self.x_um, self.y_um, self.z_um = get_xyz_pixel_um(iminfo)
+    
     def drift_uncaging_process(self):
         self.flimlist=glob.glob(os.path.join(self.folder,f"{self.NameStem}*.flim"))
         if self.x_um == 0:
             Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([self.flimlist[0]],ch=self.ch)
-            self.x_um, self.y_um, self.z_um = get_xyz_pixel_um(iminfo)
+            # self.x_um, self.y_um, self.z_um = get_xyz_pixel_um(iminfo)
+            self.set_xyz_um(iminfo)
 
         checkedNth = -1
         for i in range(6000):

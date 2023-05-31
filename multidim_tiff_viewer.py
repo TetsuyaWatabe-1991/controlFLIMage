@@ -545,9 +545,9 @@ def main():
     tiffpath=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221215\Intensity\CAGGFP_Slice2_dendrite1__Ch1_018.tif"
     Spine_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Spine_example.png"
     Dendrite_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Dendrite_example.png"
-    # z,y,x = threeD_img_click(tiffpath,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])
-    
+    # z,y,x = threeD_img_click(tiffpath,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])    
     # z, ylist, xlist = MultipleUncaging_click(tiffpath,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])
+
     Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230508\Rab10CY_slice1_dend1_timelapse2_001.flim"],
                                                                        ch=0)
     FirstStack=Tiff_MultiArray[0]
@@ -555,16 +555,16 @@ def main():
     
     tiffarray_to_PIL2(FirstStack,NthSlice=4)
     
-    z,y,x = threeD_array_click(FirstStack,SampleImg=Spine_example,ShowPoint=True,ShowPoint_YX=[110,134])
-    # transparent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_142934.tif"
-    # fluorescent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_143344_99.99norm.tif"
-    # transparent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_143344_99.99norm-1.tif"
-    # fluorescent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_142934-1.tif"
+    # z,y,x = threeD_array_click(FirstStack,SampleImg=Spine_example,ShowPoint=True,ShowPoint_YX=[110,134])
+    # # transparent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_142934.tif"
+    # # fluorescent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_143344_99.99norm.tif"
+    # # transparent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_143344_99.99norm-1.tif"
+    # # fluorescent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_142934-1.tif"
+    # # y, x = TwoD_2ch_img_click(transparent_tiffpath, fluorescent_tiffpath, Text="Click")
+    # print(z,y,x)
     
-    # y, x = TwoD_2ch_img_click(transparent_tiffpath, fluorescent_tiffpath, Text="Click")
-    # print(y,x)
-    
-    
+    z, ylist, xlist = multiple_uncaging_click(FirstStack,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])
+    print(z, ylist, xlist)
 
 if __name__=="__main__":
     main()
