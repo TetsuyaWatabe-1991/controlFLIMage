@@ -311,8 +311,8 @@ def multiple_uncaging_click(stack_array,Text="Click",SampleImg=None,ShowPoint=Fa
                 xlist, ylist = [], []
                 for EachYX in ShowPointsYXlist:
                     xlist.append(EachYX[1]/resize_ratio_yx[1])
-                    ylist.append(EachYX[0]/resize_ratio_yx[0])
-                
+                    ylist.append((512-EachYX[0])/resize_ratio_yx[0])
+
                 return z,ylist,xlist
                 break
 
