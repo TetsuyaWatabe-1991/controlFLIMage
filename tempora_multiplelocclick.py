@@ -30,14 +30,33 @@ with open(txtpath, 'w') as f:
     for nth_pos in range(num_pos):
         f.write(f'{z},{ylist[nth_pos]},{xlist[nth_pos]}\n')
 
-
+z = -99
+ylist, xlist = [], []
+with open(txtpath, 'r') as f:
+    num_pos = int(f.readline())
+    for nth_pos in range(num_pos):
+        zyx = (f.readline()).split(",")
+        z = int(zyx[0])
+        ylist.append(float(zyx[1]))
+        xlist.append(float(zyx[2]))
 
 if False:
     FLIMageCont = control_flimage()    
     FLIMageCont.flim.sendCommand("ClearUncagingLocation")
     
     for nth_pos in range(num_pos):
-
+        
         FLIMageCont.flim.sendCommand(f"CreateUncagingLocation,{int(xlist[nth_pos])},{int(ylist[nth_pos])}")
-
+        
         print(f"CreateUncagingLocation,{xlist[nth_pos]},{ylist[nth_pos]}")
+    
+    FLIMageCont.flim.sendCommand(f"State.Uncaging.nPulses = {z}")
+    # FLIMageCont.flim.sendCommand(f"State.Uncaging.Power = {10}")
+    if z > 1:
+        FLIMageCont.flim.sendCommand("State.Uncaging.rotatePosition = True")
+    else:
+        FLIMageCont.flim.sendCommand("State.Uncaging.rotatePosition = False")
+
+
+
+

@@ -160,13 +160,12 @@ for nthacquisiton in range(num_T):
                 print(f"{i+2} th trial .....")
                 FLIMageCont.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
                 sleep(4)
-        
+                
         # if nthacquisiton>5 and nthacquisiton%4==0:
         #     zure = 3*random.randint(-2,2)
         #     z_str = str(each_lowhigh_instance.lowmag_pos[2]+zure)
         #     FLIMageCont.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
         #     sleep(4)
-        
         
         FLIMageCont.flim.sendCommand(f'State.Files.fileCounter = {lowcounter}')
         FLIMageCont.flim_connect_check()
@@ -322,12 +321,12 @@ if False:
         latestfilepath = os.path.join(each_lowhigh_instance.highmag_iminfo.statedict["State.Files.pathName"], 
                                       each_lowhigh_instance.highmag_basename + str(highcounter).zfill(3) + ".flim")
         
-        FLIMageCont.relative_zyx_um, Aligned_4d_array, shifts_zyx_pixel = align_two_flimfile(each_lowhigh_instance.highmag_path, 
-                                                                         latestfilepath, 
-                                                                         each_lowhigh_instance.highmag_iminfo,
-                                                                         each_lowhigh_instance.ch,
-                                                                         return_pixel = True)
-    
+        FLIMageCont.relative_zyx_um, Aligned_4d_array, shifts_zyx_pixel = align_two_flimfile(
+                                                                            each_lowhigh_instance.highmag_path, 
+                                                                            latestfilepath,
+                                                                            each_lowhigh_instance.ch,
+                                                                            return_pixel = True)
+        
         # This is little bit unsual way.  Non intrinsic.  Fix later.
         FLIMageCont.shifts_zyx_pixel = shifts_zyx_pixel
         FLIMageCont.Aligned_4d_array = Aligned_4d_array

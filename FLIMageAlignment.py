@@ -75,7 +75,7 @@ def Align_4d_array(Tiff_MultiArray):
     Aligned_4d_array = np.array(Aligned_4d)
     return shifts, Aligned_4d_array
 
-def align_two_flimfile(flim_1, flim_2, iminfo, ch, return_pixel = False):
+def align_two_flimfile(flim_1, flim_2, ch, return_pixel = False):
     filelist = [flim_1, flim_2]
     Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(filelist,ch=ch)
     shifts_zyx_pixel, Aligned_4d_array=Align_4d_array(Tiff_MultiArray)
