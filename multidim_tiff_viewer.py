@@ -4,6 +4,7 @@ Created on Tue Dec 20 08:56:14 2022
 
 @author: yasudalab
 """
+import math
 import PySimpleGUI as sg
 import numpy as np
 from io import BytesIO
@@ -11,6 +12,89 @@ from PIL import Image
 from tifffile import imread
 import cv2
 import base64
+from FLIMageAlignment import flim_files_to_nparray
+from skimage.measure import label, regionprops
+
+def read_multiple_uncagingpos(flimpath):
+    
+    txtpath = flimpath[:-5]+".txt"
+    z = -99
+    ylist, xlist = [], []
+    with open(txtpath, 'r') as f:
+        num_pos = int(f.readline())
+        for nth_pos in range(num_pos):
+            zyx = (f.readline()).split(",")
+            z = int(zyx[0])
+            ylist.append(float(zyx[1]))
+            xlist.append(float(zyx[2]))
+    if len(ylist)<1 or z ==-99:
+        raise Exception(f"{txtpath} do not have any uncaging position")
+    else:
+        return z, ylist, xlist
+
+def read_dendriteinfo(flimpath):
+    txtpath = flimpath[:-5]+"dendrite.txt"    
+    direction_list, orientation_list, dendylist, dendxlist = [], []
+    with open(txtpath, 'r') as f:
+        num_pos = int(f.readline())
+        for nth_pos in range(num_pos):
+            dir_ori_y_x = (f.readline()).split(",")
+            #{direction},{orientation},{y_moved},{x_moved
+            direction_list.append(int(dir_ori_y_x[0]))
+            orientation_list.append(float(dir_ori_y_x[1]))
+            dendylist.append(int(dir_ori_y_x[2]))
+            dendxlist.append(int(dir_ori_y_x[3]))
+    if len(direction_list) < 1:
+        raise Exception(f"{txtpath} do not have any uncaging position")
+    else:
+        return direction_list, orientation_list, dendylist, dendxlist 
+    
+    
+def dend_props_forEach(flimpath, ch1or2=1,
+                       square_side_half_len = 20,
+                       threshold_coordinate = 0.5, Gaussian_pixel = 3):
+    ch = ch1or2 - 1
+    Tiff_MultiArray, _, _ = flim_files_to_nparray([flimpath],ch=ch)
+    ZYXarray = Tiff_MultiArray[0]
+    
+    maxproj = np.max(ZYXarray, axis = 0)
+    z, ylist, xlist = read_multiple_uncagingpos(flimpath)
+    
+    txtpath = flimpath[:-5]+"dendrite.txt"
+    with open(txtpath, 'w') as f:
+        f.write(str(len(ylist))+'\n')
+        for y, x in zip(ylist, xlist):
+            maxproj_aroundYX = maxproj[y - square_side_half_len : y + square_side_half_len + 1,
+                                       x - square_side_half_len : x + square_side_half_len + 1]
+            blur = cv2.GaussianBlur(maxproj_aroundYX,(Gaussian_pixel,Gaussian_pixel),0)
+            Threshold = blur[square_side_half_len,square_side_half_len]*threshold_coordinate
+            print(f"x, y, Threshold - {x},{y},{Threshold}")
+            ret3,th3 = cv2.threshold(blur,Threshold,255,cv2.THRESH_BINARY)
+            label_img = label(th3)
+            
+            spineregion = -1
+            for each_label in range(1,label_img.max()+1):
+                if label_img[square_side_half_len, square_side_half_len] == each_label:
+                    spineregion = each_label
+                    
+            if spineregion < 1:
+                print("\n\n ERROR 102,  Cannot find dendrite \n No update in uncaging position. \n")
+                return None
+            
+            else:
+                dendprops = regionprops(label(th3[label_img == spineregion]))[0]
+    
+            orientation = round(dendprops.orientation,3)
+            y0,x0 = dendprops.centroid 
+            x_moved = x0 - square_side_half_len
+            y_moved = y0 - square_side_half_len    
+            x_rotated = x_moved*math.cos(orientation) - y_moved*math.sin(orientation)
+            if x_rotated<=0:
+                direction = 1
+            else:
+                direction = -1
+            f.write(f'{direction},{orientation},{y_moved},{x_moved}\n')
+    print(f"Dendrite information was saved as {txtpath}")
 
 def PILimg_to_data(im):
     with BytesIO() as output:
@@ -87,7 +171,7 @@ def threeD_array_click(stack_array,Text="Click",SampleImg=None,ShowPoint=False,S
         NumOfZ = TiffShape[0]
         Z_change=[sg.Text("Z position", size=(20, 1)),
                   sg.Slider(orientation ='horizontal', key='Z',
-                            default_value=int(NumOfZ/2), range=(1,NumOfZ),enable_events = True)            
+                            default_value=int(NumOfZ/2), range=(1,NumOfZ),enable_events = True)
                   ]
         im_PIL,resize_ratio_yx = tiffarray_to_PIL(stack_array,Percent=100, show_size_xy=[512,512],
                                                   return_ratio=True,NthSlice=int(NumOfZ/2))
@@ -97,7 +181,7 @@ def threeD_array_click(stack_array,Text="Click",SampleImg=None,ShowPoint=False,S
         im_PIL,resize_ratio_yx = tiffarray_to_PIL(stack_array,Percent=100, show_size_xy=[512,512],
                                                   return_ratio=True,NthSlice=1)
 
-    data =  PILimg_to_data(im_PIL)    
+    data =  PILimg_to_data(im_PIL)
     
     data_sample = OpenPNG(pngpath=SampleImg)
 
@@ -315,10 +399,28 @@ def multiple_uncaging_click(stack_array,Text="Click",SampleImg=None,ShowPoint=Fa
 
                 return z,ylist,xlist
                 break
+    
 
 
-            
-
+def multiple_uncaging_click_savetext(flimpath, ch1or2=1):
+    ch = ch1or2 - 1
+    Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([flimpath],
+                                                                       ch=ch)
+    FirstStack = Tiff_MultiArray[0]
+    z, ylist, xlist = multiple_uncaging_click(FirstStack,SampleImg=None,
+                                              ShowPoint=False,ShowPoint_YX=[110,134])
+    print(z, ylist, xlist)
+    
+    num_pos = len(ylist)
+    
+    txtpath = flimpath[:-5]+".txt"
+    
+    with open(txtpath, 'w') as f:
+        f.write(str(num_pos)+'\n')
+        for nth_pos in range(num_pos):
+            f.write(f'{z},{ylist[nth_pos]},{xlist[nth_pos]}\n')
+    print(f"Uncaging pos file was saved as {txtpath}")
+    
 
 def threeD_img_click(tiffpath,Text="Click",SampleImg=None,ShowPoint=False,ShowPoint_YX=[0,0]):
     TiffShape= first_tiff_read(tiffpath)
@@ -571,3 +673,4 @@ if __name__=="__main__":
 
 
 
+0

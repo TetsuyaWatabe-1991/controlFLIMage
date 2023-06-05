@@ -75,6 +75,8 @@ def plot_uncaging_point(props, binary, blur, image, candi_y,
         return f, axarr
 
 
+
+
 class control_flimage():
 
     def __init__(self,ini_path=r'DirectionSetting.ini'):
@@ -163,6 +165,62 @@ class control_flimage():
         z_str=str(z - self.directionMotorZ * self.relative_zyx_um[0])
         print(f"print SetMotorPosition,{x_str},{y_str},{z_str}")
         self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
+
+
+    def go_to_relative_pos_motor_checkstate(self, sq_err_thre = 10, 
+                                            first_wait_sec = 4, iter_wait_sec = 2):
+        x,y,z=self.get_position()
+        dest_x = x - self.directionMotorX * self.relative_zyx_um[2]
+        dest_y = y - self.directionMotorY * self.relative_zyx_um[1]
+        dest_z = z - self.directionMotorZ * self.relative_zyx_um[0]
+        x_str=str(dest_x)
+        y_str=str(dest_y)
+        z_str=str(dest_z)
+                
+        print(f"print SetMotorPosition,{x_str},{y_str},{z_str}")
+        self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
+        sleep(first_wait_sec)
+        
+        dest_xyz = np.array([dest_x, dest_y, dest_z])
+        for i in range(10):
+            currentpos2 = FLIMageCont.get_val_sendCommand("State.Motor.motorPosition")
+            currentpos_num2 = np.array(currentpos2[1:-1].split(","), dtype=float)
+            
+            diff2 =  currentpos_num2 - dest_xyz
+            sum_sq_err2 = (diff2*diff2).sum()
+            
+            if sum_sq_err2 > 10:
+                print("Not moved yet . . . . ")
+                print(f"{i+2} th trial .....")
+                sleep(iter_wait_sec)
+                self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
+
+    def go_to_absolute_pos_motor_checkstate(self,dest_x,dest_y,dest_z, 
+                                            sq_err_thre = 10, 
+                                            first_wait_sec = 4, 
+                                            iter_wait_sec = 2):
+        x,y,z=self.get_position()
+        x_str=str(dest_x)
+        y_str=str(dest_y)
+        z_str=str(dest_z)
+                
+        print(f"print SetMotorPosition,{x_str},{y_str},{z_str}")
+        self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
+        sleep(first_wait_sec)
+        
+        dest_xyz = np.array([dest_x, dest_y, dest_z])
+        for i in range(10):
+            currentpos2 = FLIMageCont.get_val_sendCommand("State.Motor.motorPosition")
+            currentpos_num2 = np.array(currentpos2[1:-1].split(","), dtype=float)
+            
+            diff2 =  currentpos_num2 - dest_xyz
+            sum_sq_err2 = (diff2*diff2).sum()
+            
+            if sum_sq_err2 > 10:
+                print("Not moved yet . . . . ")
+                print(f"{i+2} th trial .....")
+                sleep(iter_wait_sec)
+                self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
 
 
     def get_galvo_xy(self):
@@ -278,6 +336,10 @@ class control_flimage():
             
         # self.convert_shifts_pix_to_micro(self.shifts_zyx_pixel)
       
+    def acquisition_include_connect_wait(self):
+        self.flim_connect_check()
+        self.flim.sendCommand('StartGrab')
+        self.wait_while_grabbing()
     
     def flim_connect_check(self):
         if self.flim.Connected==False:
@@ -366,6 +428,19 @@ class control_flimage():
         self.shifts_fromSmall, self.Small_Aligned_4d_array=Align_4d_array(TrimmedAroundSpine)
 
 
+
+
+    # FLIMageCont.makingTYX_from3d_and_2d(first_flim=each_lowhigh_instance.highmag_path,
+    #                                     TwoDflim_Nth=-1,
+    #                                     z=uncaging_Z,
+    #                                     ch=each_lowhigh_instance.ch
+    #                                     )
+    
+
+
+    
+    
+
     def AlignSmallRegion_2d(self):
         TrimmedAroundSpine=self.Aligned_TYX_array[
                                                 :,
@@ -378,6 +453,23 @@ class control_flimage():
                         [0,self.shifts_2d_fromSmall[-1][0],self.shifts_2d_fromSmall[-1][1]]]
         # for eachshift in self.shifts_2d_fromSmall:
         #     changeto3dlist.append(list(eachshift))
+        print(np.array(changeto3dlist))
+        self.shifts_fromSmall = np.array(changeto3dlist)
+
+
+
+    def Align_2d_images_aroundspine(self):
+        
+        TrimmedAroundSpine=self.Aligned_TYX_array[
+                                                :,
+                                                self.Spine_ZYX[1]-self.cuboid_ZYX[1]:self.Spine_ZYX[1]+self.cuboid_ZYX[1],
+                                                self.Spine_ZYX[2]-self.cuboid_ZYX[2]:self.Spine_ZYX[2]+self.cuboid_ZYX[2],
+                                                ]
+        self.shifts_2d_fromSmall, self.Small_Aligned_3d_array=Align_3d_array(TrimmedAroundSpine)
+        
+        changeto3dlist=[[0,0,0],
+                        [0,self.shifts_2d_fromSmall[-1][0],self.shifts_2d_fromSmall[-1][1]]]
+        
         print(np.array(changeto3dlist))
         self.shifts_fromSmall = np.array(changeto3dlist)
 
@@ -396,7 +488,7 @@ class control_flimage():
         ret3,th3 = cv2.threshold(blur,Threshold,255,cv2.THRESH_BINARY)
         label_img = label(th3)
             
-        self.binary_include_dendrite=np.zeros(label_img.shape)    
+        self.binary_include_dendrite=np.zeros(label_img.shape)
         
         for each_label in range(1,label_img.max()+1):
             if label_img[dend_coord[0],dend_coord[1]] == each_label:
@@ -410,7 +502,60 @@ class control_flimage():
             self.props=regions[0]
             self.binarized=th3>0
             self.find_best_point()
+            
+    
+    def analyze_uncaging_point_from_singleplane(self, single_plane_YXarray,
+                                               threshold_coordinate=0.5,Gaussian_pixel=3):
+
+        blur = cv2.GaussianBlur(single_plane_YXarray,(Gaussian_pixel,Gaussian_pixel),0)
+        Threshold = blur[self.SpineZYX[1],self.SpineZYX[2]]*threshold_coordinate
+        print(Threshold)
+        ret3,th3 = cv2.threshold(blur,Threshold,255,cv2.THRESH_BINARY)
+        label_img = label(th3)
         
+        self.binary_include_dendrite=np.zeros(label_img.shape)
+        for each_label in range(1,label_img.max()+1):
+            if label_img[self.SpineZYX[1],self.SpineZYX[2]] == each_label:
+                self.binary_include_dendrite[label_img==each_label]=1
+                
+        if self.binary_include_dendrite.max() == 0:
+            print("\n\n ERROR 104,  Cannot find spine \n No update in uncaging position. \n")
+    
+        return 
+
+    def find_best_point_dend_ori_given(self, direction, dend_orientation,
+                                       uncaging_Y, uncaging_X,
+                                       ignore_stage_drift=False):
+
+        candi_y, candi_x = uncaging_Y, uncaging_X
+       
+        while True:
+            try:
+                if self.binary_include_dendrite[int(candi_y),int(candi_x)]>0:
+                    candi_x = candi_x + math.cos(dend_orientation)*direction
+                    candi_y = candi_y - math.sin(dend_orientation)*direction
+                else:
+                    # Assuming that x and y have same resolution
+                    distance_pixel = self.SpineHeadToUncaging_um/self.x_um
+                    candi_x = int(candi_x + math.cos(dend_orientation)*direction*distance_pixel)
+                    candi_y = int(candi_y - math.sin(dend_orientation)*direction*distance_pixel)
+                    break
+            except:
+                print("Error 103 - -  ")
+                candi_x, candi_y = self.cuboid_ZYX[2],self.cuboid_ZYX[1]
+                break
+        
+        self.candi_x = candi_x
+        self.candi_y = candi_y
+
+        if ignore_stage_drift==False:
+            self.uncaging_x=self.Spine_ZYX[2]-self.cuboid_ZYX[2] +candi_x - self.shifts_zyx_pixel[-1][2] - self.shifts_fromSmall[-1][2]
+            self.uncaging_y=self.Spine_ZYX[1]-self.cuboid_ZYX[1] +candi_y - self.shifts_zyx_pixel[-1][1] - self.shifts_fromSmall[-1][1]
+        else:
+            self.uncaging_x=self.Spine_ZYX[2]-self.cuboid_ZYX[2] +candi_x - self.shifts_fromSmall[-1][2]
+            self.uncaging_y=self.Spine_ZYX[1]-self.cuboid_ZYX[1] +candi_y - self.shifts_fromSmall[-1][1]
+    
+    
         
     def analyze_uncaging_point_TYX(self,threshold_coordinate=0.5,Gaussian_pixel=3):
         single_plane = self.Small_Aligned_3d_array[-1]
@@ -457,7 +602,10 @@ class control_flimage():
                 y0,x0 = self.props.centroid
             
         candi_x, candi_y = self.cuboid_ZYX[2],self.cuboid_ZYX[1]
-        
+
+        ## Those x(y)_moved are used only for the calculation of the vector
+        ## from dendrite center to spine. Uncaging spot will be calculated
+        ## based on this vector.
         x_moved = x0 - self.cuboid_ZYX[2]
         y_moved = y0 - self.cuboid_ZYX[1]
 
@@ -497,6 +645,16 @@ class control_flimage():
         # print("\n self.shifts_zyx_pixel - - \n", self.shifts_zyx_pixel)
         # print("\n self.shifts_fromSmall - - \n", self.shifts_fromSmall)
 
+
+    def go_to_uncaging_plane_z_assign(self,uncaging_Z):
+        print("go_to_uncaging_plane")
+        z = uncaging_Z
+        NumZ = self.Aligned_4d_array.shape[1]
+        z_move_um =  - self.z_um * (z -(NumZ - 1)/2)
+        print("z_move_um ",z_move_um)
+        self.relative_zyx_um = [z_move_um, 0, 0]
+        self.go_to_relative_pos_motor_checkstate(first_wait_sec = 1,
+                                                 iter_wait_sec = 1)
 
     def go_to_uncaging_plane(self):
         # sleep(2)

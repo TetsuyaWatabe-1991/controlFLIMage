@@ -28,19 +28,6 @@ import configparser
 import threading
 from tkinter_textinfowindow import TextWindow
 
-
-def go_to_uncaging_plane(FLIMageCont, uncaging_Z):
-    # sleep(2)
-    print("go_to_uncaging_plane")
-    # z = FLIMageCont.Spine_ZYX[0]
-    NumZ = FLIMageCont.Aligned_4d_array.shape[1]
-    z_move_um =  - FLIMageCont.z_um * (uncaging_Z -(NumZ - 1)/2)
-    z_relative = FLIMageCont.z_um*FLIMageCont.shifts_zyx_pixel[-1][0]
-    print("z_move_um ",z_move_um)
-    print("z_relative ",z_relative)
-    FLIMageCont.relative_zyx_um = [z_move_um + z_relative,0,0]
-    print(FLIMageCont.relative_zyx_um)
-    FLIMageCont.go_to_relative_pos_motor()
     
     
 def start_repeat_short(self,single_plane_align=True):

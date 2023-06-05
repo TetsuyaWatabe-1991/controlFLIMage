@@ -12,7 +12,7 @@ from FLIMageAlignment import flim_files_to_nparray
 from multidim_tiff_viewer import multiple_uncaging_click
 from controlflimage_threading import control_flimage
 
-flimpath = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230531\test2_multipos\pos8_highmag_032.flim"
+flimpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20230531\test2_multipos\pos8_highmag_032.flim"
 Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([flimpath],
                                                                    ch=0)
 FirstStack=Tiff_MultiArray[0]

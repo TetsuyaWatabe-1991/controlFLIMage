@@ -4,7 +4,8 @@ Created on Thu Dec  8 19:56:34 2022
 
 @author: yasudalab
 """
-import os,glob,path,math
+import os,glob,math
+from pathlib import Path as path
 from FLIMageFileReader2 import FileReader
 import matplotlib.pyplot as plt
 import numpy as np
@@ -113,17 +114,17 @@ def flim_files_to_nparray(filelist,ch=0,normalize_by_averageNum=True):
             First=False
             imageshape=imagearray.shape
 
-        # 2023/5/31        
+        # 2023/5/31
         # if imagearray.shape == imageshape:
         #     intensityarray=np.sum(imagearray,axis=-1)/DivBy
         #     FourDimList.append(intensityarray)
         #     timestamp_list.append(datetime.strptime(iminfo.acqTime[0],'%Y-%m-%dT%H:%M:%S.%f'))
-        #     relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds) 
+        #     relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds)
         if imagearray.shape == imageshape:
             intensityarray=(12*np.sum(imagearray,axis=-1))/DivBy
             FourDimList.append(intensityarray)
             timestamp_list.append(datetime.strptime(iminfo.acqTime[0],'%Y-%m-%dT%H:%M:%S.%f'))
-            relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds) 
+            relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds)
         else:
             print(file_path,'<- skipped read')
             
