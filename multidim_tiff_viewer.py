@@ -59,7 +59,8 @@ def dend_props_forEach(flimpath, ch1or2=1,
     
     maxproj = np.max(ZYXarray, axis = 0)
     z, ylist, xlist = read_multiple_uncagingpos(flimpath)
-    
+    ylist = list(map(int,ylist))
+    xlist = list(map(int,xlist))
     txtpath = flimpath[:-5]+"dendrite.txt"
     with open(txtpath, 'w') as f:
         f.write(str(len(ylist))+'\n')
@@ -79,15 +80,17 @@ def dend_props_forEach(flimpath, ch1or2=1,
                     
             if spineregion < 1:
                 print("\n\n ERROR 102,  Cannot find dendrite \n No update in uncaging position. \n")
-                return None
+                # return None
             
             else:
-                dendprops = regionprops(label(th3[label_img == spineregion]))[0]
+                spinebinimg = np.zeros(label_img.shape)
+                spinebinimg[label_img == spineregion] = 1
+                dendprops = regionprops(label(spinebinimg))[0]
     
             orientation = round(dendprops.orientation,3)
             y0,x0 = dendprops.centroid 
-            x_moved = x0 - square_side_half_len
-            y_moved = y0 - square_side_half_len    
+            x_moved = round(x0 - square_side_half_len,1)
+            y_moved = round(y0 - square_side_half_len,1)
             x_rotated = x_moved*math.cos(orientation) - y_moved*math.sin(orientation)
             if x_rotated<=0:
                 direction = 1
