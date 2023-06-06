@@ -14,6 +14,7 @@ import cv2
 import base64
 from FLIMageAlignment import flim_files_to_nparray
 from skimage.measure import label, regionprops
+import matplotlib.pyplot as plt
 
 def read_multiple_uncagingpos(flimpath):
     
@@ -52,7 +53,8 @@ def read_dendriteinfo(flimpath):
     
 def dend_props_forEach(flimpath, ch1or2=1,
                        square_side_half_len = 20,
-                       threshold_coordinate = 0.5, Gaussian_pixel = 3):
+                       threshold_coordinate = 0.1, Gaussian_pixel = 3,
+                       plot_img = False):
     ch = ch1or2 - 1
     Tiff_MultiArray, _, _ = flim_files_to_nparray([flimpath],ch=ch)
     ZYXarray = Tiff_MultiArray[0]
@@ -97,6 +99,15 @@ def dend_props_forEach(flimpath, ch1or2=1,
             else:
                 direction = -1
             f.write(f'{direction},{orientation},{y_moved},{x_moved}\n')
+            
+            if plot_img == True:
+                fig, (ax1, ax2) = plt.subplots(1, 2)
+                ax1.imshow(blur, cmap='gray')
+                ax2.imshow(spinebinimg, cmap='gray')
+                ax2.scatter([x0],[y0],c="r")
+                plt.show()
+                
+                            
     print(f"Dendrite information was saved as {txtpath}")
 
 def PILimg_to_data(im):
@@ -671,18 +682,62 @@ def main():
     z, ylist, xlist = multiple_uncaging_click(FirstStack,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])
     print(z, ylist, xlist)
 
+    
+
+
 def multiuncaging():
     flimpath = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test\pos2_high_001.flim"
     
     flimpath = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos4_high_003.flim"
     flimpath = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos3_high_001.flim"
-    multiple_uncaging_click_savetext(flimpath, ch1or2=1)
-    dend_props_forEach(flimpath)
-
+    flimpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos3_high_001.flim"
+    # multiple_uncaging_click_savetext(flimpath, ch1or2=1)
+    dend_props_forEach(flimpath,square_side_half_len = 25, plot_img=True)
+    
+    
 if __name__=="__main__":
-    # main()
+    multiuncaging()
     pass
 
 
 
+def get_axis_position(y0,x0,orientation, HalfLen_c=10):
+    # x0,x1,x2,x1_1,x2_1,y0,y1,y2,y1_1,y2_1 = get_axis_position(y0,x0,orientation, HalfLen_c=10)
+    
+    x1 = x0 + math.cos(orientation) * HalfLen_c #* props.minor_axis_length
+    y1 = y0 - math.sin(orientation) * HalfLen_c #* props.minor_axis_length
+    x2 = x0 - math.sin(orientation) * HalfLen_c #* props.major_axis_length
+    y2 = y0 - math.cos(orientation) * HalfLen_c #* props.major_axis_length
+    x1_1 = x0 - math.cos(orientation) * HalfLen_c #* props.minor_axis_length
+    y1_1 = y0 + math.sin(orientation) * HalfLen_c #* props.minor_axis_length
+    x2_1 = x0 + math.sin(orientation) * HalfLen_c #* props.major_axis_length
+    y2_1 = y0 + math.cos(orientation) * HalfLen_c #* props.major_axis_length
+    return x0,x1,x2,x1_1,x2_1,y0,y1,y2,y1_1,y2_1
+
+
+def check_spinepos_analyzer():
+    flimpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos3_high_001.flim"
+    ch = 0
+    Tiff_MultiArray, _, _ = flim_files_to_nparray([flimpath],ch=ch)
+    ZYXarray = Tiff_MultiArray[0]
+    maxproj = np.max(ZYXarray, axis = 0)
+    z, ylist, xlist = read_multiple_uncagingpos(flimpath)
+    ylist = list(map(int,ylist))
+    xlist = list(map(int,xlist))
+    
+    txtpath = flimpath[:-5]+"dendrite.txt"
+    direction_list, orientation_list, dendylist, dendxlist  = read_dendriteinfo(flimpath)
+    
+    dend_center_x = np.array(dendxlist) + np.array(xlist)
+    dend_center_y = np.array(dendylist) + np.array(ylist)
+    
+    plt.imshow(maxproj,cmap="gray")
+    plt.scatter(xlist,ylist,c='cyan',s=10)
+    plt.scatter(dend_center_x,dend_center_y,c='r',s=10)
+    
+    for y0, x0, orientation in zip(dend_center_y, dend_center_x, orientation_list):
+        x0,x1,x2,x1_1,x2_1,y0,y1,y2,y1_1,y2_1 = get_axis_position(y0,x0,orientation, HalfLen_c=10)
+        plt.plot((x2_1, x2), (y2_1, y2), '-b', linewidth=2.5)
+    
+    plt.show()
     
