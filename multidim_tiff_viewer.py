@@ -34,7 +34,7 @@ def read_multiple_uncagingpos(flimpath):
 
 def read_dendriteinfo(flimpath):
     txtpath = flimpath[:-5]+"dendrite.txt"    
-    direction_list, orientation_list, dendylist, dendxlist = [], []
+    direction_list, orientation_list, dendylist, dendxlist = [], [], [], []
     with open(txtpath, 'r') as f:
         num_pos = int(f.readline())
         for nth_pos in range(num_pos):
@@ -42,8 +42,8 @@ def read_dendriteinfo(flimpath):
             #{direction},{orientation},{y_moved},{x_moved
             direction_list.append(int(dir_ori_y_x[0]))
             orientation_list.append(float(dir_ori_y_x[1]))
-            dendylist.append(int(dir_ori_y_x[2]))
-            dendxlist.append(int(dir_ori_y_x[3]))
+            dendylist.append(float(dir_ori_y_x[2]))
+            dendxlist.append(float(dir_ori_y_x[3]))
     if len(direction_list) < 1:
         raise Exception(f"{txtpath} do not have any uncaging position")
     else:
@@ -671,9 +671,18 @@ def main():
     z, ylist, xlist = multiple_uncaging_click(FirstStack,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])
     print(z, ylist, xlist)
 
+def multiuncaging():
+    flimpath = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test\pos2_high_001.flim"
+    
+    flimpath = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos4_high_003.flim"
+    flimpath = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos3_high_001.flim"
+    multiple_uncaging_click_savetext(flimpath, ch1or2=1)
+    dend_props_forEach(flimpath)
+
 if __name__=="__main__":
-    main()
+    # main()
+    pass
 
 
 
-0
+    

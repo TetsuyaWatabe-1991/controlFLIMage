@@ -78,6 +78,7 @@ def Align_4d_array(Tiff_MultiArray):
 
 def align_two_flimfile(flim_1, flim_2, ch, return_pixel = False):
     filelist = [flim_1, flim_2]
+    print("filelist",filelist)
     Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(filelist,ch=ch)
     shifts_zyx_pixel, Aligned_4d_array=Align_4d_array(Tiff_MultiArray)
     # print(shifts_zyx_pixel)
@@ -131,6 +132,8 @@ def flim_files_to_nparray(filelist,ch=0,normalize_by_averageNum=True):
      
     # RawArray=np.array(FourDimList,dtype=np.uint16)
     # Tiff_MultiArray=RawArray[:,:,0,ch,:,:]
+    print("ch",ch)
+    # print("Four dim shape",FourDimList.shape)
     Tiff_MultiArray=np.array(FourDimList,dtype=np.uint16)[:,:,0,ch,:,:]
     return Tiff_MultiArray, iminfo, relative_sec_list
     

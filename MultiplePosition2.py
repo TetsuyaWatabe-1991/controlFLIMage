@@ -45,7 +45,23 @@ class Low_High_mag_assign():
         if skip_uncaging_pos==False:
             self.define_uncaging_pos()
         
+    
+    def latest_path(self,highlow="high"):
+        high_flimlist = glob.glob(os.path.join(self.highmag_iminfo.statedict["State.Files.pathName"],
+                                               self.highmag_basename+"[0-9][0-9][0-9].flim"))
+        low_flimlist = glob.glob(os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"],
+                                              self.lowmag_basename+"[0-9][0-9][0-9].flim"))
         
+        high_maxcount = get_max_flimfiles(high_flimlist)
+        low_maxcount = get_max_flimfiles(low_flimlist)
+        
+        if highlow=="low":
+            latestpath = os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"], 
+                                      self.lowmag_basename + str(low_maxcount).zfill(3) + ".flim")
+        else:
+            latestpath = os.path.join(self.highmag_iminfo.statedict["State.Files.pathName"], 
+                                      self.highmag_basename + str(high_maxcount).zfill(3) + ".flim")
+        return latestpath
         
     def define_uncaging_pos(self):
         
@@ -72,15 +88,15 @@ class Low_High_mag_assign():
         self.low_counter = get_max_plus_one_flimfiles(low_flimlist)
         self.high_counter = get_max_plus_one_flimfiles(high_flimlist)
         
-        self.low_counter_flim = os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"], 
+        self.low_max_plus1_flim = os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"], 
                                              self.lowmag_basename + str(self.low_counter).zfill(3) + ".flim")
-        self.high_counter_flim = os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"], 
+        self.high_max_plus1_flim = os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"], 
                                              self.highmag_basename + str(self.high_counter).zfill(3) + ".flim")
 
 
     def send_acq_info(self, FLIMageCont, low_or_high):
         if low_or_high == "low":
-            FLIMageCont.flim.sendCommand(f'LoadSetting, {self.self.statedict["State.Files.initFileName"]}')
+            FLIMageCont.flim.sendCommand(f'LoadSetting, {self.lowmag_iminfo.statedict["State.Files.initFileName"]}')
             FLIMageCont.flim.sendCommand(f'State.Acq.power = {self.lowmag_iminfo.statedict["State.Acq.power"]}')
             FLIMageCont.flim.sendCommand(f'State.Files.baseName = "{self.lowmag_basename}')
             FLIMageCont.flim.sendCommand(f'State.Acq.zoom = {self.lowmag_iminfo.statedict["State.Acq.zoom"]}')
@@ -108,7 +124,7 @@ class Low_High_mag_assign():
         
         if TwoDpath == False:
             TwoDpath = os.path.join(self.highmag_iminfo.statedict["State.Files.pathName"],
-                                    self.highmag_basename+"{str(get_max_flimfiles(flimlist)+1+TwoDflim_Nth).zfill(3)}.flim")
+                                    self.highmag_basename+f"{str(get_max_flimfiles(flimlist)+1+TwoDflim_Nth).zfill(3)}.flim")
         
         
         firstTiff_MultiArray, _, _ = flim_files_to_nparray([self.highmag_path], ch = ch)
@@ -121,6 +137,7 @@ class Low_High_mag_assign():
         
         
         
+
 
 def get_max_flimfiles(flimlist):
     counter = 1
@@ -142,12 +159,27 @@ def get_max_plus_one_flimfiles(flimlist):
     
 singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging.txt"
 
-list_of_fileset = [[r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230531\test1\pos6_lowmag_002.flim",
-                    r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230531\test1\pos6_highmag_001.flim"],
-                    [r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230531\test1\pos7_lowmag_004.flim",
+list_of_fileset = [[r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230531\test1\pos7_lowmag_004.flim",
                     r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230531\test1\pos7_highmag_003.flim"],
                     [r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230531\test1\pos8_lowmag_006.flim",
                     r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230531\test1\pos8_highmag_005.flim"]]
+
+
+
+list_of_fileset = [
+    [
+    
+    r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test\pos2_low_002.flim",
+    r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test\pos2_high_001.flim"
+    ]
+    ]
+
+
+list_of_fileset = [[r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos3_low_001.flim",
+                    r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos3_high_001.flim"],
+                   [r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos4_low_004.flim",
+                    r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos4_high_003.flim"]]
+
 
 
 LowHighset_instances = []
@@ -165,6 +197,10 @@ print("Now Grabbing")
 
 num_T = 50
 FLIMageCont.expected_grab_duration_sec = 10
+
+
+# each_lowhigh_instance = LowHighset_instances[0]
+# FLIMageCont.set_xyz_um(each_lowhigh_instance.highmag_iminfo)
 
 for nthacquisiton in range(num_T):
     print(f"ACQUISTION, {nthacquisiton+1}/{num_T}")
@@ -185,8 +221,7 @@ for nthacquisiton in range(num_T):
 
         FLIMageCont.relative_zyx_um, FLIMageCont.Aligned_4d_array = align_two_flimfile(
                                                             each_lowhigh_instance.lowmag_path, 
-                                                            each_lowhigh_instance.low_counter_flim, 
-                                                            each_lowhigh_instance.lowmag_iminfo,
+                                                            each_lowhigh_instance.low_max_plus1_flim,
                                                             each_lowhigh_instance.ch)
         print(FLIMageCont.relative_zyx_um)
         FLIMageCont.go_to_relative_pos_motor_checkstate()
@@ -195,12 +230,16 @@ for nthacquisiton in range(num_T):
         FLIMageCont.flim.sendCommand(f'State.Files.fileCounter = {each_lowhigh_instance.high_counter}')
         FLIMageCont.acquisition_include_connect_wait()
         
-        do_uncaging = False
+        
+        # if nthacquisiton % 5 == 4:
+        do_uncaging = True
+        # else:
+        #     do_uncaging = False
         
         if do_uncaging:
+            FLIMageCont.set_xyz_um(each_lowhigh_instance.highmag_iminfo)
             FLIMageCont.relative_zyx_um, FLIMageCont.Aligned_4d_array = align_two_flimfile(each_lowhigh_instance.highmag_path,
-                                                                 each_lowhigh_instance.high_counter_flim,
-                                                                 each_lowhigh_instance.highmag_iminfo,
+                                                                 each_lowhigh_instance.high_max_plus1_flim,
                                                                  each_lowhigh_instance.ch)
             print("align high mag frames ", FLIMageCont.relative_zyx_um)
             FLIMageCont.go_to_relative_pos_motor_checkstate()
@@ -214,11 +253,11 @@ for nthacquisiton in range(num_T):
             FLIMageCont.acquisition_include_connect_wait()
             
             #This will assign TYX array in FLIMageCont.Aligned_TYX_array
-            FLIMageCont.makingTYX_from3d_and_2d(first_flim=each_lowhigh_instance.highmag_path,
-                                                TwoDflim_Nth=-1,
-                                                z=uncaging_Z,
-                                                ch=each_lowhigh_instance.ch
-                                                )
+            # makingTYX_from3d_and_2d.makingTYX_from3d_and_2d(first_flim=each_lowhigh_instance.highmag_path,
+            #                                     TwoDflim_Nth=-1,
+            #                                     z=uncaging_Z,
+            #                                     ch=each_lowhigh_instance.ch
+            #                                     )
             
             modified_uncaging_xlist = []
             modified_uncaging_ylist = []
@@ -227,17 +266,21 @@ for nthacquisiton in range(num_T):
                                                                            uncaging_Ylist,
                                                                            direction_list,
                                                                            orientation_list):
-                FLIMageCont.Spine_ZYX = [uncaging_Z, uncaging_Y, uncaging_X]
+                FLIMageCont.Spine_ZYX = [uncaging_Z, int(uncaging_Y), int(uncaging_X)]
                 FLIMageCont.Aligned_TYX_array = each_lowhigh_instance.makingTYX_from3d_and_2d(uncaging_Z, each_lowhigh_instance.ch)
                 FLIMageCont.AlignSmallRegion_2d()  #getting self.shifts_fromSmall = (np aray shift calculated from small region)
                 
-                FLIMageCont.analyze_uncaging_point_from_singleplane()
+                flimfile_last = each_lowhigh_instance.latest_path()
+                flimarray,_,_ = flim_files_to_nparray([flimfile_last],ch=0,normalize_by_averageNum=True)
+                single_plane_YXarray = np.max(flimarray[0],axis=0)
+                
+                FLIMageCont.analyze_uncaging_point_from_singleplane(single_plane_YXarray)
                 FLIMageCont.find_best_point_dend_ori_given(direction, dend_orientation,
-                                                           uncaging_Y, uncaging_X)
+                                                           uncaging_Y, uncaging_X,ignore_stage_drift=True)
                 modified_uncaging_xlist.append(FLIMageCont.uncaging_x)
                 modified_uncaging_ylist.append(FLIMageCont.uncaging_y)
     
-        FLIMageCont.flim.sendCommand("ClearUncagingLocation")
-        for nth_pos in range(len(modified_uncaging_xlist)):
-            FLIMageCont.flim.sendCommand(f"CreateUncagingLocation,{(modified_uncaging_xlist[nth_pos])},{(modified_uncaging_ylist[nth_pos])}")
-            
+            FLIMageCont.flim.sendCommand("ClearUncagingLocation")
+            for nth_pos in range(len(modified_uncaging_xlist)):
+                FLIMageCont.flim.sendCommand(f"CreateUncagingLocation,{(modified_uncaging_xlist[nth_pos])},{(modified_uncaging_ylist[nth_pos])}")
+                

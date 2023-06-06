@@ -183,7 +183,7 @@ class control_flimage():
         
         dest_xyz = np.array([dest_x, dest_y, dest_z])
         for i in range(10):
-            currentpos2 = FLIMageCont.get_val_sendCommand("State.Motor.motorPosition")
+            currentpos2 = self.get_val_sendCommand("State.Motor.motorPosition")
             currentpos_num2 = np.array(currentpos2[1:-1].split(","), dtype=float)
             
             diff2 =  currentpos_num2 - dest_xyz
@@ -210,7 +210,7 @@ class control_flimage():
         
         dest_xyz = np.array([dest_x, dest_y, dest_z])
         for i in range(10):
-            currentpos2 = FLIMageCont.get_val_sendCommand("State.Motor.motorPosition")
+            currentpos2 = self.get_val_sendCommand("State.Motor.motorPosition")
             currentpos_num2 = np.array(currentpos2[1:-1].split(","), dtype=float)
             
             diff2 =  currentpos_num2 - dest_xyz
@@ -508,14 +508,14 @@ class control_flimage():
                                                threshold_coordinate=0.5,Gaussian_pixel=3):
 
         blur = cv2.GaussianBlur(single_plane_YXarray,(Gaussian_pixel,Gaussian_pixel),0)
-        Threshold = blur[self.SpineZYX[1],self.SpineZYX[2]]*threshold_coordinate
+        Threshold = blur[self.Spine_ZYX[1],self.Spine_ZYX[2]]*threshold_coordinate
         print(Threshold)
         ret3,th3 = cv2.threshold(blur,Threshold,255,cv2.THRESH_BINARY)
         label_img = label(th3)
         
         self.binary_include_dendrite=np.zeros(label_img.shape)
         for each_label in range(1,label_img.max()+1):
-            if label_img[self.SpineZYX[1],self.SpineZYX[2]] == each_label:
+            if label_img[self.Spine_ZYX[1],self.Spine_ZYX[2]] == each_label:
                 self.binary_include_dendrite[label_img==each_label]=1
                 
         if self.binary_include_dendrite.max() == 0:
@@ -528,33 +528,31 @@ class control_flimage():
                                        ignore_stage_drift=False):
 
         candi_y, candi_x = uncaging_Y, uncaging_X
-       
-        while True:
-            try:
-                if self.binary_include_dendrite[int(candi_y),int(candi_x)]>0:
-                    candi_x = candi_x + math.cos(dend_orientation)*direction
-                    candi_y = candi_y - math.sin(dend_orientation)*direction
-                else:
-                    # Assuming that x and y have same resolution
-                    distance_pixel = self.SpineHeadToUncaging_um/self.x_um
-                    candi_x = int(candi_x + math.cos(dend_orientation)*direction*distance_pixel)
-                    candi_y = int(candi_y - math.sin(dend_orientation)*direction*distance_pixel)
-                    break
-            except:
-                print("Error 103 - -  ")
-                candi_x, candi_y = self.cuboid_ZYX[2],self.cuboid_ZYX[1]
+        for i in range(1002):
+            if self.binary_include_dendrite[int(candi_y),int(candi_x)]>0:
+                candi_x = candi_x + math.cos(dend_orientation)*direction
+                candi_y = candi_y - math.sin(dend_orientation)*direction
+                print("candi_x,candi_y",candi_x,candi_y)
+            else:
+                # Assuming that x and y have same resolution
+                distance_pixel = self.SpineHeadToUncaging_um/self.x_um
+                candi_x = candi_x + math.cos(dend_orientation)*direction*distance_pixel
+                candi_y = candi_y - math.sin(dend_orientation)*direction*distance_pixel
+                print("distance_pixel,candi_x,candi_y",distance_pixel,candi_x,candi_y)
                 break
+        if i > 1000:
+            print("Error 113 - -  ")
+            candi_x, candi_y = self.cuboid_ZYX[2],self.cuboid_ZYX[1]
         
         self.candi_x = candi_x
         self.candi_y = candi_y
 
         if ignore_stage_drift==False:
-            self.uncaging_x=self.Spine_ZYX[2]-self.cuboid_ZYX[2] +candi_x - self.shifts_zyx_pixel[-1][2] - self.shifts_fromSmall[-1][2]
-            self.uncaging_y=self.Spine_ZYX[1]-self.cuboid_ZYX[1] +candi_y - self.shifts_zyx_pixel[-1][1] - self.shifts_fromSmall[-1][1]
+            self.uncaging_x = candi_x - self.shifts_zyx_pixel[-1][2] - self.shifts_fromSmall[-1][2]
+            self.uncaging_y = candi_y - self.shifts_zyx_pixel[-1][1] - self.shifts_fromSmall[-1][1]
         else:
-            self.uncaging_x=self.Spine_ZYX[2]-self.cuboid_ZYX[2] +candi_x - self.shifts_fromSmall[-1][2]
-            self.uncaging_y=self.Spine_ZYX[1]-self.cuboid_ZYX[1] +candi_y - self.shifts_fromSmall[-1][1]
-    
+            self.uncaging_x = candi_x - self.shifts_fromSmall[-1][2]
+            self.uncaging_y = candi_y - self.shifts_fromSmall[-1][1]
     
         
     def analyze_uncaging_point_TYX(self,threshold_coordinate=0.5,Gaussian_pixel=3):
@@ -616,21 +614,21 @@ class control_flimage():
         else:
             direction = -1
 
-        while True:
-            try:
-                if self.binarized[int(candi_y),int(candi_x)]>0:
-                    candi_x = candi_x + math.cos(orientation)*direction
-                    candi_y = candi_y - math.sin(orientation)*direction
-                else:
-                    # Assuming that x and y have same resolution
-                    distance_pixel = self.SpineHeadToUncaging_um/self.x_um
-                    candi_x = int(candi_x + math.cos(orientation)*direction*distance_pixel)
-                    candi_y = int(candi_y - math.sin(orientation)*direction*distance_pixel)
-                    break
-            except:
+        # while True:
+        for i in range(1000):
+            if self.binarized[int(candi_y),int(candi_x)]>0:
+                candi_x = candi_x + math.cos(orientation)*direction
+                candi_y = candi_y - math.sin(orientation)*direction
+            else:
+                # Assuming that x and y have same resolution
+                distance_pixel = self.SpineHeadToUncaging_um/self.x_um
+                candi_x = int(candi_x + math.cos(orientation)*direction*distance_pixel)
+                candi_y = int(candi_y - math.sin(orientation)*direction*distance_pixel)
+                break
+        
+        if i > 990:
                 print("Error 103 - -  ")
                 candi_x, candi_y = self.cuboid_ZYX[2],self.cuboid_ZYX[1]
-                break
         
         self.candi_x = candi_x
         self.candi_y = candi_y
