@@ -222,6 +222,8 @@ class control_flimage():
                 sleep(iter_wait_sec)
                 self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
 
+        #2023/6/6 added. MultiZ imaging after single plane requires this.
+        self.flim.sendCommand('SetCenter')
 
     def get_galvo_xy(self):
         for i in range(10):

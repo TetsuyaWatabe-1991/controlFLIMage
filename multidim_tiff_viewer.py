@@ -106,7 +106,21 @@ def dend_props_forEach(flimpath, ch1or2=1,
                 ax2.imshow(spinebinimg, cmap='gray')
                 ax2.scatter([x0],[y0],c="r")
                 plt.show()
-                
+    
+    if plot_img == True:            
+        direction_list, orientation_list, dendylist, dendxlist  = read_dendriteinfo(flimpath)
+        dend_center_x = np.array(dendxlist) + np.array(xlist)
+        dend_center_y = np.array(dendylist) + np.array(ylist)
+        
+        plt.imshow(maxproj,cmap="gray")
+        plt.scatter(xlist,ylist,c='cyan',s=10)
+        plt.scatter(dend_center_x,dend_center_y,c='r',s=10)
+        
+        for y0, x0, orientation in zip(dend_center_y, dend_center_x, orientation_list):
+            x0,x1,x2,x1_1,x2_1,y0,y1,y2,y1_1,y2_1 = get_axis_position(y0,x0,orientation, HalfLen_c=10)
+            plt.plot((x2_1, x2), (y2_1, y2), '-b', linewidth=1.5)
+        plt.savefig(flimpath[:-5]+".png", dpi=150, bbox_inches='tight')
+        plt.show()
                             
     print(f"Dendrite information was saved as {txtpath}")
 
@@ -656,6 +670,32 @@ def tiffarray_to_PIL2(stack_array,Percent=100,show_size_xy=[512,512],
         return im_PIL 
 
 
+
+    
+def get_axis_position(y0,x0,orientation, HalfLen_c=10):
+    # x0,x1,x2,x1_1,x2_1,y0,y1,y2,y1_1,y2_1 = get_axis_position(y0,x0,orientation, HalfLen_c=10)
+    
+    x1 = x0 + math.cos(orientation) * HalfLen_c #* props.minor_axis_length
+    y1 = y0 - math.sin(orientation) * HalfLen_c #* props.minor_axis_length
+    x2 = x0 - math.sin(orientation) * HalfLen_c #* props.major_axis_length
+    y2 = y0 - math.cos(orientation) * HalfLen_c #* props.major_axis_length
+    x1_1 = x0 - math.cos(orientation) * HalfLen_c #* props.minor_axis_length
+    y1_1 = y0 + math.sin(orientation) * HalfLen_c #* props.minor_axis_length
+    x2_1 = x0 + math.sin(orientation) * HalfLen_c #* props.major_axis_length
+    y2_1 = y0 + math.cos(orientation) * HalfLen_c #* props.major_axis_length
+    return x0,x1,x2,x1_1,x2_1,y0,y1,y2,y1_1,y2_1
+
+
+def multiuncaging():
+    flimpath = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test\pos2_high_001.flim"
+    
+    # flimpath = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos4_high_003.flim"
+    flimpath = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos3_high_001.flim"
+    # flimpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos3_high_001.flim"
+    # multiple_uncaging_click_savetext(flimpath, ch1or2=1)
+    dend_props_forEach(flimpath,square_side_half_len = 25, plot_img=True)
+    
+
 def main():
     from FLIMageAlignment import flim_files_to_nparray
     tiffpath=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221215\Intensity\CAGGFP_Slice2_dendrite1__Ch1_018.tif"
@@ -680,19 +720,8 @@ def main():
     # print(z,y,x)
     
     z, ylist, xlist = multiple_uncaging_click(FirstStack,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])
-    print(z, ylist, xlist)
-
+    print(z, ylist, xlist)   
     
-
-
-def multiuncaging():
-    flimpath = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test\pos2_high_001.flim"
-    
-    flimpath = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos4_high_003.flim"
-    flimpath = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos3_high_001.flim"
-    flimpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos3_high_001.flim"
-    # multiple_uncaging_click_savetext(flimpath, ch1or2=1)
-    dend_props_forEach(flimpath,square_side_half_len = 25, plot_img=True)
     
     
 if __name__=="__main__":
@@ -701,18 +730,6 @@ if __name__=="__main__":
 
 
 
-def get_axis_position(y0,x0,orientation, HalfLen_c=10):
-    # x0,x1,x2,x1_1,x2_1,y0,y1,y2,y1_1,y2_1 = get_axis_position(y0,x0,orientation, HalfLen_c=10)
-    
-    x1 = x0 + math.cos(orientation) * HalfLen_c #* props.minor_axis_length
-    y1 = y0 - math.sin(orientation) * HalfLen_c #* props.minor_axis_length
-    x2 = x0 - math.sin(orientation) * HalfLen_c #* props.major_axis_length
-    y2 = y0 - math.cos(orientation) * HalfLen_c #* props.major_axis_length
-    x1_1 = x0 - math.cos(orientation) * HalfLen_c #* props.minor_axis_length
-    y1_1 = y0 + math.sin(orientation) * HalfLen_c #* props.minor_axis_length
-    x2_1 = x0 + math.sin(orientation) * HalfLen_c #* props.major_axis_length
-    y2_1 = y0 + math.cos(orientation) * HalfLen_c #* props.major_axis_length
-    return x0,x1,x2,x1_1,x2_1,y0,y1,y2,y1_1,y2_1
 
 
 def check_spinepos_analyzer():
