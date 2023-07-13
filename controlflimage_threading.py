@@ -182,18 +182,26 @@ class control_flimage():
         sleep(first_wait_sec)
         
         dest_xyz = np.array([dest_x, dest_y, dest_z])
-        for i in range(10):
-            currentpos2 = self.get_val_sendCommand("State.Motor.motorPosition")
+        for i in range(30):
+            try:
+                currentpos2 = self.get_val_sendCommand("State.Motor.motorPosition")
+            except:
+                sleep(1)
+                continue
             currentpos_num2 = np.array(currentpos2[1:-1].split(","), dtype=float)
             
             diff2 =  currentpos_num2 - dest_xyz
             sum_sq_err2 = (diff2*diff2).sum()
             
-            if sum_sq_err2 > 10:
+            if sum_sq_err2 > 15:
                 print("Not moved yet . . . . ")
                 print(f"{i+2} th trial .....")
                 sleep(iter_wait_sec)
-                self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
+                self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")                
+            else:
+                break
+        else:
+            print(i," times attemps, but could not move stage.")
 
     def go_to_absolute_pos_motor_checkstate(self,dest_x,dest_y,dest_z, 
                                             sq_err_thre = 10, 
@@ -210,8 +218,10 @@ class control_flimage():
         
         dest_xyz = np.array([dest_x, dest_y, dest_z])
         for i in range(10):
-            currentpos2 = self.get_val_sendCommand("State.Motor.motorPosition")
-            currentpos_num2 = np.array(currentpos2[1:-1].split(","), dtype=float)
+            # currentpos2 = self.get_val_sendCommand("State.Motor.motorPosition")
+            # currentpos_num2 = np.array(currentpos2[1:-1].split(","), dtype=float)
+            currentpos_num2=np.array(self.get_position())
+            
             
             diff2 =  currentpos_num2 - dest_xyz
             sum_sq_err2 = (diff2*diff2).sum()
@@ -224,6 +234,7 @@ class control_flimage():
 
         #2023/6/6 added. MultiZ imaging after single plane requires this.
         self.flim.sendCommand('SetCenter')
+        print("set center done")
 
     def get_galvo_xy(self):
         for i in range(10):
@@ -335,14 +346,19 @@ class control_flimage():
         
         self.shifts_zyx_pixel = [[0,0,0],[self.Z_plane-self.Spine_ZYX[0],
                                      single_shift[0],single_shift[1]]]
-            
+
         # self.convert_shifts_pix_to_micro(self.shifts_zyx_pixel)
       
     def acquisition_include_connect_wait(self):
         self.flim_connect_check()
         self.flim.sendCommand('StartGrab')
         self.wait_while_grabbing()
-    
+        
+    def acquisition_include_connect_wait_short(self,sleep_every_sec=0.2):
+        self.flim_connect_check()
+        self.flim.sendCommand('StartGrab')
+        self.wait_while_grabbing(sleep_every_sec=sleep_every_sec)
+        
     def flim_connect_check(self):
         if self.flim.Connected==False:
             self.reconnect()
@@ -444,10 +460,12 @@ class control_flimage():
     
 
     def AlignSmallRegion_2d(self):
-        TrimmedAroundSpine=self.Aligned_TYX_array[
-                                                :,
-                                                self.Spine_ZYX[1]-self.cuboid_ZYX[1]:self.Spine_ZYX[1]+self.cuboid_ZYX[1],
-                                                self.Spine_ZYX[2]-self.cuboid_ZYX[2]:self.Spine_ZYX[2]+self.cuboid_ZYX[2],
+        print("self.Spine_ZYX",self.Spine_ZYX)
+        print("self.cuboid_ZYX",self.cuboid_ZYX)
+        
+        TrimmedAroundSpine=self.Aligned_TYX_array[:,
+                                                  int(self.Spine_ZYX[1]-self.cuboid_ZYX[1]):int(self.Spine_ZYX[1]+self.cuboid_ZYX[1]),
+                                                  int(self.Spine_ZYX[2]-self.cuboid_ZYX[2]):int(self.Spine_ZYX[2]+self.cuboid_ZYX[2]),
                                                 ]
         self.shifts_2d_fromSmall, self.Small_Aligned_3d_array=Align_3d_array(TrimmedAroundSpine)
         
@@ -511,7 +529,7 @@ class control_flimage():
 
         blur = cv2.GaussianBlur(single_plane_YXarray,(Gaussian_pixel,Gaussian_pixel),0)
         Threshold = blur[self.Spine_ZYX[1],self.Spine_ZYX[2]]*threshold_coordinate
-        print(Threshold)
+        print(" x, y, Threshold",self.Spine_ZYX[1],self.Spine_ZYX[2],Threshold)
         ret3,th3 = cv2.threshold(blur,Threshold,255,cv2.THRESH_BINARY)
         label_img = label(th3)
         
@@ -528,19 +546,24 @@ class control_flimage():
     def find_best_point_dend_ori_given(self, direction, dend_orientation,
                                        uncaging_Y, uncaging_X,
                                        ignore_stage_drift=False):
-
+        maxY,maxX = self.binary_include_dendrite.shape
         candi_y, candi_x = uncaging_Y, uncaging_X
         for i in range(1002):
             if self.binary_include_dendrite[int(candi_y),int(candi_x)]>0:
                 candi_x = candi_x + math.cos(dend_orientation)*direction
                 candi_y = candi_y - math.sin(dend_orientation)*direction
-                print("candi_x,candi_y",candi_x,candi_y)
+                if candi_y>=maxY or candi_x >=maxY or candi_x<=0 or candi_y<=0:
+                    print("Could not find spine head")
+                    candi_y, candi_x = uncaging_Y, uncaging_X
+                    break
+                
+                # print("candi_x,candi_y",candi_x,candi_y)
             else:
                 # Assuming that x and y have same resolution
                 distance_pixel = self.SpineHeadToUncaging_um/self.x_um
                 candi_x = candi_x + math.cos(dend_orientation)*direction*distance_pixel
                 candi_y = candi_y - math.sin(dend_orientation)*direction*distance_pixel
-                print("distance_pixel,candi_x,candi_y",distance_pixel,candi_x,candi_y)
+                # print("distance_pixel,candi_x,candi_y",distance_pixel,candi_x,candi_y)
                 break
         if i > 1000:
             print("Error 113 - -  ")
@@ -747,11 +770,13 @@ class control_flimage():
         print('break  wait_grab_status_python')
     
     
-    def set_xyz_um(self,iminfo):
+    def set_xyz_um(self, iminfo):
         self.x_um, self.y_um, self.z_um = get_xyz_pixel_um(iminfo)
-    
+
+
     def drift_uncaging_process(self):
         self.flimlist=glob.glob(os.path.join(self.folder,f"{self.NameStem}*.flim"))
+
         if self.x_um == 0:
             Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([self.flimlist[0]],ch=self.ch)
             # self.x_um, self.y_um, self.z_um = get_xyz_pixel_um(iminfo)
@@ -793,7 +818,13 @@ class control_flimage():
         print("thread2 while loop end")
 
 
-    def start_repeat_short(self,single_plane_align=True):
+    def start_repeat_short_for_rotate(self,each_lowhigh_instance,
+                           uncaging_Z,
+                           uncaging_Xlist, 
+                           uncaging_Ylist,
+                           direction_list,
+                           orientation_list):
+        
         self.start=datetime.now()
         
         self.folder = self.get_val_sendCommand("State.Files.pathName")
@@ -809,6 +840,61 @@ class control_flimage():
         thread1.start()
         self.loop=True
         
+        # self.drift_uncaging_process()
+        
+        modified_uncaging_xlist = []
+        modified_uncaging_ylist = []
+        
+        for uncaging_X, uncaging_Y, direction, dend_orientation in zip(uncaging_Xlist, 
+                                                                       uncaging_Ylist,
+                                                                       direction_list,
+                                                                       orientation_list):
+            self.Spine_ZYX = [uncaging_Z, int(uncaging_Y), int(uncaging_X)]
+            self.Aligned_TYX_array = each_lowhigh_instance.makingTYX_from3d_and_2d(uncaging_Z, each_lowhigh_instance.ch)
+            self.AlignSmallRegion_2d()  #getting self.shifts_fromSmall = (np aray shift calculated from small region)
+            
+            flimfile_last = each_lowhigh_instance.latest_path()
+            flimarray,_,_ = flim_files_to_nparray([flimfile_last],ch=0,normalize_by_averageNum=True)
+            single_plane_YXarray = np.max(flimarray[0],axis=0)
+            
+            self.analyze_uncaging_point_from_singleplane(single_plane_YXarray)
+            self.find_best_point_dend_ori_given(direction, dend_orientation,
+                                                uncaging_Y, uncaging_X,ignore_stage_drift=True)
+            modified_uncaging_xlist.append(self.uncaging_x)
+            modified_uncaging_ylist.append(self.uncaging_y)
+            
+        self.flim.sendCommand("ClearUncagingLocation")
+        for nth_pos in range(len(modified_uncaging_xlist)):
+            self.flim.sendCommand(f"CreateUncagingLocation,{(modified_uncaging_xlist[nth_pos])},{(modified_uncaging_ylist[nth_pos])}")
+        
+        
+        thread1.join()
+        print("thread1 END")
+        self.loop=False
+        print("drift_uncaging_process END")
+        
+        plt.plot(self.uncaging_each)
+        plt.ylabel("Each interval (sec)")
+        plt.xlabel("Nth interval")
+        plt.show()
+
+        
+        
+        
+    def start_repeat_short(self,single_plane_align=True):
+        self.start=datetime.now()        
+        self.folder = self.get_val_sendCommand("State.Files.pathName")
+        self.NameStem = self.get_val_sendCommand("State.Files.baseName")
+        self.childname = self.NameStem + str(int(self.get_val_sendCommand("State.Files.fileCounter"))).zfill(3)+".flim"
+        self.uncaging_each=[]
+        
+        thread1 = threading.Thread(target=self.acquire_independent)
+        self.stop_acquisition=False
+        self.nowGrabbing=True
+        self.NthAc = 0
+        
+        thread1.start()
+        self.loop=True
         self.drift_uncaging_process()
         thread1.join()
         print("thread1 END")
@@ -819,6 +905,8 @@ class control_flimage():
         plt.ylabel("Each interval (sec)")
         plt.xlabel("Nth interval")
         plt.show()
+        
+
         
         
     def start_repeat(self):

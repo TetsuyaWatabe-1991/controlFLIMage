@@ -33,6 +33,25 @@ def NthDim_Center(shape,NthDim,ratio=0.5):
     to=int(center*(1+ratio))
     return start,to
 
+def plot_maxproj(flimpath, ch1or2, savefig=True):
+    
+    ch = ch1or2 - 1
+    Tiff_MultiArray, _, _ = flim_files_to_nparray([flimpath],ch=ch)
+    ZYXarray = Tiff_MultiArray[0]
+    maxproj = np.max(ZYXarray, axis = 0)
+    vmax = np.percentile(maxproj,99.5)
+
+    plt.imshow(maxproj, cmap="gray", vmin = 0, vmax = vmax)    
+    plt.axis('off')
+    plt.title(flimpath[-8:-5])    
+ 
+    if savefig==True:
+        os.makedirs(flimpath[:-8],exist_ok=True)
+        savepath = os.path.join(flimpath[:-8],"0.png")
+        plt.savefig(savepath, dpi = 72, bbox_inches = 'tight')
+    
+    plt.show()
+
 def fft_drift_3d(ref_array ,query_array,
                  MedianFilter = True, Ksize = 3):
     if MedianFilter==True:
@@ -43,7 +62,8 @@ def fft_drift_3d(ref_array ,query_array,
         query_array_for_correlation  = query_array
     # shift, error, diffphase = phase_cross_correlation(ref_array, query_array)
     shift, error, diffphase = phase_cross_correlation(ref_array_for_correlation,
-                                                      query_array_for_correlation)
+                                                      query_array_for_correlation,
+                                                      upsample_factor=4)
     img_corr = fourier_shift(np.fft.fftn(query_array), shift)
     aligned_array = np.fft.ifftn(img_corr).real
     return aligned_array, shift

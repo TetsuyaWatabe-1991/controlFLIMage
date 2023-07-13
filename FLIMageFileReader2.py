@@ -112,19 +112,22 @@ class FileReader:
             info = info.replace(";", "")
             #eq1 = info.split(' = ')
             #numPeriod = len(eq1[0].split('.')) - 1
-            if 'Acq' or 'Spc.spcData' or 'Spc.datainfo' or 'Uncaging' in info:
-                #eq = info.split('.', numPeriod)
-                self.executeLine (info)
-            if 'Format' in info:
-                format_str = info.split(' = ')
-                self.ImageFormat = format_str[1]
-            if "State." in info:
-                keyitem = info.split(' = ')
-                if "[" in keyitem[1]:
-                    keyitem[1] = ast.literal_eval(keyitem[1])
-                else:
-                    keyitem[1] = convert_string(keyitem[1])
-                self.statedict[keyitem[0]] = keyitem[1]
+            try:
+                if 'Acq' or 'Spc.spcData' or 'Spc.datainfo' or 'Uncaging' in info:
+                    #eq = info.split('.', numPeriod)
+                    self.executeLine (info)
+                if 'Format' in info:
+                    format_str = info.split(' = ')
+                    self.ImageFormat = format_str[1]
+                if "State." in info:
+                    keyitem = info.split(' = ')
+                    if "[" in keyitem[1]:
+                        keyitem[1] = ast.literal_eval(keyitem[1])
+                    else:
+                        keyitem[1] = convert_string(keyitem[1])
+                    self.statedict[keyitem[0]] = keyitem[1]
+            except:
+                print("Could not read image info.")
 
             #Acquired time will be read in other function
             # if 'Acquired_Time' in info:
@@ -516,19 +519,24 @@ if __name__ == "__main__":
     
     # If you will not use tkinter, declare path for .flim file.
     file_path=r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20221129\concatenate_aligned_1122p8WTGFP_slice1_dendrites_.flim"
-    
+    file_path=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230616\set1\pos1_high_039.flim"
     iminfo = FileReader()
     iminfo.read_imageFile(file_path, True) 
     
     # Get intensity only data
     imagearray=np.array(iminfo.image)
     intensityarray=np.sum(imagearray,axis=-1)
+    maxproj = np.max(intensityarray,axis=0)
+
+    ch=0
     
+    # maxproj_singlech = np.max(intensityarray,axis=0)[0,ch,:,:]
+    # vmax = np.percentile(maxproj_singlech,99.5)
+    # plt.imshow(maxproj_singlech, vmin=0, vmax=vmax, cmap='gray')
 
     # Showing intensity image and lifetime image
     import matplotlib.pyplot as plt
     
-    ch=0
     
     intensity_range=[0,202]
     for i in range(intensityarray.shape[0]):

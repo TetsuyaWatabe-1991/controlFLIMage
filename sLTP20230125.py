@@ -21,12 +21,12 @@ FLIMageCont = control_flimage(ini_path=direction_ini)
 
 
 interval_sec = 60
-align_ch_1or2 = 2
+align_ch_1or2 = 1
 expected_acq_duration_sec = 40
 pre_acquisition = 5
 post_acquisition = 50
 
-uncaging_power = 25
+uncaging_power = 34
 
 
 #######################################
@@ -36,8 +36,8 @@ FLIMageCont.set_param(RepeatNum=1, interval_sec=interval_sec, ch_1or2=align_ch_1
 FLIMageCont.start_repeat()
 FLIMageCont.define_uncagingPoint()
 
-# FLIMageCont.Spine_ZYX =[5, 61, 61]
-# FLIMageCont.Dendrite_ZYX = [0, 56, 65] 
+# FLIMageCont.Spine_ZYX =[2, 82, 60]
+# FLIMageCont.Dendrite_ZYX = [0, 83, 50] 
 #######################################
 #PRE ACQUISITION
 FLIMageCont.set_param(RepeatNum = pre_acquisition - 1, interval_sec=interval_sec, ch_1or2=align_ch_1or2,

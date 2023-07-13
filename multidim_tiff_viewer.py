@@ -5,6 +5,7 @@ Created on Tue Dec 20 08:56:14 2022
 @author: yasudalab
 """
 import math
+import os
 import PySimpleGUI as sg
 import numpy as np
 from io import BytesIO
@@ -59,8 +60,10 @@ def dend_props_forEach(flimpath, ch1or2=1,
     Tiff_MultiArray, _, _ = flim_files_to_nparray([flimpath],ch=ch)
     ZYXarray = Tiff_MultiArray[0]
     
-    maxproj = np.max(ZYXarray, axis = 0)
+
     z, ylist, xlist = read_multiple_uncagingpos(flimpath)
+    
+    maxproj = np.max(ZYXarray[z-1:z+2,:,:], axis = 0)
     ylist = list(map(int,ylist))
     xlist = list(map(int,xlist))
     txtpath = flimpath[:-5]+"dendrite.txt"
@@ -119,7 +122,16 @@ def dend_props_forEach(flimpath, ch1or2=1,
         for y0, x0, orientation in zip(dend_center_y, dend_center_x, orientation_list):
             x0,x1,x2,x1_1,x2_1,y0,y1,y2,y1_1,y2_1 = get_axis_position(y0,x0,orientation, HalfLen_c=10)
             plt.plot((x2_1, x2), (y2_1, y2), '-b', linewidth=1.5)
+        
+        plt.axis('off')
+        plt.title("Uncaging position")
+            
         plt.savefig(flimpath[:-5]+".png", dpi=150, bbox_inches='tight')
+        
+        os.makedirs(flimpath[:-8],exist_ok=True)
+        savepath = os.path.join(flimpath[:-8],"uncagingpos.png")
+        plt.savefig(savepath, dpi = 72, bbox_inches = 'tight')
+        
         plt.show()
                             
     print(f"Dendrite information was saved as {txtpath}")
@@ -693,7 +705,15 @@ def multiuncaging():
     flimpath = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos3_high_001.flim"
     # flimpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20230606\test2\pos3_high_001.flim"
     # multiple_uncaging_click_savetext(flimpath, ch1or2=1)
-    dend_props_forEach(flimpath,square_side_half_len = 25, plot_img=True)
+    # dend_props_forEach(flimpath,square_side_half_len = 25, plot_img=True)
+    
+    list_of_fileset = [['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230621\\set2\\pos1_neu1_low_002.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230621\\set2\\pos1_neu1_high_001.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230621\\set2\\pos2_neu1_low_004.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230621\\set2\\pos2_neu1_high_003.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230621\\set2\\pos3_neu2_low_006.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230621\\set2\\pos3_neu2_high_005.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230621\\set2\\pos4_neu2_low_008.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230621\\set2\\pos4_neu2_high_007.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230621\\set2\\pos5_neu3_low_010.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230621\\set2\\pos5_neu3_high_009.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230621\\set2\\pos6_neu3_low_012.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230621\\set2\\pos6_neu3_high_011.flim']]
+    # list_of_fileset =     [ ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230616\\set2\\pos3_low_006.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230616\\set2\\pos3_high_005.flim']]
+    ch1or2=2
+    for eachlowhigh in list_of_fileset:
+        multiple_uncaging_click_savetext(eachlowhigh[1], ch1or2=ch1or2)
+        dend_props_forEach(eachlowhigh[1], ch1or2=ch1or2, square_side_half_len = 30, plot_img=True)
+        
     
 
 def main():
