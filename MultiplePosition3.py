@@ -42,7 +42,16 @@ class Low_High_mag_assign():
         self.lowmag_magnification = self.lowmag_iminfo.statedict['State.Acq.zoom']
         self.highmag_magnification = self.highmag_iminfo.statedict['State.Acq.zoom']
         
-        self.lowmag_pos = copy.copy(self.lowmag_iminfo.statedict['State.Motor.motorPosition'])
+        bottom_lowmag_pos = list(copy.copy(self.lowmag_iminfo.statedict['State.Motor.motorPosition']))
+        
+        sliceStep = self.lowmag_iminfo.statedict['State.Acq.sliceStep']
+        nSlices = self.lowmag_iminfo.statedict['State.Acq.nSlices']
+        additionZ = sliceStep*(nSlices - 1)/2
+        
+        corrected_lowmag_pos = copy.copy(bottom_lowmag_pos)
+        corrected_lowmag_pos[2] += additionZ
+        
+        self.lowmag_pos = copy.copy(corrected_lowmag_pos)
         self.highmag_pos = copy.copy(self.highmag_iminfo.statedict['State.Motor.motorPosition'])
         
         self.ch = ch_1or2 -1
@@ -191,27 +200,23 @@ def get_max_plus_one_flimfiles(flimlist):
     return counter
 
     
-# list_of_fileset = [['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230607\\test4\\pos1_low_002.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230607\\test4\\pos1_high_001.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230607\\test4\\pos2_low_002.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230607\\test4\\pos2_high_001.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230607\\test4\\pos3_low_002.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230607\\test4\\pos3_high_001.flim']]
-# list_of_fileset = [['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230608\\test1\\pos1_low_002.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230608\\test1\\pos1_high_001.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230608\\test1\\pos2_low_002.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230608\\test1\\pos2_high_001.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230608\\test1\\pos3_low_002.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230608\\test1\\pos3_high_001.flim']]
-# list_of_fileset = [['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230608\\test2\\pos1_low_002.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230608\\test2\\pos1_high_001.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230608\\test2\\pos2_low_004.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230608\\test2\\pos2_high_003.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230608\\test2\\pos3_low_006.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230608\\test2\\pos3_high_005.flim']]
-# list_of_fileset = [['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230615\\test2\\pos1_low_002.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230615\\test2\\pos1_high_001.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230615\\test2\\pos2_low_004.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230615\\test2\\pos2_high_003.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230615\\test2\\pos3_low_006.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230615\\test2\\pos3_high_005.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230615\\test2\\pos4_low_001.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230615\\test2\\pos4_high_001.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230615\\test2\\pos5_low_003.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230615\\test2\\pos5_high_002.flim']]
-# list_of_fileset = [['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230616\\set1\\pos1_low_002.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230616\\set1\\pos1_high_001.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230616\\set1\\pos2_low_004.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230616\\set1\\pos2_high_003.flim']]
 # list_of_fileset =     [['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230616\\set2\\pos1_low_002.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230616\\set2\\pos1_high_001.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230616\\set2\\pos2_low_004.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230616\\set2\\pos2_high_003.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230616\\set2\\pos3_low_006.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230616\\set2\\pos3_high_005.flim']]
-list_of_fileset = [['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230712\\set2\\pos1_low_002.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230712\\set2\\pos1_high_001.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230712\\set2\\pos2_low_004.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230712\\set2\\pos2_high_003.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230712\\set2\\pos3_low_006.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230712\\set2\\pos3_high_005.flim']]
+list_of_fileset = [['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230718\\set2\\pos1_low_009.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230718\\set2\\pos1_high_008.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230718\\set2\\pos2_low_007.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230718\\set2\\pos2_high_006.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230718\\set2\\pos3_low_011.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230718\\set2\\pos3_high_010.flim'], ['C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230718\\set2\\pos4_low_013.flim', 'C:\\Users\\Yasudalab\\Documents\\Tetsuya_Imaging\\20230718\\set2\\pos4_high_012.flim']]
 
 uncaging_setting = r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging.txt"
-# highmag_setting = r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128_7z_kalman7.txt"
+highmag_setting = r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128_7z_kalman7.txt"
 lowmag_setting = r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128_step3.txt"
-highmag_setting = r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128.txt"
+# highmag_setting = r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128.txt"
+
 
 LowHighset_instances = []
 
-ch_1or2 = 2
-uncagingpower = 12
+ch_1or2 = 1
+uncagingpower = 20
 uncaging_times = 30
-laser1power_duringuncaging = 20
+laser1power_duringuncaging = 10
 
-uncaging_nthacquisition = 5
+uncaging_nthacquisition = 3
 
 for eachfileset in list_of_fileset:
     LowHighset_instances.append(Low_High_mag_assign(lowmag_path = eachfileset[0],
@@ -227,6 +232,7 @@ print("Now Grabbing")
 num_T = 50
 # each_lowhigh_instance = LowHighset_instances[0]
 # FLIMageCont.set_xyz_um(each_lowhigh_instance.highmag_iminfo)
+
 
 for nthacquisiton in range(num_T):
     print(f"ACQUISTION, {nthacquisiton+1}/{num_T}")

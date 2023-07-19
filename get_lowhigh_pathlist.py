@@ -11,9 +11,11 @@ from multidim_tiff_viewer import multiple_uncaging_click_savetext, dend_props_fo
 from FLIMageAlignment import plot_maxproj
 
 
-basefolder = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230712\set2"
+basefolder = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230718\set2"
 
 pathlist = []
+
+ch1or2=1
 
 for posnum in range(8):
     lowhigh = []
@@ -42,7 +44,7 @@ print(pathlist)
     
     
 if True:
-    ch1or2=2
+    
     nth=-1
     for eachlowhigh in pathlist:
         nth+=1
@@ -51,7 +53,7 @@ if True:
         #     continue
         
         multiple_uncaging_click_savetext(eachlowhigh[1], ch1or2=ch1or2)
-        dend_props_forEach(eachlowhigh[1], ch1or2=ch1or2, square_side_half_len = 30, plot_img=True)
+        dend_props_forEach(eachlowhigh[1], ch1or2=ch1or2, square_side_half_len = 15, plot_img=True)
         
         plot_maxproj(eachlowhigh[0], ch1or2=ch1or2)
         

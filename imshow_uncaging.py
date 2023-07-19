@@ -11,12 +11,14 @@ from datetime import datetime
 import tifffile
 import matplotlib.pyplot as plt
 
-folder = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230712\set1_"
+folder = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230718\set1"
 
 flimfilelist = glob.glob(os.path.join(folder,"pos*.flim"))
 flimfilelist.sort(key=os.path.getmtime)
 
 search_list = flimfilelist[:-2]
+
+# showcurrent = True
 
 for file_path in search_list:
 
@@ -33,9 +35,11 @@ for file_path in search_list:
         
         # Showing intensity image and lifetime image
         
-        ch=1
+        ch=0
         Xpos_list = iminfo.State.Uncaging.UncagingPositionsX
         Ypos_list = iminfo.State.Uncaging.UncagingPositionsY
+        
+        currentCYuncaging = iminfo.State.Uncaging.Position
         
         intensity_range=[0,202]
         
@@ -44,12 +48,20 @@ for file_path in search_list:
         img = intensityarray[0,0,ch,:,:]
         plt.imshow(img,cmap="gray",
                    vmin=0,vmax=vmax)
-        for x_relative, y_relative in zip(Xpos_list,Ypos_list):
-            plt.scatter(x = x_relative*img.shape[1],
-                        y = y_relative*img.shape[0],
+        
+        # if showcurrent == True:
+        if len(Xpos_list)>1:
+            for x_relative, y_relative in zip(Xpos_list,Ypos_list):
+                plt.scatter(x = x_relative*img.shape[1],
+                            y = y_relative*img.shape[0],
+                            s = 50,
+                            c = 'y',marker = "+")
+        else:
+            plt.scatter(x = currentCYuncaging[0]*img.shape[1],
+                        y = currentCYuncaging[1]*img.shape[0],
                         s = 50,
                         c = 'y',marker = "+")
-            
+                
         plt.title(f"Uncaging - {file_path[-8:-5]}")
         plt.axis('off')
         
