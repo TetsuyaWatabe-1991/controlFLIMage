@@ -42,15 +42,15 @@ def arrange_for_singlepos(resultdf, exclude_first = False,
 
 
 if __name__ == "__main__":
+    
+    save_True = False
 
     csvlist=[
-    r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230717\Analysis\GFP_neuron1_spine6_aligned_TimeCourse - Copy.csv",
-    r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230717\Analysis\GFP_neuron1_spine5_aligned_TimeCourse - Copy.csv",
-    r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230717\Analysis\GFP_neuron1_spine4_aligned_TimeCourse - Copy.csv",
-    r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230717\Analysis\GFP_neuron1_spine3_aligned_TimeCourse - Copy.csv",
-    r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230717\Analysis\GFP_neuron1_spine2_aligned_TimeCourse - Copy.csv"]
+    r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20230907\Analysis\GFP_slice3_aligned_TimeCourse.csv"]
 
-    csvpath = csvlist[-5]
+# \\ry-lab-yas15\Users\Yasudalab\Documents
+
+    csvpath = csvlist[0]
 
     allcombined_df_savepath = csvpath[:-4]+"_modified.csv"
     
@@ -83,7 +83,8 @@ if __name__ == "__main__":
     
     allcombined_df = everymin_normalize(allcombined_df)
     
-    allcombined_df.to_csv(allcombined_df_savepath)
+    if save_True==True:
+        allcombined_df.to_csv(allcombined_df_savepath)
     
     # allcombined_df = allcombined_df[(allcombined_df["time_min_norm"]<0)|
     #                                 (allcombined_df["time_min_norm"]>24)
@@ -111,7 +112,10 @@ if __name__ == "__main__":
     plt.ylim([0.78,6.1])
     
     savepath = allcombined_df_savepath[:-4]+"_norm_sumIntensity_bg-ROI_plot.png"
-    plt.savefig(savepath, bbox_inches = "tight", dpi = 200)
+    
+    
+    if save_True==True:
+        plt.savefig(savepath, bbox_inches = "tight", dpi = 200)
     plt.show()
     
     ##################################
@@ -174,8 +178,10 @@ if __name__ == "__main__":
         plt.ylim([-0.9,0.9])  
         
         savepath = allcombined_df_savepath[:-4]+"_norm_Fraction2_plot.png"
-        plt.savefig(savepath, bbox_inches = "tight", dpi = 200)
-        
+
+        if save_True==True:
+            plt.savefig(savepath, bbox_inches = "tight", dpi = 200)
+            
         plt.show()
         
         ##################################

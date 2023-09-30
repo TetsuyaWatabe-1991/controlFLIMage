@@ -23,9 +23,10 @@ def csv_to_df(csvpath,ch_list=[1],
                            'nPixels-ROI']
                             ):
     resultdf=pd.DataFrame()
+    
     with open(csvpath) as f:
         reader = csv.reader(f)
-    
+        timelist = []    
         for row in reader:
             
             try:
@@ -39,7 +40,14 @@ def csv_to_df(csvpath,ch_list=[1],
     
             if row0=="Time (s)":
                 timelist=[float(x) for x in row[1:-1]]
-                   
+        
+        if len(timelist)==0:
+            print(csvpath)
+            print("file not imported properly.")
+            return None
+        
+            
+        
         for i in range(len(timelist)):
             for ch in ch_list:
                 for ROInum in range(1,nROIs+1):
@@ -177,7 +185,7 @@ def everymin_normalize(allcombined_df,
 
 
 if __name__ == "__main__":
-
+    save_True = False
     # csvlist=[r"\\ry-lab-yas16\Users\yasudalab\Documents\Data\Tetsuya\2022\08262022\Analysis\concatenated_GFP_cell2_spine1_alined_TimeCourse.csv",
     #           r"\\ry-lab-yas16\Users\yasudalab\Documents\Data\Tetsuya\2022\08262022\Analysis\concatenated_GFP_cell3_aligned_TimeCourse.csv",
     #           r"\\ry-lab-yas16\Users\yasudalab\Documents\Data\Tetsuya\2022\08252022\Analysis\concatenated_GFP_cell2_spine1_alined_TimeCourse.csv",
@@ -217,7 +225,8 @@ if __name__ == "__main__":
     
     allcombined_df = everymin_normalize(allcombined_df)
     
-    allcombined_df.to_csv(allcombined_df_savepath)
+    if save_True:
+        allcombined_df.to_csv(allcombined_df_savepath)
 
 
 
@@ -241,7 +250,8 @@ if __name__ == "__main__":
              ha="center",va="bottom",zorder=100)
     
     savepath = allcombined_df_savepath[:-4]+"_norm_sumIntensity_bg-ROI_plot.png"
-    plt.savefig(savepath, bbox_inches = "tight", dpi = 200)
+    if save_True:
+        plt.savefig(savepath, bbox_inches = "tight", dpi = 200)
     plt.show()
     
     ##################################
@@ -302,7 +312,8 @@ if __name__ == "__main__":
     plt.ylim([-0.9,0.9])  
     
     savepath = allcombined_df_savepath[:-4]+"_norm_Fraction2_plot.png"
-    plt.savefig(savepath, bbox_inches = "tight", dpi = 200)
+    if save_True:
+        plt.savefig(savepath, bbox_inches = "tight", dpi = 200)
     
     plt.show()
     
