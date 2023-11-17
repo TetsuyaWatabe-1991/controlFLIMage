@@ -11,7 +11,7 @@ from multidim_tiff_viewer import multiple_uncaging_click_savetext, dend_props_fo
 from FLIMageAlignment import plot_maxproj
 
 
-basefolder = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230718\set2"
+basefolder = r"G:\ImagingData\Tetsuya\20231017\set1"
 
 pathlist = []
 

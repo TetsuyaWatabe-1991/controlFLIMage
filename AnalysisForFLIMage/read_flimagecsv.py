@@ -51,13 +51,20 @@ def csv_to_df(csvpath,ch_list=[1],
         for i in range(len(timelist)):
             for ch in ch_list:
                 for ROInum in range(1,nROIs+1):
-                    resultdf=resultdf.append({
+                    # resultdf=resultdf.append({
+                    #     "FilePath":csvpath,
+                    #     "ROInum":ROInum,
+                    #     "time_sec":timelist[i],
+                    #     "NthFrame":i,
+                    #     "ch":ch,
+                    #     },ignore_index=True)
+                    resultdf=pd.concat([resultdf,pd.DataFrame([{
                         "FilePath":csvpath,
                         "ROInum":ROInum,
                         "time_sec":timelist[i],
                         "NthFrame":i,
                         "ch":ch,
-                        },ignore_index=True)
+                        }])],ignore_index=True)
     # print(resultdf)
     for ch in ch_list:
         for prefix in prefix_list:
@@ -82,6 +89,17 @@ def csv_to_df(csvpath,ch_list=[1],
         
     return resultdf
 
+
+def assing_before(resultdf, before):
+    
+    resultdf["during_uncaging"]=0
+    resultdf["first_uncaging"]=0
+    
+    resultdf = resultdf[resultdf["NthFrame"]>= before[0]]
+    # resultdf[resultdf["NthFrame"]==before[1]+1]["first_uncaging"] = 1
+    resultdf.loc[resultdf[resultdf["NthFrame"]==before[1]+1].index,"first_uncaging"]=1
+    return resultdf
+    
 
 
 def detect_uncaging(resultdf, time_threshold = 5):
@@ -220,9 +238,9 @@ if __name__ == "__main__":
             eachROIdf = resultdf[resultdf["ROInum"] ==  ROInum]
     
             eachROIdf["CellName"] = resultdf.loc[:,"FilePath"]+"_"+str(ROInum)
-            allcombined_df=allcombined_df.append(eachROIdf,ignore_index=True)
-    
-    
+            # allcombined_df=allcombined_df.append(eachROIdf,ignore_index=True)
+            allcombined_df=pd.concat([allcombined_df,eachROIdf],ignore_index=True)
+ 
     allcombined_df = everymin_normalize(allcombined_df)
     
     if save_True:

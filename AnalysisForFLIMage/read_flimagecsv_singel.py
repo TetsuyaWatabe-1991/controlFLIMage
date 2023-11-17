@@ -46,7 +46,8 @@ if __name__ == "__main__":
     save_True = False
 
     csvlist=[
-    r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20230907\Analysis\GFP_slice3_aligned_TimeCourse.csv"]
+    r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20230907\Analysis\GFP_slice3_aligned_TimeCourse.csv"
+    ]
 
 # \\ry-lab-yas15\Users\Yasudalab\Documents
 
