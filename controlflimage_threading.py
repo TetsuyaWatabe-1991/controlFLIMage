@@ -132,7 +132,7 @@ class control_flimage():
                   expected_grab_duration_sec=0.5,
                   track_uncaging=False, drift_control=True,
                   ShowUncagingDetection=False, DoUncaging=False,
-                  drift_cont_galvo=False):
+                  drift_cont_galvo=False, drift_cont_XY = True):
         self.RepeatNum=RepeatNum
         self.interval_sec=interval_sec
         self.uncaging_power = uncaging_power
@@ -143,6 +143,7 @@ class control_flimage():
         self.DoUncaging=DoUncaging
         self.drift_cont_galvo=drift_cont_galvo
         self.expected_grab_duration_sec=expected_grab_duration_sec
+        self.drift_cont_XY = drift_cont_XY
         if LoadSetting==True:
             self.flim.sendCommand(f'LoadSetting, {SettingPath}')
             
@@ -160,9 +161,14 @@ class control_flimage():
     
     def go_to_relative_pos_motor(self):
         x,y,z=self.get_position()
-        x_str=str(x - self.directionMotorX * self.relative_zyx_um[2])
-        y_str=str(y - self.directionMotorY * self.relative_zyx_um[1])
         z_str=str(z - self.directionMotorZ * self.relative_zyx_um[0])
+        if self.drift_cont_XY == True:
+            x_str=str(x - self.directionMotorX * self.relative_zyx_um[2])
+            y_str=str(y - self.directionMotorY * self.relative_zyx_um[1])
+        else: #leave 
+            x_str=str(x)
+            y_str=str(y)
+        
         print(f"print SetMotorPosition,{x_str},{y_str},{z_str}")
         self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
 
@@ -254,9 +260,10 @@ class control_flimage():
         y_galvo_next = y_galvo_now - self.directionGalvoY*5*self.relative_zyx_um[1]/self.FOV_default[1]
         x_galvo_str = str(round(x_galvo_next,12))
         y_galvo_str = str(round(y_galvo_next,12))
-        self.flim.sendCommand(f"SetScanVoltageXY,{x_galvo_str},{y_galvo_str}")
-        print("y_galvo_now, ",y_galvo_now)
-        print("y_galvo_next, ",y_galvo_next)
+        if self.drift_cont_XY == True:
+            self.flim.sendCommand(f"SetScanVoltageXY,{x_galvo_str},{y_galvo_str}")
+            print("y_galvo_now, ",y_galvo_now)
+            print("y_galvo_next, ",y_galvo_next)
         if z_move == True:
             self.relative_zyx_um[1]=0
             self.relative_zyx_um[2]=0
@@ -321,6 +328,9 @@ class control_flimage():
         # ax = plt.figure().gca()
         self.f.gca().xaxis.set_major_locator(MaxNLocator(integer=True)) #show only integer ticks
         plt.legend()
+        savepath = self.NameStem+"drift.png"
+        print(savepath)
+        plt.savefig(savepath,dpi=300,bbox_inches='tight')
         if show==True:
             plt.show()
     
@@ -641,15 +651,18 @@ class control_flimage():
 
         # while True:
         for i in range(1000):
-            if self.binarized[int(candi_y),int(candi_x)]>0:
-                candi_x = candi_x + math.cos(orientation)*direction
-                candi_y = candi_y - math.sin(orientation)*direction
-            else:
-                # Assuming that x and y have same resolution
-                distance_pixel = self.SpineHeadToUncaging_um/self.x_um
-                candi_x = int(candi_x + math.cos(orientation)*direction*distance_pixel)
-                candi_y = int(candi_y - math.sin(orientation)*direction*distance_pixel)
-                break
+            try:
+                if self.binarized[int(candi_y),int(candi_x)]>0:
+                    candi_x = candi_x + math.cos(orientation)*direction
+                    candi_y = candi_y - math.sin(orientation)*direction
+                else:
+                    # Assuming that x and y have same resolution
+                    distance_pixel = self.SpineHeadToUncaging_um/self.x_um
+                    candi_x = int(candi_x + math.cos(orientation)*direction*distance_pixel)
+                    candi_y = int(candi_y - math.sin(orientation)*direction*distance_pixel)
+                    break
+            except:
+                pass
         
         if i > 990:
                 print("Error 103 - -  ")
@@ -932,13 +945,14 @@ class control_flimage():
                 self.align_two_flimfile()
                 self.flim_connect_check()
                 self.plot_drift(show=True)
+                # self.plot_drift(show=False)
 
                 if self.drift_control==True:
-                    if NthAc < self.RepeatNum-1:
+                    # if NthAc < self.RepeatNum-1:
                         if self.drift_cont_galvo==True:
                             self.go_to_relative_pos_galvo(z_move=True)
                         else:
-                            self.go_to_relative_pos_motor()        
+                            self.go_to_relative_pos_motor()
                 
                 if self.track_uncaging==True:
                     if self.Spine_ZYX==False:
@@ -946,6 +960,13 @@ class control_flimage():
                         
                     self.AlignSmallRegion()
                     self.analyze_uncaging_point()
+                    
+                    #20230920
+                    if self.drift_control==True:
+                        # self.shifts_zyx_pixel =
+                        self.uncaging_x += self.shifts_zyx_pixel[-1][2]
+                        self.uncaging_y += self.shifts_zyx_pixel[-1][1]
+                    
                     self.send_uncaging_pos()
                     
                     if self.ShowUncagingDetection==True:
