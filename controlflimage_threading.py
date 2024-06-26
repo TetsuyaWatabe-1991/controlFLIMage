@@ -7,11 +7,12 @@ Created on Wed Dec 28 14:17:04 2022
 import os
 import glob
 import math
-from FLIMageAlignment import flim_files_to_nparray,Align_4d_array,Align_3d_array,get_xyz_pixel_um,single_plane_align_with3dstack_flimfile
-from FLIM_pipeClient import FLIM_Com,FLIM_message_received
+import subprocess
 from time import sleep
 from datetime import datetime
-from find_close_remotecontrol import close_remote_control
+from FLIMageAlignment import flim_files_to_nparray,Align_4d_array,Align_3d_array,get_xyz_pixel_um,single_plane_align_with3dstack_flimfile
+from FLIM_pipeClient import FLIM_Com,FLIM_message_received
+from find_close_remotecontrol import close_remote_control, window_exists
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from multidim_tiff_viewer import threeD_array_click, multiple_uncaging_click
@@ -21,7 +22,6 @@ from skimage.measure import label, regionprops
 import configparser
 import threading
 from tkinter_textinfowindow import TextWindow
-
 
 def long_axis_detection(props,HalfLen_c=0.35):
     y0, x0 = props.centroid
@@ -83,6 +83,10 @@ class control_flimage():
         print("START")
         self.flim = FLIM_Com()
         self.flim.start()
+        self.error_dict = {}
+        self.max_error_num = 20
+        self.flimage_exe = r"C:\Users\yasudalab\Documents\GIT\flimage1_3\bin\Debug\FLIMage.exe"
+        
         if self.flim.Connected:
             print("Good Connection")
             self.flim.messageReceived += FLIM_message_received #Add your function to  handle.
@@ -98,6 +102,7 @@ class control_flimage():
         self.NthAc=0
         self.Num_zyx_drift = {}
         self.showWindow = False
+        self.syncrate = 0
         
         self.x_um = 0 #For detecting not assigned value
         
@@ -108,7 +113,8 @@ class control_flimage():
         self.pixelsPerLine = self.get_val_sendCommand('State.Acq.pixelsPerLine')
         self.zoom = self.get_val_sendCommand('State.Acq.zoom')
         self.nSlices = self.get_val_sendCommand('State.Acq.nSlices')
-        self.config_ini(ini_path)        
+        self.config_ini(ini_path)
+
     
     def config_ini(self,ini_path):
         config = configparser.ConfigParser()
@@ -125,6 +131,17 @@ class control_flimage():
         self.Spine_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Spine_example.png"
         self.Dendrite_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Dendrite_example.png"
         self.Uncaging_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Uncaging_example.png"
+
+    def laser_sync(self):
+        res = self.flim.sendCommand("State.Spc.datainfo.syncRate")
+        # res = 'State.Spc.datainfo.syncRate = [0, 0]'
+        self.syncrate = float(res.split(" = ")[1][1:-1].split(",")[0])
+        
+    def set_laser1_pow(self,laser_power: int):
+        if laser_power>100 or laser_power < 0:
+            print("input between 0 to 100")
+        else:
+            self.flim.sendCommand(f"State.Acq.power = [{laser_power}, 0, 0, 0]\n")
 
     def set_param(self,RepeatNum,interval_sec,ch_1or2,
                   uncaging_power = 20,
@@ -188,13 +205,13 @@ class control_flimage():
         sleep(first_wait_sec)
         
         dest_xyz = np.array([dest_x, dest_y, dest_z])
-        for i in range(30):
+        for i in range(60):
             try:
                 currentpos2 = self.get_val_sendCommand("State.Motor.motorPosition")
+                currentpos_num2 = np.array(currentpos2[1:-1].split(","), dtype=float)
             except:
                 sleep(1)
                 continue
-            currentpos_num2 = np.array(currentpos2[1:-1].split(","), dtype=float)
             
             diff2 =  currentpos_num2 - dest_xyz
             sum_sq_err2 = (diff2*diff2).sum()
@@ -254,6 +271,14 @@ class control_flimage():
         return None
 
 
+    def go_to_absolute_pos_um_galvo(self,z_move=False):
+        self.flim.sendCommand(f"SetScanMirrorXY_um,{self.relative_zyx_um[2]},{self.relative_zyx_um[1]}")
+        if z_move == True:
+            self.relative_zyx_um[1]=0
+            self.relative_zyx_um[2]=0
+            self.go_to_relative_pos_motor()
+
+
     def go_to_relative_pos_galvo(self,z_move=False):
         x_galvo_now, y_galvo_now = self.get_galvo_xy()
         x_galvo_next = x_galvo_now - self.directionGalvoX*5*self.relative_zyx_um[2]/self.FOV_default[0]
@@ -295,7 +320,24 @@ class control_flimage():
             print("\n  Reconnected.  Good Connection now.\n")
         else:
             print("ERROR 101 - - - - - - ")
+            print("Is FLIMage open?? ")
             self.nowGrabbing=False
+            if window_exists('FLIMage! Version 4.0.4'):
+                Exception("FLIMage is open, but cannot respond.")
+            else:
+                self.error_dict[datetime.now()] = "reconect" 
+                print("Let me try to open FLIMage...")
+                self.open_FLIMage()
+                self.reconnect()
+    
+    def open_FLIMage(self):
+        if len(self.error_dict) <= self.max_error_num:
+            subprocess.Popen(self.flimage_exe)
+            sleep(15)
+        else:
+            print(self.error_dict)
+            Exception("Too many errors")
+    
     
     def convert_shifts_pix_to_micro(self, shifts_zyx_pixel):
         x_relative = self.x_um*shifts_zyx_pixel[-1][2]
@@ -375,6 +417,7 @@ class control_flimage():
     
     def wait_while_grabbing(self,sleep_every_sec=2):
         sleep(self.expected_grab_duration_sec)
+        error_count = 0
         for i in range(int(self.interval_sec/sleep_every_sec)):
             try:
                 if self.get_01_sendCommand('IsGrabbing')==0:
@@ -382,6 +425,10 @@ class control_flimage():
                     break
             except:
                 print("ERROR on getting a reply for 'IsGrabbing'. Try again.")
+                error_count+=1
+                if error_count>5:
+                    self.reconnect()
+                    break
             sleep(sleep_every_sec)
             
     def send_uncaging_pos(self):
@@ -406,7 +453,7 @@ class control_flimage():
                     if remainingSeconds != previous_sec:
                         previous_sec = remainingSeconds
                         try:
-                            self.TxtWind.udpate(f"  Time {remainingSeconds} ")
+                            self.TxtWind.udpate(f"Time {str(remainingSeconds).rjust(3)} ".ljust(10))
                         except:
                             print("No tkinter window.", f" Reamining seconds: {remainingSeconds} ")
             sleep(sleep_every_sec)
@@ -932,6 +979,7 @@ class control_flimage():
         self.showWindow =True
         
         for NthAc in range(self.RepeatNum):
+            print("\n","= "*20,"\n"*2 ,NthAc+1 ," / ",self.RepeatNum,"\n"*2 , "= "*20 )
             each_acquisition_from=datetime.now()      
             self.TxtWind.udpate("Now Grabbing")
             # sleep(0.5) #### This small sleep will prevent from crash, sometimes....
@@ -986,51 +1034,52 @@ if __name__ == "__main__":
     
     singleplane_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep05_128_singleplane.txt"
     # Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128.txt"
-    # Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep05_128.txt".
+    # Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep05_128.txt"
     Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128fast.txt"
-    singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging.txt"
+    # singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging.txt"
     # singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging_test.txt"
     
     FLIMageCont = control_flimage()
     # FLIMageCont.directionMotorZ=-1 #sometimes, it changes. Why?
     
-    FLIMageCont.set_param(RepeatNum=5, interval_sec=30, ch_1or2=2,
-                          LoadSetting=True,SettingPath=Zstack_ini)
-    FLIMageCont.start_repeat()
+    # FLIMageCont.set_param(RepeatNum=5, interval_sec=30, ch_1or2=2,
+    #                       LoadSetting=True,SettingPath=Zstack_ini)
+    # FLIMageCont.start_repeat()
     
-    FLIMageCont.define_uncagingPoint()
+    # FLIMageCont.define_uncagingPoint()
     
-    # FLIMageCont.Spine_ZYX =[5, 61, 61]
-    # FLIMageCont.Dendrite_ZYX = [0, 56, 65] 
+    # # FLIMageCont.Spine_ZYX =[5, 61, 61]
+    # # FLIMageCont.Dendrite_ZYX = [0, 56, 65] 
 
-    FLIMageCont.set_param(RepeatNum=3, interval_sec=30, ch_1or2=2,
-                          LoadSetting=True,SettingPath=Zstack_ini,
-                          track_uncaging=True,drift_control=True,
-                          ShowUncagingDetection=True,drift_cont_galvo=True,expected_grab_duration_sec=22)        
+    # FLIMageCont.set_param(RepeatNum=3, interval_sec=30, ch_1or2=2,
+    #                       LoadSetting=True,SettingPath=Zstack_ini,
+    #                       track_uncaging=True,drift_control=True,
+    #                       ShowUncagingDetection=True,drift_cont_galvo=True,expected_grab_duration_sec=22)        
     
-    FLIMageCont.start_repeat()
+    # FLIMageCont.start_repeat()
     
-    FLIMageCont.go_to_uncaging_plane()
+    # FLIMageCont.go_to_uncaging_plane()
     
-    FLIMageCont.set_param(RepeatNum=30, interval_sec=2, ch_1or2=2,
-                          LoadSetting=True,SettingPath=singleplane_uncaging,
-                          track_uncaging=True,drift_control=False,drift_cont_galvo=True,
-                          ShowUncagingDetection=True,DoUncaging=False,expected_grab_duration_sec=1.5)
-    sleep(5)
+    # FLIMageCont.set_param(RepeatNum=30, interval_sec=2, ch_1or2=2,
+    #                       LoadSetting=True,SettingPath=singleplane_uncaging,
+    #                       track_uncaging=True,drift_control=False,drift_cont_galvo=True,
+    #                       ShowUncagingDetection=True,DoUncaging=False,expected_grab_duration_sec=1.5)
+    # sleep(5)
     
-    FLIMageCont.start_repeat_short()
+    # FLIMageCont.start_repeat_short()
 
-    FLIMageCont.back_to_stack_plane()
+    # FLIMageCont.back_to_stack_plane()
 
-    FLIMageCont.set_param(RepeatNum=15, interval_sec=30, ch_1or2=2,
-                          LoadSetting=True,SettingPath=Zstack_ini,
-                          track_uncaging=True,drift_control=True,
-                          ShowUncagingDetection=True,drift_cont_galvo=True,expected_grab_duration_sec=22)    
+    # FLIMageCont.set_param(RepeatNum=15, interval_sec=30, ch_1or2=2,
+    #                       LoadSetting=True,SettingPath=Zstack_ini,
+    #                       track_uncaging=True,drift_control=True,
+    #                       ShowUncagingDetection=True,drift_cont_galvo=True,expected_grab_duration_sec=22)    
     
-    FLIMageCont.start_repeat()
+    # FLIMageCont.start_repeat()
     
     FLIMageCont.flim.sendCommand(f'LoadSetting, {Zstack_ini}')
-    
+    FLIMageCont.flim.sendCommand(f'SetDIOPanel, 1, 1')
+
 
     
     # plt.imshow(FLIMageCont.Aligned_TYX_array[0])

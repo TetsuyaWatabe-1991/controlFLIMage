@@ -11,11 +11,11 @@ from multidim_tiff_viewer import multiple_uncaging_click_savetext, dend_props_fo
 from FLIMageAlignment import plot_maxproj
 
 
-basefolder = r"G:\ImagingData\Tetsuya\20231017\set1"
+basefolder = r"G:\ImagingData\Tetsuya\20231122\set1"
 
 pathlist = []
 
-ch1or2=1
+ch1or2=2
 
 for posnum in range(8):
     lowhigh = []

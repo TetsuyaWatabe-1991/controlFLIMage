@@ -10,8 +10,13 @@ import win32con
 
 def windowEnumerationHandler(hwnd, top_windows):
     top_windows.append((hwnd, win32gui.GetWindowText(hwnd)))
-    
 
+def window_exists(window_name):
+    top_windows = []
+    win32gui.EnumWindows(windowEnumerationHandler, top_windows)
+    window_name_list = [each_hwnd_name[1] for each_hwnd_name in top_windows]
+    return window_name in window_name_list
+    
 def close_remote_control():
     top_windows = []
     win32gui.EnumWindows(windowEnumerationHandler, top_windows)

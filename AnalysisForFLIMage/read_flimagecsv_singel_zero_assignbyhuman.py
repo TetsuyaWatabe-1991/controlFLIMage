@@ -53,21 +53,28 @@ if __name__ == "__main__":
                 [0,3]
                 ]
     ylimlist = [
-                [0.5,4.1],
+                [0.3,4.1],
                 [0.5,3.6],
                 [0.5,3.1]
+                ]
+    
+    palette_list = [
+                ["r","k","k","k"],
+                ["r","k","k","k"],
+                ["r","k","k","k"]
                 ]
     
     uncaging_lineheight = 2.8
     
     lifetimeshow = False
-    nthlist = 0
+    nthlist = 2
     intensity_ch_1or2 = 2
     
 
     csvpath = csvlist[nthlist]
     before = beforelist[nthlist]
     ylim = ylimlist[nthlist]
+    palette = palette_list[nthlist]
     
     allcombined_df_savepath = csvpath[:-4]+"_modified.csv"
     
@@ -108,6 +115,7 @@ if __name__ == "__main__":
     ##################################
     sns.lineplot(x="time_min_norm", y="norm_sumIntensity_bg-ROI",
                     legend=False, hue = "CellName", marker='o',
+                    palette = palette,
                     data = allcombined_df[allcombined_df['ch']==intensity_ch_1or2],
                     zorder = 10)
     

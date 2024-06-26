@@ -341,7 +341,16 @@ class FileReader:
         if self.pageValid(page, fastZpage, channel):
             self.LoadFLIMFromMemory(page, fastZpage, channel)
             self.calculateAll(lifetimeRange, intensityLimit, lifetimeLimit, lifetimeOffset)
-            
+    
+    def export_statedict(self, export_txt_path):
+        text = "FLIMimage parameters\n"
+        for each_key in self.statedict:
+            one_line = f"{each_key} = {self.statedict[each_key]};\n"
+            text += one_line
+        f = open(export_txt_path, "w")
+        f.write(text)
+        f.close()       
+    
 class microscope_parameters:
     def __init__(self):
         self.Acq = acquisition_parameters()
@@ -520,15 +529,18 @@ if __name__ == "__main__":
     # If you will not use tkinter, declare path for .flim file.
     file_path=r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20221129\concatenate_aligned_1122p8WTGFP_slice1_dendrites_.flim"
     file_path=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230616\set1\pos1_high_039.flim"
+    file_path = r"G:\ImagingData\Tetsuya\20240624\test_testtt022.flim"
     iminfo = FileReader()
     iminfo.read_imageFile(file_path, True) 
-    
+    ZYXarray = np.array(iminfo.image).sum(axis=tuple([1,2,5]))
     # Get intensity only data
     imagearray=np.array(iminfo.image)
-    intensityarray=np.sum(imagearray,axis=-1)
+    intensityarray=np.sum(imagearray,axis=-1)    
     maxproj = np.max(intensityarray,axis=0)
 
-    ch=0
+    ch=1
+    
+    iminfo.export_statedict(file_path[:-5]+".txt")
     
     # maxproj_singlech = np.max(intensityarray,axis=0)[0,ch,:,:]
     # vmax = np.percentile(maxproj_singlech,99.5)

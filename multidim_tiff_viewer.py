@@ -6,6 +6,7 @@ Created on Tue Dec 20 08:56:14 2022
 """
 import math
 import os
+import copy
 import PySimpleGUI as sg
 import numpy as np
 from io import BytesIO
@@ -187,9 +188,9 @@ def tiffarray_to_PIL(stack_array,Percent=100,show_size_xy=[512,512],
         im_array = stack_array[NthSlice-1,:,:]
     else:
         im_array = stack_array
-    
-    norm_array = (100/Percent)*255*(im_array/im_array.max())
-    print(norm_array)
+        
+    norm_array = (100/Percent)*255*(im_array/stack_array.max())
+    # print(norm_array)
     norm_array[norm_array>255]=255
     rgb_array = cv2.cvtColor(norm_array.astype(np.uint8),cv2.COLOR_GRAY2RGB)
     im_PIL = Image.fromarray(rgb_array)
@@ -199,7 +200,222 @@ def tiffarray_to_PIL(stack_array,Percent=100,show_size_xy=[512,512],
     if return_ratio==True:    
         return im_PIL,resize_ratio_yx
     else:
-        return im_PIL 
+        return im_PIL
+
+
+
+
+def tiffarray_to_PIL_8bit(stack_array, vmax = 255, show_size_yx=[512,512],
+                          return_ratio=False,NthSlice=1):
+    # This can be used for two D image also.
+    
+    if vmax<1 or vmax>255:
+        vmax=100
+        
+    if len(stack_array.shape)== 3:
+        im_array = stack_array[NthSlice-1,:,:]
+    else:
+        im_array = stack_array
+        
+    norm_array = (255/vmax)*(im_array)
+    # print(norm_array)
+    norm_array[norm_array>255]=255
+    rgb_array = cv2.cvtColor(norm_array.astype(np.uint8),cv2.COLOR_GRAY2RGB)
+    im_PIL = Image.fromarray(rgb_array)
+    
+    im_PIL = im_PIL.resize(show_size_yx[::-1])
+    resize_ratio_yx = (show_size_yx[0]/im_array.shape[0],show_size_yx[1]/im_array.shape[1])
+    if return_ratio==True:    
+        return im_PIL,resize_ratio_yx
+    else:
+        return im_PIL
+
+def calc_zoom_rate_based_on_maxsize(yx_shape: tuple, show_size_YX_max: int) -> tuple:
+    candidate_yxshape = np.array(yx_shape)
+    for axis_ind in range(len(candidate_yxshape)):
+        if candidate_yxshape[axis_ind] > show_size_YX_max[axis_ind]:
+            candidate_yxshape = (candidate_yxshape / candidate_yxshape[axis_ind]) * show_size_YX_max[axis_ind]
+    resize_yx_shape = list(candidate_yxshape.astype(np.uint16))
+    return resize_yx_shape
+
+
+
+def z_stack_multi_z_click(stack_array, pre_assigned_pix_zyx_list=[], show_text = ""):
+    first_text_at_upper = "Click each position and click assign"
+    col_dict = {
+        "clicked_currentZ": "white",
+        "clicked_differentZ": "cyan",
+        "clicked_now": "magenta",
+        "pos_now": "red",
+        }
+    font = ("Courier New", 15)
+    show_size_YX_max = [768, 1024]
+    
+    TiffShape= stack_array.shape
+    if len(TiffShape)==3:
+        NumOfZ = TiffShape[0]
+        Z_change=[sg.Text("Z position", size=(20, 1)),
+                  sg.Slider(orientation ='horizontal', key='Z',
+                            default_value=int(NumOfZ/2), range=(1,NumOfZ),enable_events = True)            
+                  ]
+        yx_shape = TiffShape[1:3]
+        resize_yx_shape = calc_zoom_rate_based_on_maxsize(yx_shape, show_size_YX_max)
+        im_PIL,resize_ratio_yx = tiffarray_to_PIL_8bit(stack_array,vmax = 255, show_size_yx = resize_yx_shape,
+                                                  return_ratio=True,NthSlice=int(NumOfZ/2))
+    else:
+        NumOfZ = 1
+        Z_change=[]
+        resize_yx_shape = calc_zoom_rate_based_on_maxsize(TiffShape, show_size_YX_max)
+        im_PIL,resize_ratio_yx = tiffarray_to_PIL_8bit(stack_array, vmax = 255,  show_size_yx = resize_yx_shape,
+                                                  return_ratio=True,NthSlice=1)
+    
+    print("resize_ratio_yx",resize_ratio_yx)
+    
+    ZYX_pixel_clicked_list = []
+    if type(pre_assigned_pix_zyx_list)==list:
+        print(pre_assigned_pix_zyx_list)
+        for each_zyx in pre_assigned_pix_zyx_list:
+            each_z_resized = each_zyx[0]
+            each_y_resized = resize_yx_shape[0] - each_zyx[1]*resize_ratio_yx[0]
+            each_x_resized = each_zyx[2]*resize_ratio_yx[1]
+            ZYX_pixel_clicked_list.append([each_z_resized,
+                                           each_y_resized,
+                                           each_x_resized])
+    print("ZYX_pixel_clicked_list ",ZYX_pixel_clicked_list)
+    data =  PILimg_to_data(im_PIL)    
+   
+    sg.theme('Dark Blue 3')
+
+    layout = [
+                [
+                    sg.Text(show_text, font='Arial 10', size=(60, 1))
+                    ],
+                [
+                    sg.Text(first_text_at_upper, key='notification', font='Arial 10', text_color='black', background_color='white', size=(60, 2))
+                    ],
+                [
+                    sg.Graph(
+                    canvas_size=resize_yx_shape[::-1], 
+                    graph_bottom_left=(0, 0),
+                    graph_top_right=resize_yx_shape[::-1],
+                    key="-GRAPH-",
+                    enable_events=True,background_color='lightblue',
+                    drag_submits=True,motion_events=True,
+                    )
+                    ],
+                [
+                    sg.Text("Intensity", size=(20, 1)),
+                    sg.Slider(orientation ='horizontal', key='Intensity',default_value=stack_array.max(),
+                         range=(1,255),enable_events = True),
+                    ],
+                Z_change,
+                [
+                    sg.Text("Assigned pos", size=(20, 1)),
+                    sg.Slider(orientation ='horizontal', key='pos',default_value=0,
+                         range=(0,20),enable_events = True),
+                    ],
+
+                [
+                    sg.Text(key='-INFO-', size=(30, 1)),
+                    sg.Button('Assign', size=(20, 2)),
+                    sg.Button('Reset', size=(20, 2)),
+                    sg.Button('OK', size=(20, 2))
+                    ]
+            ]
+    
+    img_paste_loc = [0,resize_yx_shape[0]]
+    window = sg.Window("Z stack viewer", layout, finalize=True)
+    graph = window["-GRAPH-"]  # type: sg.Graph
+    graph.draw_image(data=data, location = img_paste_loc)
+
+    x=-1
+    y=-1
+    NthSlice = 1
+
+    First = True
+    while True:
+        if First:
+            First = False
+            event, values = window.read(timeout=1)
+            event = "-GRAPH-"
+        else:
+            event, values = window.read()
+        ShowIntensityMax = values['Intensity']
+
+        if len(TiffShape)==3:
+            NthSlice = int(values['Z'])
+
+        if event == sg.WIN_CLOSED:
+            break
+        
+        if event == "pos":
+            if values['pos']<1:
+                continue
+            if len(ZYX_pixel_clicked_list)>=values['pos']:
+                nthpos = int(values['pos']-1)
+                Z = ZYX_pixel_clicked_list[nthpos][0] + 1
+                window['Z'].update(Z)
+                NthSlice = Z
+                window['notification'].update(f"Go to pos id: {int(values['pos'])}")
+            else:
+                window['notification'].update(f"pos id: {int(values['pos'])} is not defined.")
+            
+        if event == "-GRAPH-":
+            x, y = values["-GRAPH-"]
+                
+        if event ==  'Assign':
+            z,y,x = NthSlice - 1, y, x
+            ZYX_pixel_clicked_list.append([z, y, x])
+            x=-1; y=-1
+            
+        if event == "-GRAPH-" or "pos" or 'Update' or 'Z' or "Intensity" or 'Assign':
+            im_PIL = tiffarray_to_PIL_8bit(stack_array,
+                                           vmax = ShowIntensityMax,  
+                                           show_size_yx = resize_yx_shape,
+                                           return_ratio = False, 
+                                           NthSlice = NthSlice)
+            data = PILimg_to_data(im_PIL)
+            graph.draw_image(data=data, location=img_paste_loc)
+            graph.draw_point((x,y), size=5, color = col_dict["clicked_now"])
+                
+            halfsize = min(resize_yx_shape)//8
+            for nth, EachZYX in enumerate(ZYX_pixel_clicked_list):
+                if EachZYX[0] == NthSlice -1:
+                    color = col_dict["clicked_currentZ"]
+                    if nth == int(values['pos']-1):
+                        color = col_dict["pos_now"]
+                    graph.DrawRectangle(
+                        (EachZYX[2]-halfsize, EachZYX[1]-halfsize), 
+                        (EachZYX[2]+halfsize, EachZYX[1]+halfsize), 
+                        line_color=color)
+                    text_x = max(EachZYX[2] - halfsize*0.90, resize_yx_shape[1]*0.007)
+                    text_y = min(EachZYX[1] + halfsize*0.80, resize_yx_shape[0]*0.990)
+                    graph.DrawText(str(nth+1), (text_x, text_y),
+                                    font=font, color = color)
+                    
+                else:
+                    color = col_dict["clicked_differentZ"]
+                    graph.DrawText(str(nth+1), (EachZYX[2],EachZYX[1]),
+                                    font=font, color = color)
+
+        if event ==  'Reset':
+            ZYX_pixel_clicked_list = []
+            graph.draw_image(data=data, location=img_paste_loc)
+            
+        if event ==  'OK':
+            window.close()
+            pix_zyx_list = []
+            for each_zyx in ZYX_pixel_clicked_list:
+                each_z_pix = each_zyx[0]
+                each_y_pix = round((resize_yx_shape[0]-each_zyx[1])/resize_ratio_yx[0])
+                each_x_pix = round(each_zyx[2]/resize_ratio_yx[1])
+                pix_zyx_list.append([each_z_pix,
+                                     each_y_pix,
+                                     each_x_pix])
+            break
+        
+    return pix_zyx_list
+
 
 
 def threeD_array_click(stack_array,Text="Click",SampleImg=None,ShowPoint=False,ShowPoint_YX=[0,0]):
@@ -656,6 +872,121 @@ def TwoD_2ch_img_click(transparent_tiffpath, fluorescent_tiffpath, Text="Click",
                 return int((show_size_xy[0]-y)/resize_ratio_yx[0]),int(x/resize_ratio_yx[1])
                 break
 
+
+
+
+
+def TwoD_multiple_click(transparent_tiffpath, fluorescent_tiffpath, Text="Click",
+                       max_img_xwidth = 600, max_img_ywidth = 600, ShowPoint_YX=[0,0]):
+    y_pix,x_pix=tiff_size_read(transparent_tiffpath)
+    showratio = max(x_pix/max_img_xwidth, y_pix/max_img_ywidth)
+    show_size_xy = [int(x_pix/showratio),int(y_pix/showratio) ]
+        
+    col_list=['red','cyan']
+    ShowPointsYXlist = []
+    
+    im_PIL,resize_ratio_yx = tiff16bit_to_PIL(transparent_tiffpath,Percent=100, show_size_xy=show_size_xy,
+                                              return_ratio=True)
+ 
+    data =  PILimg_to_data(im_PIL)   
+    
+    sg.theme('Dark Blue 3')
+
+    layout = [
+              [
+                sg.Text(Text, font='Arial 10', text_color='black', background_color='white', size=(60, 2))
+              ],
+              [
+                sg.Graph(
+                canvas_size=(show_size_xy), 
+                graph_bottom_left=(0, 0),
+                graph_top_right=(show_size_xy),
+                key="-GRAPH-",
+                enable_events=True,background_color='lightblue',
+                drag_submits=True,motion_events=True,
+                )
+              ],
+              [
+                sg.Text("Contrast", size=(20, 1)),
+                sg.Slider(orientation ='horizontal', key='Intensity',default_value=100,
+                          range=(1,100),enable_events = True),
+              ],
+              [
+                sg.Text("Ch", size=(20, 1)),
+                sg.Slider(orientation ='horizontal', key='Ch',
+                          default_value=1, range=(1,2),enable_events = True)
+              ],
+              [
+               sg.Text(key='-INFO-', size=(60, 1)),sg.Button('Assign', size=(20, 2)),sg.Button('Reset', size=(20, 2)),sg.Button('OK', size=(20, 2))
+              ]
+            ]
+    
+    window = sg.Window("Neuron selection", layout, finalize=True)
+    graph = window["-GRAPH-"]       # type: sg.Graph
+    graph.draw_image(data=data, location=(0,show_size_xy[1]))
+
+    x=-1;y=-1
+   
+    if len(ShowPointsYXlist)>0:
+         col_list=['cyan','red']
+         y_2 = 512 - ShowPoint_YX[0]*resize_ratio_yx[0]
+         x_2 = ShowPoint_YX[1]*resize_ratio_yx[1]
+         graph.draw_point((x_2,y_2), size=5, color = col_list[1]) 
+   
+    while True:
+        event, values = window.read()
+        ShowIntensityMax = values['Intensity']
+        NthCh = int(values['Ch'])
+        
+        if NthCh == 1:
+            tiffpath = transparent_tiffpath
+        else:
+            tiffpath = fluorescent_tiffpath
+        
+        if event == sg.WIN_CLOSED:
+            break
+
+        if event == "-GRAPH-":
+            x, y = values["-GRAPH-"]
+            im_PIL = tiff16bit_to_PIL(tiffpath,Percent=ShowIntensityMax,show_size_xy=show_size_xy)
+            data =  PILimg_to_data(im_PIL)
+            graph.erase()
+            graph.draw_image(data=data, location=(0,show_size_xy[1]))
+            graph.draw_point((x,y), size=5, color = col_list[0])
+            
+            if len(ShowPointsYXlist)>0:
+                for EachYX in ShowPointsYXlist:
+                    graph.draw_point((EachYX[1],EachYX[0]), size=5, color = col_list[1])
+            
+
+        if event ==  'Update' or "Intensity" or "Ch":
+            im_PIL = tiff16bit_to_PIL(tiffpath,Percent=ShowIntensityMax,show_size_xy=show_size_xy)
+            data =  PILimg_to_data(im_PIL)
+            graph.draw_image(data=data, location=(0,show_size_xy[1]))
+            graph.draw_point((x,y), size=5, color = col_list[0])
+            if len(ShowPointsYXlist)>0:
+                for EachYX in ShowPointsYXlist:
+                    graph.draw_point((EachYX[1],EachYX[0]), size=5, color = col_list[1])
+                        
+        if event ==  'Assign':
+            ShowPointsYXlist.append([y,x])
+            print(ShowPointsYXlist)
+            
+        if event ==  'Reset':
+            ShowPointsYXlist = []
+    
+
+        if event ==  'OK':
+            if x==-1:
+                window["-INFO-"].update(value="Please click")
+                continue
+            else:
+                y,x = y, x
+                window.close()
+                return ShowPointsYXlist
+                break
+
+
 def tiffarray_to_PIL2(stack_array,Percent=100,show_size_xy=[512,512],
                      return_ratio=False,NthSlice=1):
     # This can be used for two D image also.
@@ -669,7 +1000,7 @@ def tiffarray_to_PIL2(stack_array,Percent=100,show_size_xy=[512,512],
         im_array = stack_array
     
     norm_array = (100/Percent)*255*(im_array/im_array.max())
-    print(norm_array)
+    # print(norm_array)
     norm_array[norm_array>255]=255
     rgb_array = cv2.cvtColor(norm_array.astype(np.uint8),cv2.COLOR_GRAY2RGB)
     im_PIL = Image.fromarray(rgb_array)
@@ -721,31 +1052,33 @@ def main():
     tiffpath=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221215\Intensity\CAGGFP_Slice2_dendrite1__Ch1_018.tif"
     Spine_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Spine_example.png"
     Dendrite_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Dendrite_example.png"
+    
+    ex_1 = r"C:\Users\yasudalab\Pictures\akash__2023-11-29T13-12-43.81.tif"
     # z,y,x = threeD_img_click(tiffpath,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])    
     # z, ylist, xlist = MultipleUncaging_click(tiffpath,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])
 
-    Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230508\Rab10CY_slice1_dend1_timelapse2_001.flim"],
-                                                                       ch=0)
-    FirstStack=Tiff_MultiArray[0]
-    stack_array = np.array(imread(tiffpath))
+    # Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230508\Rab10CY_slice1_dend1_timelapse2_001.flim"],
+    #                                                                    ch=0)
+    # FirstStack=Tiff_MultiArray[0]
+    # stack_array = np.array(imread(tiffpath))
     
-    tiffarray_to_PIL2(FirstStack,NthSlice=4)
+    # tiffarray_to_PIL2(FirstStack,NthSlice=4)
     
     # z,y,x = threeD_array_click(FirstStack,SampleImg=Spine_example,ShowPoint=True,ShowPoint_YX=[110,134])
     # # transparent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_142934.tif"
     # # fluorescent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_143344_99.99norm.tif"
-    # # transparent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_143344_99.99norm-1.tif"
-    # # fluorescent_tiffpath = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\micromanager\20230118\20230118_142934-1.tif"
-    # # y, x = TwoD_2ch_img_click(transparent_tiffpath, fluorescent_tiffpath, Text="Click")
-    # print(z,y,x)
+    transparent_tiffpath = r"G:\ImagingData\Tetsuya\20231215\multiwell_tiling3\F2\tiled_img.tif"
+    fluorescent_tiffpath = r"G:\ImagingData\Tetsuya\20231215\multiwell_tiling3\F2\tiled_img.tif"
+    ShowPointsYXlist = TwoD_multiple_click(transparent_tiffpath, transparent_tiffpath, Text="Click")
+    print(ShowPointsYXlist)
     
-    z, ylist, xlist = multiple_uncaging_click(FirstStack,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])
-    print(z, ylist, xlist)   
+    # z, ylist, xlist = multiple_uncaging_click(FirstStack,SampleImg=Spine_example,ShowPoint=False,ShowPoint_YX=[110,134])
+    # print(z, ylist, xlist)   
     
     
     
 if __name__=="__main__":
-    multiuncaging()
+    # main()
     pass
 
 

@@ -43,10 +43,14 @@ def arrange_for_singlepos(resultdf, exclude_first = False,
 
 if __name__ == "__main__":
     
-    save_True = False
+    save_True = True
 
     csvlist=[
-    r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20230907\Analysis\GFP_slice3_aligned_TimeCourse.csv"
+    # r"G:\ImagingData\Tetsuya\20240530\Analysis\AAVitB27_GFP18hrs_6thN_dend1__TimeCourse.csv",
+    # r"G:\ImagingData\Tetsuya\20240530\Analysis\AAVitB27_GFP18hrs_5thN_dend3__TimeCourse.csv",
+    # r"G:\ImagingData\Tetsuya\20240530\Analysis\AAVitB27_GFP18hrs_5thN_dend2__TimeCourse.csv",
+    # r"G:\ImagingData\Tetsuya\20240530\Analysis\AAVitB27_GFP18hrs_5thN_dend1__TimeCourse.csv",
+    r"G:\ImagingData\Tetsuya\20240530\Analysis\AAVitB27_GFP18hrs_6thN_dend2__TimeCourse.csv"
     ]
 
 # \\ry-lab-yas15\Users\Yasudalab\Documents
@@ -80,7 +84,8 @@ if __name__ == "__main__":
         eachROIdf = resultdf[resultdf["ROInum"] ==  ROInum]
 
         eachROIdf["CellName"] = resultdf.loc[:,"FilePath"]+"_"+str(ROInum)
-        allcombined_df=allcombined_df.append(eachROIdf,ignore_index=True)
+        allcombined_df = pd.concat([allcombined_df,eachROIdf])
+        # allcombined_df.append(eachROIdf,ignore_index=True)
     
     allcombined_df = everymin_normalize(allcombined_df)
     
@@ -110,7 +115,7 @@ if __name__ == "__main__":
     plt.plot([0,2],[uncaging_lineheight]*2,"k-")
     plt.text(1,uncaging_lineheight*1.02,"Uncaging",
              ha="center",va="bottom",zorder=100)
-    plt.ylim([0.78,6.1])
+    # plt.ylim([0.78,6.1])
     
     savepath = allcombined_df_savepath[:-4]+"_norm_sumIntensity_bg-ROI_plot.png"
     
