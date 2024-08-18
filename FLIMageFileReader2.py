@@ -527,9 +527,9 @@ if __name__ == "__main__":
     
     
     # If you will not use tkinter, declare path for .flim file.
-    file_path=r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20221129\concatenate_aligned_1122p8WTGFP_slice1_dendrites_.flim"
-    file_path=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230616\set1\pos1_high_039.flim"
-    file_path = r"G:\ImagingData\Tetsuya\20240624\test_testtt022.flim"
+    # file_path=r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20221129\concatenate_aligned_1122p8WTGFP_slice1_dendrites_.flim"
+    # file_path=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230616\set1\pos1_high_039.flim"
+    file_path = r"G:\ImagingData\Tetsuya\test\test_001.flim"
     iminfo = FileReader()
     iminfo.read_imageFile(file_path, True) 
     ZYXarray = np.array(iminfo.image).sum(axis=tuple([1,2,5]))

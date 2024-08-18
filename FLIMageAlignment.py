@@ -5,7 +5,7 @@ Created on Thu Dec  8 19:56:34 2022
 @author: yasudalab
 """
 import os,glob,math
-from pathlib import Path as path
+from pathlib import Path
 from FLIMageFileReader2 import FileReader
 import matplotlib.pyplot as plt
 import numpy as np
@@ -135,12 +135,7 @@ def flim_files_to_nparray(filelist,ch=0,normalize_by_averageNum=True):
             First=False
             imageshape=imagearray.shape
 
-        # 2023/5/31
-        # if imagearray.shape == imageshape:
-        #     intensityarray=np.sum(imagearray,axis=-1)/DivBy
-        #     FourDimList.append(intensityarray)
-        #     timestamp_list.append(datetime.strptime(iminfo.acqTime[0],'%Y-%m-%dT%H:%M:%S.%f'))
-        #     relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds)
+
         if imagearray.shape == imageshape:
             intensityarray=(12*np.sum(imagearray,axis=-1))/DivBy
             FourDimList.append(intensityarray)
@@ -150,12 +145,61 @@ def flim_files_to_nparray(filelist,ch=0,normalize_by_averageNum=True):
             print(file_path,'<- skipped read')
             
      
-    # RawArray=np.array(FourDimList,dtype=np.uint16)
-    # Tiff_MultiArray=RawArray[:,:,0,ch,:,:]
     print("ch",ch)
-    # print("Four dim shape",FourDimList.shape)
     Tiff_MultiArray=np.array(FourDimList,dtype=np.uint16)[:,:,0,ch,:,:]
     return Tiff_MultiArray, iminfo, relative_sec_list
+
+
+
+def flim_files_to_nparray_uncaging(filelist,
+                                  ch=0,
+                                  normalize_by_averageNum=True):
+    FourDimList=[]
+    timestamp_list, relative_sec_list, uncaging_relative_sec_list = [],[],[]
+    First=True
+    for file_path in filelist:
+        iminfo = FileReader()
+        print(file_path)
+        iminfo.read_imageFile(file_path, True) 
+        # Get intensity only data
+        imagearray=np.array(iminfo.image)
+        
+        nAveFrame = iminfo.State.Acq.nAveFrame
+        if normalize_by_averageNum==False:
+            DivBy = 1
+        else:
+            DivBy = nAveFrame
+            
+        if First:
+            First=False
+            imageshape=imagearray.shape
+
+
+        if imagearray.shape == imageshape:
+            intensityarray=(12*np.sum(imagearray,axis=-1))/DivBy
+            FourDimList.append(intensityarray)
+            timestamp_list.append(datetime.strptime(iminfo.acqTime[0],'%Y-%m-%dT%H:%M:%S.%f'))
+            relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds)
+        else:
+            print(imagearray.shape)
+            if (imagearray.shape[0] > 29):
+                print(file_path,'<- uncaging')
+                uncaging_array = ((12*np.sum(imagearray,axis=-1))/DivBy)[:,0,ch,:,:]
+                uncaging_iminfo = iminfo
+                
+                for each_acqtime in iminfo.acqTime:
+                    uncaging_relative_sec_list.append(
+                        (datetime.strptime(each_acqtime,'%Y-%m-%dT%H:%M:%S.%f') 
+                         - timestamp_list[0]).seconds)
+            else:
+                print(file_path,'<- skipped read')
+    print("ch",ch)
+    Tiff_MultiArray=np.array(FourDimList,dtype=np.uint16)[:,:,0,ch,:,:]
+    
+    return Tiff_MultiArray, iminfo, relative_sec_list, uncaging_array, uncaging_iminfo, uncaging_relative_sec_list
+
+
+
     
 
 def get_xyz_pixel_um(iminfo):
@@ -168,7 +212,8 @@ def get_xyz_pixel_um(iminfo):
     return x_um, y_um, z_um
 
 def make_save_folders(one_file_path):
-    saveFolder=os.path.join(path.Path(one_file_path).parent,"Analysis",path.Path(one_file_path).stem)
+    # saveFolder=os.path.join(path.Path(one_file_path).parent,"Analysis",path.Path(one_file_path).stem)
+    saveFolder=os.path.join(Path(one_file_path).parent,"Analysis",Path(one_file_path).stem)
     os.makedirs(saveFolder,exist_ok=True)
     EachImgsaveFolder=os.path.join(saveFolder,"EachImg")
     os.makedirs(EachImgsaveFolder,exist_ok=True)
@@ -274,6 +319,7 @@ if __name__=='__main__':
     vmax_coefficient=0.8
     
     one_file_path=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221230\Rab10CY_Ca0,3_Neuron1_dendrite2_001.flim"
+    one_file_path=r"G:\ImagingData\Tetsuya\20240718\GCaMPslice\tpem2\B2_00_2_1__highmag_1_002.flim"
     saveFolder, EachImgsaveFolder = make_save_folders(one_file_path)
     
     iminfo = FileReader()
@@ -401,4 +447,49 @@ if __name__=='__main__':
     
     
     
+if __name__ == "__main__":
+    one_file_path = r"G:\ImagingData\Tetsuya\20240811\24well\highmag_GFP50ms55p\tpem\C2_00_1_2__highmag_3_006.flim"
+    filelist = get_flimfile_list(one_file_path)
+    normalize_by_averageNum = True
+
+    FourDimList=[]
+    timestamp_list, relative_sec_list, uncaging_relative_sec_list = [],[],[]
+    First=True
+    for file_path in filelist:
+        iminfo = FileReader()
+        print(file_path)
+        iminfo.read_imageFile(file_path, True) 
+        # Get intensity only data
+        imagearray=np.array(iminfo.image)
+        
+        nAveFrame = iminfo.State.Acq.nAveFrame
+        if normalize_by_averageNum==False:
+            DivBy = 1
+        else:
+            DivBy = nAveFrame
+            
+        if First:
+            First=False
+            imageshape=imagearray.shape
+
+
+        if imagearray.shape == imageshape:
+            intensityarray=(12*np.sum(imagearray,axis=-1))/DivBy
+            FourDimList.append(intensityarray)
+            timestamp_list.append(datetime.strptime(iminfo.acqTime[0],'%Y-%m-%dT%H:%M:%S.%f'))
+            relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds)
+        else:
+            print(imagearray.shape)
+            if (imagearray.shape[0] > 29):
+                print(file_path,'<- uncaging')
+                uncaging_array = ((12*np.sum(imagearray,axis=-1))/DivBy)[:,0,ch,:,:]
+                print(iminfo.acqTime)
+                for each_acqtime in iminfo.acqTime:
+                    uncaging_relative_sec_list.append(
+                        (datetime.strptime(each_acqtime,'%Y-%m-%dT%H:%M:%S.%f') 
+                         - timestamp_list[0]).seconds)
+            else:
+                print(file_path,'<- skipped read')
+    print("ch",ch)
+    Tiff_MultiArray=np.array(FourDimList,dtype=np.uint16)[:,:,0,ch,:,:]
     
