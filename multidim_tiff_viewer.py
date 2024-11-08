@@ -231,11 +231,18 @@ def tiffarray_to_PIL_8bit(stack_array, vmax = 255, show_size_yx=[512,512],
     else:
         return im_PIL
 
-def calc_zoom_rate_based_on_maxsize(yx_shape: tuple, show_size_YX_max: int) -> tuple:
+def calc_zoom_rate_based_on_maxsize(yx_shape: tuple, 
+                                    show_size_YX_max: list, 
+                                    show_size_YX_min: list) -> tuple:
     candidate_yxshape = np.array(yx_shape)
     for axis_ind in range(len(candidate_yxshape)):
         if candidate_yxshape[axis_ind] > show_size_YX_max[axis_ind]:
             candidate_yxshape = (candidate_yxshape / candidate_yxshape[axis_ind]) * show_size_YX_max[axis_ind]
+
+    for axis_ind in range(len(candidate_yxshape)):
+        if candidate_yxshape[axis_ind] < show_size_YX_min[axis_ind]:
+            candidate_yxshape = (candidate_yxshape / candidate_yxshape[axis_ind]) * show_size_YX_min[axis_ind]
+
     resize_yx_shape = list(candidate_yxshape.astype(np.uint16))
     return resize_yx_shape
 
@@ -251,6 +258,7 @@ def z_stack_multi_z_click(stack_array, pre_assigned_pix_zyx_list=[], show_text =
         }
     font = ("Courier New", 15)
     show_size_YX_max = [768, 1024]
+    show_size_YX_min = [512, 512]
     
     TiffShape= stack_array.shape
     if len(TiffShape)==3:
@@ -260,13 +268,13 @@ def z_stack_multi_z_click(stack_array, pre_assigned_pix_zyx_list=[], show_text =
                             default_value=int(NumOfZ/2), range=(1,NumOfZ),enable_events = True)            
                   ]
         yx_shape = TiffShape[1:3]
-        resize_yx_shape = calc_zoom_rate_based_on_maxsize(yx_shape, show_size_YX_max)
+        resize_yx_shape = calc_zoom_rate_based_on_maxsize(yx_shape, show_size_YX_max,show_size_YX_min)
         im_PIL,resize_ratio_yx = tiffarray_to_PIL_8bit(stack_array,vmax = 255, show_size_yx = resize_yx_shape,
                                                   return_ratio=True,NthSlice=int(NumOfZ/2))
     else:
         NumOfZ = 1
         Z_change=[]
-        resize_yx_shape = calc_zoom_rate_based_on_maxsize(TiffShape, show_size_YX_max)
+        resize_yx_shape = calc_zoom_rate_based_on_maxsize(TiffShape, show_size_YX_max,show_size_YX_min)
         im_PIL,resize_ratio_yx = tiffarray_to_PIL_8bit(stack_array, vmax = 255,  show_size_yx = resize_yx_shape,
                                                   return_ratio=True,NthSlice=1)
     
