@@ -87,7 +87,7 @@ def plot_uncaging_point(props, binary, blur, image, candi_y,
 
 
 
-class Control_flimage():
+class control_flimage():
 
     def __init__(self,ini_path=r'DirectionSetting.ini'):
         print("START")
@@ -124,6 +124,7 @@ class Control_flimage():
         self.zoom = self.get_val_sendCommand('State.Acq.zoom')
         self.nSlices = self.get_val_sendCommand('State.Acq.nSlices')
         self.config_ini(ini_path)
+
     
     def config_ini(self,ini_path):
         config = configparser.ConfigParser()
@@ -1085,7 +1086,7 @@ if __name__ == "__main__":
     # singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging.txt"
     # singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging_test.txt"
     
-    FLIMageCont = Control_flimage()
+    FLIMageCont = control_flimage()
     # FLIMageCont.directionMotorZ=-1 #sometimes, it changes. Why?
     
     # FLIMageCont.set_param(RepeatNum=5, interval_sec=30, ch_1or2=2,
@@ -1123,13 +1124,10 @@ if __name__ == "__main__":
     
     # FLIMageCont.start_repeat()
     
-    # FLIMageCont.flim.sendCommand(f'LoadSetting, {Zstack_ini}')
-    # FLIMageCont.flim.sendCommand(f'SetDIOPanel, 1, 1')
-    FLIMageCont.flim.sendCommand(f'SetUncagingLocation, 56.3, 8.2')
-    
-    # FLIMageCont.flim.sendCommand(f'State.Motor.resolutionX = 0.1')
-    # FLIMageCont.flim.sendCommand(f'State.Motor.resolutionY = 0.1')
-    # FLIMageCont.flim.sendCommand(f'State.Motor.resolutionZ = 0.2')
+    FLIMageCont.flim.sendCommand(f'LoadSetting, {Zstack_ini}')
+    FLIMageCont.flim.sendCommand(f'SetDIOPanel, 1, 1')
+
+
     
     # plt.imshow(FLIMageCont.Aligned_TYX_array[0])
     # plt.show()
