@@ -64,7 +64,6 @@ FLIMageCont.start_repeat_short()
 
 FLIMageCont.back_to_stack_plane()
 
-
 ########################################
 # POST ACQUISITION
 FLIMageCont.set_param(RepeatNum=post_acquisition, interval_sec=interval_sec, ch_1or2=align_ch_1or2,

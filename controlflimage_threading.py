@@ -36,6 +36,16 @@ def long_axis_detection(props,HalfLen_c=0.35):
     y2_1 = y0 + math.cos(orientation) * HalfLen_c * props.major_axis_length
     return x0,x1,x2,x1_1,x2_1,y0,y1,y2,y1_1,y2_1
 
+def perpendicular_intersection(spine_x, spine_y, 
+                               dend_slope, dend_intercept):        
+    perpendicular_slope = -1 / dend_slope        
+    perpendicular_intercept = spine_y - perpendicular_slope * x1        
+
+    x_intersection = ((perpendicular_intercept - spine_y) / 
+                      (perpendicular_slope - perpendicular_slope))
+    y_intersection = dend_slope * x_intersection + dend_intercept
+    
+    return x_intersection, y_intersection
 
 def plot_uncaging_point(props, binary, blur, image, candi_y,
                         candi_x, cuboid_ZYX,just_plot=True):
@@ -502,18 +512,6 @@ class control_flimage():
         
         self.shifts_fromSmall, self.Small_Aligned_4d_array=Align_4d_array(TrimmedAroundSpine)
 
-
-
-
-    # FLIMageCont.makingTYX_from3d_and_2d(first_flim=each_lowhigh_instance.highmag_path,
-    #                                     TwoDflim_Nth=-1,
-    #                                     z=uncaging_Z,
-    #                                     ch=each_lowhigh_instance.ch
-    #                                     )
-    
-
-
-    
     
 
     def AlignSmallRegion_2d(self):
@@ -727,6 +725,55 @@ class control_flimage():
 
         # print("\n self.shifts_zyx_pixel - - \n", self.shifts_zyx_pixel)
         # print("\n self.shifts_fromSmall - - \n", self.shifts_fromSmall)
+
+
+        
+    def find_best_point_by_slope(self,
+                        spine_x, spine_y, 
+                        dend_slope, dend_intercept,
+                        TwoD=False, ignore_stage_drift=True):
+
+        x_intersection, y_intersection = perpendicular_intersection(
+                                            spine_x, spine_y, 
+                                            dend_slope, dend_intercept)        
+        vector_x = x_intersection - spine_x
+        vector_y = y_intersection - spine_y
+        len_vector = (vector_x**2 + vector_y**2)**0.5
+        norm_vector_x = vector_x + len_vector
+        norm_vector_y = vector_y + len_vector
+        
+        candi_x, candi_y = self.cuboid_ZYX[2],self.cuboid_ZYX[1]
+
+        for i in range(1000):
+            try:
+                if self.binarized[int(candi_y),int(candi_x)]>0:
+                    candi_x = candi_x + norm_vector_x
+                    candi_y = candi_y + norm_vector_y
+                else:
+                    distance_pixel = self.SpineHeadToUncaging_um/self.x_um
+                    candi_x = int(candi_x + norm_vector_x * distance_pixel)
+                    candi_y = int(candi_y + norm_vector_y * distance_pixel)
+                    break
+            except:
+                pass
+        
+        if i > 990:
+                print("Error 104 - -  could not find spine boundary")
+                candi_x, candi_y = self.cuboid_ZYX[2],self.cuboid_ZYX[1]
+        
+        self.candi_x = candi_x
+        self.candi_y = candi_y
+
+        if ignore_stage_drift==False:
+            self.uncaging_x=self.Spine_ZYX[2]-self.cuboid_ZYX[2] +candi_x - self.shifts_zyx_pixel[-1][2] - self.shifts_fromSmall[-1][2]
+            self.uncaging_y=self.Spine_ZYX[1]-self.cuboid_ZYX[1] +candi_y - self.shifts_zyx_pixel[-1][1] - self.shifts_fromSmall[-1][1]
+        else:
+            self.uncaging_x= self.Spine_ZYX[2] - self.cuboid_ZYX[2] + candi_x - self.shifts_fromSmall[-1][2]
+            self.uncaging_y= self.Spine_ZYX[1] - self.cuboid_ZYX[1] + candi_y - self.shifts_fromSmall[-1][1]
+
+        # print("\n self.shifts_zyx_pixel - - \n", self.shifts_zyx_pixel)
+        # print("\n self.shifts_fromSmall - - \n", self.shifts_fromSmall)
+
 
 
     def go_to_uncaging_plane_z_assign(self,uncaging_Z):

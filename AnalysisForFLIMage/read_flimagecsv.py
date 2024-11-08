@@ -142,7 +142,7 @@ def detect_uncaging(resultdf, time_threshold = 5):
     
 
 
-def arrange_for_multipos3(resultdf, exclude_first = True,
+def arrange_for_multipos3(resultdf, exclude_first = False,
                           time_min_range=[-20, 60]):
     
     newdf = pd.DataFrame()
