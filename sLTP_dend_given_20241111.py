@@ -19,12 +19,10 @@ FLIMageCont = Control_flimage(ini_path=direction_ini)
 # FLIMageCont.directionMotorY = FLIMageCont.directionMotorY*1
 # FLIMageCont.directionGalvoY= FLIMageCont.directionGalvoY*-1
 
-
-
 interval_sec = 20
 align_ch_1or2 = 1
 expected_acq_duration_sec = 12
-pre_acquisition = 2
+pre_acquisition = 10
 post_acquisition = 20
 
 uncaging_power = 34
@@ -32,6 +30,7 @@ uncaging_power = 34
 
 #######################################
 # FIRST ACQUISITION
+
 FLIMageCont.set_param(RepeatNum=1, interval_sec=interval_sec, ch_1or2=align_ch_1or2,
                       LoadSetting=True,SettingPath=Zstack_ini,
                       expected_grab_duration_sec=expected_acq_duration_sec)
@@ -40,13 +39,17 @@ FLIMageCont.start_repeat()
 flim_file_path = FLIMageCont.flimlist[0]
 spine_zyx, dend_slope, dend_intercept = define_uncagingPoint_dend_click_multiple(flim_file_path)
 
+
+FLIMageCont.SpineHeadToUncaging_um=0.1
 FLIMageCont.Spine_ZYX = spine_zyx
 FLIMageCont.dend_slope = dend_slope
 FLIMageCont.dend_intercept = dend_intercept
 
-# FLIMageCont.Spine_ZYX = (2, 72, 87)
-# FLIMageCont.dend_slope = -0.7499644512625536
-# FLIMageCont.dend_intercept = dend_intercept
+
+
+## FLIMageCont.Spine_ZYX = (2, 72, 87)
+## FLIMageCont.dend_slope = -0.7499644512625536
+## FLIMageCont.dend_intercept = dend_intercept
 
 # #######################################
 # #PRE ACQUISITION
@@ -57,9 +60,6 @@ FLIMageCont.set_param(RepeatNum = pre_acquisition - 1, interval_sec=interval_sec
                 expected_grab_duration_sec=expected_acq_duration_sec)
 
 FLIMageCont.start_repeat()
-
-
-FLIMageCont.SpineHeadToUncaging_um=0.1
 
 #######################################
 # UNCAGING
@@ -73,9 +73,9 @@ FLIMageCont.set_uncaging_power(uncaging_power)
 
 FLIMageCont.start_repeat_short(dend_slope_intercept = True)
 
-
-
 FLIMageCont.back_to_stack_plane()
+
+
 
 ########################################
 # POST ACQUISITION
@@ -84,7 +84,7 @@ FLIMageCont.set_param(RepeatNum=post_acquisition, interval_sec=interval_sec, ch_
                     track_uncaging=False,drift_control=True,
                     ShowUncagingDetection=True,drift_cont_galvo=False,
                     expected_grab_duration_sec=expected_acq_duration_sec)
-
 FLIMageCont.start_repeat()
 
 FLIMageCont.flim.sendCommand(f'LoadSetting, {Zstack_ini}')
+

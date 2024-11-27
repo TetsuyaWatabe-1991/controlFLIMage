@@ -8,13 +8,35 @@ import pyautogui as gui
 import time
 import os
 from read_thorlabs_pm100 import Thorlab_PM100
-# for i in range(10000):
-#     print(gui.position())
-#     time.sleep(0.1)
+import pyvisa
+# from widefield_control import sendcommand_list, get_current_LED_MS2000_info
+# from ms2000_XYZ_fast import FastMS2000
+# from controlflimage_threading import Control_flimage
+
+class Thorlab_PM100():
+    
+    def __init__(self):
+        rm = pyvisa.ResourceManager()
+        # self.my_instrument = rm.open_resource(rm.list_resources()[0])
+        self.my_instrument = rm.open_resource('USB0::0x1313::0x8070::PM002347::INSTR')
+        
+        
+    def set_wavelength(self, wavelength):
+        self.my_instrument.write(f'CORR:WAV {wavelength}')
+        time.sleep(0.2)
+
+    def set_zero(self):
+        self.my_instrument.write('CORR:COLL:ZERO')
+        time.sleep(2)
+
+    def read(self):
+        power_mW =  1000*float(self.my_instrument.query('MEAS?'))
+        time.sleep(1)
+        return power_mW
 
 class LaserSettingAuto():
     
-    def __init__(self, power_png=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Power.png"):
+    def __init__(self, power_png=r"Z:\Data Temp\Tetsuya\Power.png"):
         self.power_png=power_png        
         
         self.power_btn = gui.locateCenterOnScreen(power_png)

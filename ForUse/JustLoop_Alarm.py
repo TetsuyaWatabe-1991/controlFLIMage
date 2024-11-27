@@ -8,7 +8,7 @@ import sys
 sys.path.append("../")
 #%%
 import time
-from controlflimage_threading import control_flimage
+from controlflimage_threading import Control_flimage
 from send_line import line_notification
 import winsound
 
@@ -22,20 +22,22 @@ import winsound
 
 ini_path = r'C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini'
 
-FLIMageCont = control_flimage(ini_path=ini_path)
+FLIMageCont = Control_flimage(ini_path=ini_path)
 FLIMageCont.directionMotorY = FLIMageCont.directionMotorY 
 
 
-repeat_times = 16
+repeat_times = 3
 
 interval_sec = 120
-ch_1or2 = 2
-expected_grab_duration_sec=20
+ch_1or2 = 1
+expected_grab_duration_sec = 25
 
 FLIMageCont.set_param(RepeatNum=repeat_times, interval_sec=interval_sec, ch_1or2=ch_1or2,
-                      LoadSetting=False,drift_control=True, 
-                      drift_cont_XY =  False,
-                      drift_cont_galvo=False,expected_grab_duration_sec=expected_grab_duration_sec)       
+                      LoadSetting=False,
+                      drift_control=True, 
+                      drift_cont_XY =  True,
+                      drift_cont_galvo = False, 
+                      expected_grab_duration_sec=expected_grab_duration_sec)       
 FLIMageCont.start_repeat()
 
 line_notification(message = f"{repeat_times} loop  finished")

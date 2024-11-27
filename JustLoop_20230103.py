@@ -6,9 +6,9 @@ Created on Tue Jan  3 12:28:44 2023
 """
 # import sys
 # sys.path.append("../")
-from controlflimage_threading import control_flimage
+from controlflimage_threading import Control_flimage
 
-FLIMageCont = control_flimage()
+FLIMageCont = Control_flimage()
 FLIMageCont.directionMotorY = FLIMageCont.directionMotorY 
 
 # FLIMageCont.set_param(RepeatNum=80, interval_sec=60, ch_1or2=2,

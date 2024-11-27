@@ -113,7 +113,7 @@ class Multiarea_from_lowmag():
         FLIMageCont.flim.sendCommand('SetScanMirrorXY_um, 0, 0')
         FLIMageCont.flim.sendCommand('SetCenter')
     
-    def send_highmag_acq_info(self, FLIMageCont, pos_id):
+    def send_highmag_acq_info(self, FLIMageCont, pos_id, use_galvo = True):
         FLIMageCont.flim.sendCommand(f'LoadSetting, {self.high_mag_setting_path}')
         FLIMageCont.flim.sendCommand(f'State.Files.baseName = "{self.lowmag_basename}_highmag_{pos_id}_"')
         FLIMageCont.flim.sendCommand(f'State.Acq.zoom = {self.high_mag_zoom}')      
@@ -122,7 +122,11 @@ class Multiarea_from_lowmag():
         FLIMageCont.relative_zyx_um = [(-1)*self.high_mag_relpos_dict[pos_id]["z_um"],
                                        self.high_mag_relpos_dict[pos_id]["y_um"],
                                        self.high_mag_relpos_dict[pos_id]["x_um"]]
-        FLIMageCont.go_to_absolute_pos_um_galvo(z_move = True)
+        
+        if use_galvo:
+            FLIMageCont.go_to_absolute_pos_um_galvo(z_move = True)
+        else:
+            FLIMageCont.go_to_relative_pos_motor_checkstate()
         FLIMageCont.flim.sendCommand('SetCenter')
     
     def update_pos_fromcurrent(self, FLIMageCont):

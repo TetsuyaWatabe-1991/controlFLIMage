@@ -53,7 +53,7 @@ def plot_maxproj(flimpath, ch1or2, savefig=True):
     plt.show()
 
 def fft_drift_3d(ref_array ,query_array,
-                 MedianFilter = True, Ksize = 3):
+                 MedianFilter = False, Ksize = 3):
     if MedianFilter==True:
         ref_array_for_correlation = medfilt(ref_array, kernel_size = Ksize)
         query_array_for_correlation  = medfilt(query_array, kernel_size = Ksize)
@@ -69,17 +69,18 @@ def fft_drift_3d(ref_array ,query_array,
     return aligned_array, shift
 
 
-def Align_3d_array(Tiff_MultiArray):
+def Align_3d_array(Tiff_MultiArray, MedianFilter = False, Ksize = 3):
     shifts = []
-    Aligned_4d = []
+    Aligned_3d = []
     
     for NthTime in range(Tiff_MultiArray.shape[0]):    
-        aligned_array, shift = fft_drift_3d(Tiff_MultiArray[0],Tiff_MultiArray[NthTime])
+        aligned_array, shift = fft_drift_3d(Tiff_MultiArray[0],Tiff_MultiArray[NthTime],
+                                            MedianFilter, Ksize)
         shifts.append(shift)
-        Aligned_4d.append(aligned_array)
+        Aligned_3d.append(aligned_array)
     # for plotting the xy shifts over time
     shifts = np.array(shifts)
-    Aligned_3d_array = np.array(Aligned_4d)
+    Aligned_3d_array = np.array(Aligned_3d)
     return shifts, Aligned_3d_array
 
 
@@ -236,14 +237,15 @@ def plot_alignment_shifts(shifts,iminfo,saveFolder='',savefigure=True,
         plt.plot(relative_sec_list, z_drift, '--g' , label = ' Z drift')
         plt.plot(relative_sec_list, x_drift, '--m' , label = ' X drfit')
         plt.plot(relative_sec_list, y_drift, '--k' , label = ' Y drfit')
-        plt.ylabel("\u03BCm");plt.xlabel("Time (sec)")       
+        plt.ylabel("\u03BCm");plt.xlabel("Time (sec)")
     plt.legend()
     savepath=os.path.join(saveFolder,"XYZdrift.png")
     plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
     plt.show()
    
     
-def single_plane_align_with3dstack_flimfile(StackFilePath,SinglePlaneFilePath,ch=1):
+def single_plane_align_with3dstack_flimfile(StackFilePath,SinglePlaneFilePath,ch=0,
+                                            predefined_Z = False, Z_plane = -1):
     # StackFilePath=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221220\GFPneuron1_20_019.flim"
     # SinglePlaneFilePath=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221220\GFPneuron1_20_022.flim"  
     print('\n\n ---- \n',StackFilePath,'\n\n',SinglePlaneFilePath)
@@ -251,9 +253,34 @@ def single_plane_align_with3dstack_flimfile(StackFilePath,SinglePlaneFilePath,ch
     SinglePlaneList=[SinglePlaneFilePath]
     ZYX_Stack_array, _ , _ = flim_files_to_nparray(Stack_file_list,ch=ch)
     YX_SinglePlane_array, _ , _ = flim_files_to_nparray(SinglePlaneList,ch=ch)
-    Z_plane,single_shift, Aligned_TXY_array = single_plane_align_with3dstack(ZYX_Stack_array[0,:,:,:],YX_SinglePlane_array[0,0,:,:])
 
-    return Z_plane,single_shift, Aligned_TXY_array
+    if predefined_Z == True:
+        print("\n\n  predefined_Z is True;  Using 2d align mode \n\n")
+        Tiff_MultiArray = np.array([ZYX_Stack_array[0, Z_plane, :,:] , YX_SinglePlane_array[0,0,:,:]])
+        shift, Aligned_TYX_array = Align_3d_array(Tiff_MultiArray, 
+                                                  MedianFilter=True,
+                                                  Ksize=3)
+        single_shift = shift[-1]
+    else:
+        Z_plane, single_shift, Aligned_TYX_array = single_plane_align_with3dstack(ZYX_Stack_array[0,:,:,:],YX_SinglePlane_array[0,0,:,:])
+    
+    return Z_plane,single_shift, Aligned_TYX_array
+
+
+
+    
+# def single_plane_align_with3dstack_flimfile(StackFilePath,SinglePlaneFilePath,ch=1):
+#     # StackFilePath=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221220\GFPneuron1_20_019.flim"
+#     # SinglePlaneFilePath=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221220\GFPneuron1_20_022.flim"  
+#     print('\n\n ---- \n',StackFilePath,'\n\n',SinglePlaneFilePath)
+#     Stack_file_list=[StackFilePath]
+#     SinglePlaneList=[SinglePlaneFilePath]
+#     ZYX_Stack_array, _ , _ = flim_files_to_nparray(Stack_file_list,ch=ch)
+#     YX_SinglePlane_array, _ , _ = flim_files_to_nparray(SinglePlaneList,ch=ch)
+#     Z_plane,single_shift, Aligned_TXY_array = single_plane_align_with3dstack(ZYX_Stack_array[0,:,:,:],YX_SinglePlane_array[0,0,:,:])
+
+#     return Z_plane,single_shift, Aligned_TXY_array
+    
     
 
 def mean_square_error(img1,img2,intensity_threshold=5,required_pixel=100):
@@ -309,17 +336,33 @@ def single_plane_align_with3dstack(ZYX_Stack_array,YX_SinglePlane_array):
     Aligned_TYX_array=np.array([ZYX_Stack_array[Z_plane,:,:],aligned_array_Z_plane])
     return Z_plane,single_shift, Aligned_TYX_array
 
-   
+
+
+
+if False:
+    ch = 0
+    StackFilePath = r"G:\ImagingData\Tetsuya\20241122\24well\highmag_6overnightGFP200ms55p\tpem\B3_00_2_1__highmag_2_003.flim"
+    SinglePlaneFilePath = r"G:\ImagingData\Tetsuya\20241122\24well\highmag_6overnightGFP200ms55p\tpem\B3_00_2_1__highmag_2_004.flim"
     
-if __name__=='__main__':
-    ch=1
+    Stack_file_list=[StackFilePath]
+    SinglePlaneList=[SinglePlaneFilePath]
+    ZYX_Stack_array, _ , _ = flim_files_to_nparray(Stack_file_list,ch=ch)
+    YX_SinglePlane_array, _ , _ = flim_files_to_nparray(SinglePlaneList,ch=ch)
+    Z_plane,single_shift, Aligned_TXY_array = single_plane_align_with3dstack(ZYX_Stack_array[0,:,:,:],YX_SinglePlane_array[0,0,:,:])
+
+
+# Z_plane,single_shift, Aligned_TXY_array = single_plane_align_with3dstack_flimfile2(StackFilePath,SinglePlaneFilePath,ch=1)
+
+if False:
+# if __name__=='__main__':
+    ch=0
     cmap='gray'
     vmin=0
     vmax_auto=True
     vmax_coefficient=0.8
     
-    one_file_path=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221230\Rab10CY_Ca0,3_Neuron1_dendrite2_001.flim"
-    one_file_path=r"G:\ImagingData\Tetsuya\20240718\GCaMPslice\tpem2\B2_00_2_1__highmag_1_002.flim"
+    # one_file_path=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221230\Rab10CY_Ca0,3_Neuron1_dendrite2_001.flim"
+    one_file_path=r"G:\ImagingData\Tetsuya\20241108\test_dend15_001.flim"
     saveFolder, EachImgsaveFolder = make_save_folders(one_file_path)
     
     iminfo = FileReader()
@@ -335,6 +378,7 @@ if __name__=='__main__':
     shifts, Aligned_4d_array=Align_4d_array(Tiff_MultiArray)
     plot_alignment_shifts(shifts,iminfo, saveFolder=saveFolder,savefigure=True,
                           relative_sec_list=relative_sec_list)
+    
     
     """
     
@@ -447,49 +491,49 @@ if __name__=='__main__':
     
     
     
-if __name__ == "__main__":
-    one_file_path = r"G:\ImagingData\Tetsuya\20240811\24well\highmag_GFP50ms55p\tpem\C2_00_1_2__highmag_3_006.flim"
-    filelist = get_flimfile_list(one_file_path)
-    normalize_by_averageNum = True
-
-    FourDimList=[]
-    timestamp_list, relative_sec_list, uncaging_relative_sec_list = [],[],[]
-    First=True
-    for file_path in filelist:
-        iminfo = FileReader()
-        print(file_path)
-        iminfo.read_imageFile(file_path, True) 
-        # Get intensity only data
-        imagearray=np.array(iminfo.image)
+# if __name__ == "__main__":
+#     one_file_path = r"G:\ImagingData\Tetsuya\20241108\test_dend15_001.flim"
+#     filelist = get_flimfile_list(one_file_path)
+#     normalize_by_averageNum = True
+#     ch = 0
+#     FourDimList=[]
+#     timestamp_list, relative_sec_list, uncaging_relative_sec_list = [],[],[]
+#     First=True
+#     for file_path in filelist:
+#         iminfo = FileReader()
+#         print(file_path)
+#         iminfo.read_imageFile(file_path, True) 
+#         # Get intensity only data
+#         imagearray=np.array(iminfo.image)
         
-        nAveFrame = iminfo.State.Acq.nAveFrame
-        if normalize_by_averageNum==False:
-            DivBy = 1
-        else:
-            DivBy = nAveFrame
+#         nAveFrame = iminfo.State.Acq.nAveFrame
+#         if normalize_by_averageNum==False:
+#             DivBy = 1
+#         else:
+#             DivBy = nAveFrame
             
-        if First:
-            First=False
-            imageshape=imagearray.shape
+#         if First:
+#             First=False
+#             imageshape=imagearray.shape
 
 
-        if imagearray.shape == imageshape:
-            intensityarray=(12*np.sum(imagearray,axis=-1))/DivBy
-            FourDimList.append(intensityarray)
-            timestamp_list.append(datetime.strptime(iminfo.acqTime[0],'%Y-%m-%dT%H:%M:%S.%f'))
-            relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds)
-        else:
-            print(imagearray.shape)
-            if (imagearray.shape[0] > 29):
-                print(file_path,'<- uncaging')
-                uncaging_array = ((12*np.sum(imagearray,axis=-1))/DivBy)[:,0,ch,:,:]
-                print(iminfo.acqTime)
-                for each_acqtime in iminfo.acqTime:
-                    uncaging_relative_sec_list.append(
-                        (datetime.strptime(each_acqtime,'%Y-%m-%dT%H:%M:%S.%f') 
-                         - timestamp_list[0]).seconds)
-            else:
-                print(file_path,'<- skipped read')
-    print("ch",ch)
-    Tiff_MultiArray=np.array(FourDimList,dtype=np.uint16)[:,:,0,ch,:,:]
+#         if imagearray.shape == imageshape:
+#             intensityarray=(12*np.sum(imagearray,axis=-1))/DivBy
+#             FourDimList.append(intensityarray)
+#             timestamp_list.append(datetime.strptime(iminfo.acqTime[0],'%Y-%m-%dT%H:%M:%S.%f'))
+#             relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds)
+#         else:
+#             print(imagearray.shape)
+#             if (imagearray.shape[0] > 29):
+#                 print(file_path,'<- uncaging')
+#                 uncaging_array = ((12*np.sum(imagearray,axis=-1))/DivBy)[:,0,ch,:,:]
+#                 print(iminfo.acqTime)
+#                 for each_acqtime in iminfo.acqTime:
+#                     uncaging_relative_sec_list.append(
+#                         (datetime.strptime(each_acqtime,'%Y-%m-%dT%H:%M:%S.%f') 
+#                          - timestamp_list[0]).seconds)
+#             else:
+#                 print(file_path,'<- skipped read')
+#     print("ch",ch)
+#     Tiff_MultiArray=np.array(FourDimList,dtype=np.uint16)[:,:,0,ch,:,:]
     

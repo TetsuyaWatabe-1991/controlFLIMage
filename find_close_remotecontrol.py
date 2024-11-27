@@ -44,5 +44,34 @@ def close_remote_control():
         # pyautogui.moveTo(oripos)
         
         win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+
         
+def close_realtime_plot():
+    top_windows = []
+    win32gui.EnumWindows(windowEnumerationHandler, top_windows)
+    
+    
+    top_windows = []
+    win32gui.EnumWindows(windowEnumerationHandler, top_windows)
+    
+    for i in top_windows:
+        if i[1]=='Realtime plot':
+            hwnd = i[0]
+            win32gui.SetWindowPos(hwnd,win32con.HWND_TOPMOST,0,0,0,0,win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
+            # left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+            try:
+                win32gui.SetForegroundWindow(hwnd)
+            except:
+                print("  Failed <- win32gui.SetForegroundWindow(hwnd) ")
+                pass
+            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+
+    
+if __name__ == '__main__':
+    if False:
+        top_windows = []
+        win32gui.EnumWindows(windowEnumerationHandler, top_windows)
         
+        for i in top_windows:
+            if i[1]=='Realtime plot':
+                print(i)

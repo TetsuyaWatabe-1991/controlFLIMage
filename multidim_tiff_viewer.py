@@ -7,6 +7,8 @@ Created on Tue Dec 20 08:56:14 2022
 import math
 import os
 import copy
+from time import sleep
+import configparser
 import PySimpleGUI as sg
 import numpy as np
 from io import BytesIO
@@ -18,6 +20,7 @@ from FLIMageAlignment import flim_files_to_nparray
 from skimage.measure import label, regionprops
 import matplotlib.pyplot as plt
 from FLIMageFileReader2 import FileReader
+
 
 def read_multiple_uncagingpos(flimpath):
     
@@ -428,19 +431,24 @@ def z_stack_multi_z_click(stack_array, pre_assigned_pix_zyx_list=[], show_text =
 
 
 def threeD_array_click(stack_array,Text="Click",SampleImg=None,
-                       ShowPoint=False,ShowPoint_YX=[0,0]):
-    
+                       ShowPoint=False,ShowPoint_YX=[0,0],
+                       predefined = False, predefined_ZYX = [0,0,0]):
     TiffShape= stack_array.shape
     col_list=['red','cyan']
     
     if len(TiffShape)==3:
         NumOfZ = TiffShape[0]
+        if predefined == True:    
+            default_Z = predefined_ZYX[0] + 1
+        else:
+            default_Z = int(NumOfZ/2 + 1)
+        print("default_Z",default_Z)
         Z_change=[sg.Text("Z position", size=(20, 1)),
                   sg.Slider(orientation ='horizontal', key='Z',
-                            default_value=int(NumOfZ/2), range=(1,NumOfZ),enable_events = True)
+                            default_value=default_Z, range=(1,NumOfZ),enable_events = True)
                   ]
         im_PIL,resize_ratio_yx = tiffarray_to_PIL(stack_array,Percent=100, show_size_xy=[512,512],
-                                                  return_ratio=True,NthSlice=int(NumOfZ/2))
+                                                  return_ratio=True, NthSlice = default_Z)
     else:
         NumOfZ = 1
         Z_change=[]
@@ -492,8 +500,13 @@ def threeD_array_click(stack_array,Text="Click",SampleImg=None,
         y = 512 - ShowPoint_YX[0]*resize_ratio_yx[0]
         x = ShowPoint_YX[1]*resize_ratio_yx[1]
         graph.draw_point((x,y), size=5, color = col_list[1])
+    elif predefined == True:    
+        y = 512 - predefined_ZYX[1]*resize_ratio_yx[0]
+        x = predefined_ZYX[2]*resize_ratio_yx[1]
+        graph.draw_point((x,y), size=5, color = col_list[0])
     else:
         x=-1;y=-1
+    
 
     NthSlice = 1
     
@@ -996,19 +1009,27 @@ def TwoD_multiple_click(transparent_tiffpath, fluorescent_tiffpath, Text="Click"
 
 def twoD_click_tiff(twoD_numpy, Text="Click",
                     max_img_xwidth = 600, max_img_ywidth = 600, 
-                    ShowPoint_YX=[0,0]):
+                    ShowPoint_YX=[0,0],
+                    predefined = False, predefied_yx_list = []):
     y_pix,x_pix= twoD_numpy.shape
     showratio = max(x_pix/max_img_xwidth, y_pix/max_img_ywidth)
     show_size_xy = [int(x_pix/showratio),int(y_pix/showratio) ]
 
     col_list=['magenta', 'green']
-    ShowPointsYXlist = []
+
     
     im_PIL,resize_ratio_yx = tiffarray_to_PIL(stack_array = twoD_numpy,
                                               Percent=100,
                                               show_size_xy=show_size_xy,
                                               return_ratio=True)
-    
+   
+    ShowPointsYXlist = []
+    if predefined == True:
+        for each_yx in predefied_yx_list:
+            pre_def_y = show_size_xy[1] - each_yx[0] * resize_ratio_yx[0]
+            pre_def_x = each_yx[1] * resize_ratio_yx[1]
+            ShowPointsYXlist.append([pre_def_y,pre_def_x])
+            
     showpoint_y = show_size_xy[1] - ShowPoint_YX[0] * resize_ratio_yx[0]
     showpoint_x = ShowPoint_YX[1] * resize_ratio_yx[1]
      
@@ -1047,7 +1068,11 @@ def twoD_click_tiff(twoD_numpy, Text="Click",
     graph = window["-GRAPH-"]       # type: sg.Graph
     graph.draw_image(data=data, location=(0,show_size_xy[1]))
     graph.draw_point((showpoint_x,showpoint_y), size=10, color = col_list[0])
-
+    if len(ShowPointsYXlist)>0:
+        for EachYX in ShowPointsYXlist:
+            graph.draw_point((EachYX[1],EachYX[0]), 
+                             size=5, color = col_list[1])
+            
     x=-1;y=-1
 
     while True:
@@ -1078,7 +1103,7 @@ def twoD_click_tiff(twoD_numpy, Text="Click",
                 for EachYX in ShowPointsYXlist:
                     graph.draw_point((EachYX[1],EachYX[0]), 
                                      size=5, color = col_list[1])
-            
+            sleep(0.1)
 
         if event ==  'OK':
             if len(ShowPointsYXlist)<1:
@@ -1156,27 +1181,78 @@ def multiuncaging():
         
 
 
-def define_uncagingPoint_dend_click_multiple(flim_file_path):    
+def define_uncagingPoint_dend_click_multiple(flim_file_path,
+                                             read_ini = False,
+                                             inipath = ""):    
     iminfo = FileReader()
     print(flim_file_path)
     iminfo.read_imageFile(flim_file_path, True) 
     imagearray=np.array(iminfo.image)
     intensityarray=np.sum(np.sum(np.sum(imagearray,axis=-1),axis=1),axis=1)
-    
     text = "Click the center of the spine you want to stimulate. (Not the uncaging position itself)"
-    spine_zyx = threeD_array_click(intensityarray,text,
-                             SampleImg=None,ShowPoint=False)
     maxproj = np.sum(intensityarray,axis=0)
     text2 = "Click the dendrite near the selected spine"
-    yx_list = twoD_click_tiff(twoD_numpy = maxproj, Text=text2,
-                              max_img_xwidth = 600, max_img_ywidth = 600, 
-                              ShowPoint_YX=[spine_zyx[1],spine_zyx[2]])
-    
-    dend_slope, dend_intercept = np.polyfit(np.array(yx_list)[:,1], np.array(yx_list)[:,0], 1)
 
+
+    if (read_ini == True) * (os.path.exists(inipath)):
+        spine_zyx, dend_slope, dend_intercept = read_xyz_single(inipath = inipath)
+        spine_zyx = threeD_array_click(intensityarray, text,
+                                 SampleImg = None, ShowPoint=False,
+                                 predefined = True, predefined_ZYX = spine_zyx)
+        
+        predefied_yx_list = []
+        for x in range(1,intensityarray.shape[-1]-1):
+            y = dend_slope*x + dend_intercept
+            if (1<y) * (y < intensityarray.shape[-1]-1):
+                predefied_yx_list.append([y,x])
+        
+        yx_list = twoD_click_tiff(twoD_numpy = maxproj, Text=text2,
+                                  max_img_xwidth = 600, max_img_ywidth = 600, 
+                                  ShowPoint_YX=[spine_zyx[1],spine_zyx[2]],
+                                  predefined = True, 
+                                  predefied_yx_list = predefied_yx_list)
+    
+        
+    else:
+        spine_zyx = threeD_array_click(intensityarray,text,
+                                 SampleImg=None,ShowPoint=False)        
+    
+        yx_list = twoD_click_tiff(twoD_numpy = maxproj, Text=text2,
+                                  max_img_xwidth = 600, max_img_ywidth = 600, 
+                                  ShowPoint_YX=[spine_zyx[1],spine_zyx[2]])
+    print(yx_list)
+    dend_slope, dend_intercept = np.polyfit(np.array(yx_list)[:,1], np.array(yx_list)[:,0], 1)
+    print("dend_slope, dend_intercept :", dend_slope, dend_intercept)
     return spine_zyx, dend_slope, dend_intercept
 
 
+def save_spine_dend_info(spine_zyx, dend_slope, dend_intercept, inipath):
+    config = configparser.ConfigParser()
+    config['uncaging_settings'] = {}
+    config['uncaging_settings']['spine_z'] = str(spine_zyx[0])
+    config['uncaging_settings']['spine_y'] = str(spine_zyx[1])
+    config['uncaging_settings']['spine_x'] = str(spine_zyx[2])
+    config['uncaging_settings']['dend_slope'] = str(dend_slope)
+    config['uncaging_settings']['dend_intercept'] = str(dend_intercept)
+    with open(inipath, 'w') as configfile:
+        config.write(configfile)
+    print("spine and dend info saved as",inipath)
+        
+def read_xyz_single(inipath):
+    config = configparser.ConfigParser()
+    config.read(inipath,encoding='cp932')
+    if len(config.sections()) != 1:
+        raise Exception('The inifile does not have single section.')
+    else:
+        z = int(config['uncaging_settings']['spine_z'])
+        y = int(config['uncaging_settings']['spine_y'])
+        x = int(config['uncaging_settings']['spine_x'])
+        dend_slope = float(config['uncaging_settings']['dend_slope'])
+        dend_intercept = float(config['uncaging_settings']['dend_intercept'])
+        spine_zyx = (z, y, x)
+        return spine_zyx, dend_slope, dend_intercept
+
+    
     
 
 def main():

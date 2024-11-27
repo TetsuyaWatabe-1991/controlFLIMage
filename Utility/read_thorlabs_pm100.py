@@ -11,7 +11,9 @@ class Thorlab_PM100():
     
     def __init__(self):
         rm = pyvisa.ResourceManager()
-        self.my_instrument = rm.open_resource(rm.list_resources()[0])
+        # self.my_instrument = rm.open_resource(rm.list_resources()[0])
+        self.my_instrument = rm.open_resource('USB0::0x1313::0x8070::PM002347::INSTR')
+        
         
     def set_wavelength(self, wavelength):
         self.my_instrument.write(f'CORR:WAV {wavelength}')

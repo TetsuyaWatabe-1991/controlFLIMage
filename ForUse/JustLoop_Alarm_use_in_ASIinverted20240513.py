@@ -8,7 +8,7 @@ import sys
 sys.path.append("../")
 #%%
 import time
-from controlflimage_threading import control_flimage
+from controlflimage_threading import Control_flimage
 from send_line import line_notification
 import winsound
 
@@ -22,9 +22,9 @@ import winsound
 
 ini_path = r'C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini'
 
-Zstack_ini = r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\z7_10,_kal8.txt"
+Zstack_ini = r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\z7_10_kal8.txt"
 
-FLIMageCont = control_flimage(ini_path=ini_path)
+FLIMageCont = Control_flimage(ini_path=ini_path)
 FLIMageCont.directionMotorY = FLIMageCont.directionMotorY 
 
 
@@ -34,8 +34,8 @@ FLIMageCont.directionMotorY = FLIMageCont.directionMotorY
 #     time.sleep(1)
 
 
-repeat_times = 15
-interval_sec = 60* 2
+repeat_times = 25
+interval_sec = 60
 
 # repeat_times = 3
 # interval_sec = 60* 1
@@ -60,8 +60,8 @@ FLIMageCont.set_param(RepeatNum=repeat_times,
 FLIMageCont.start_repeat()
 
 
-if repeat_times>10:
-    line_notification(message = f"{repeat_times} loop  finished")
+# if repeat_times>10:
+line_notification(message = f"{repeat_times} loop  finished")
 
 for i in range(1):
     winsound.PlaySound("SystemExit", winsound.SND_ALIAS)
