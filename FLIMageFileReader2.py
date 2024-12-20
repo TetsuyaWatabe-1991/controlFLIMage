@@ -1,15 +1,5 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Dec  8 16:07:20 2022
-
-This code is modified to avoid using libtiff
-Instead, package tifffile is used.
-
-@author: Tetsuya Watabe
-"""
-
-# -*- coding: utf-8 -*-
-"""
 Created on Tue Feb 12 09:39:42 2019
 This class provides fucntion to read files created by FLIMage! software and calculate lifetime, intensity and lifetimeMap.
 Detailed parameters are stored in FileReader.State
@@ -17,13 +7,13 @@ Detailed parameters are stored in FileReader.State
 @author: Ryohei Yasuda
 """
 
-# from libtiff import TIFF
-#pip install libtiff will install this. 
-
-import os,codecs,re
+from libtiff import TIFF
+# pip install pylibtiff will install this. 
+# It may need LibTiff.dll in python directry. You can download a source and cmake it with VS.
+# The latest version is 4.5.0 as of May 2023, https://gitlab.com/libtiff/libtiff
+import os
 import numpy as np
 from datetime import datetime
-import tifffile
 import ast
 
 def convert_string(s):
@@ -42,7 +32,6 @@ def convert_string(s):
                     if s[0]=='"' and s[-1] == '"':
                         s = s[1:-1]
                 return s
-            
             
 class FileReader:
     def __init__(self):        
@@ -75,64 +64,57 @@ class FileReader:
         self.ImageFormat = 'Linear'
         self.State = microscope_parameters() #All the detailed information is in State parameters.
         self.statedict = dict()
-        
         #See 
         '''
         Parameters are in:
             State.Acq
             State.Spc.spcData
-            State.spc.datainfo
+            State.Spc.datainfo
             State.Uncaging
+            State.Motor
+            State.DO
+            State.Ephys
         '''
     
     def executeLine(self, info):
-        #print(info)
         eq = info.split(' = ')
-        try:
-            if ('acqTime' not in eq[0]):
-                exec('self.' + eq[0] + ' = ' + eq[1])
-        except:
-            pass #print('failed: self.' + eq[0] + ' = ' + eq[1])
-    
-    
-    def decode_acquired_time(self,file_path):
-        with codecs.open(file_path, 'r', 'utf-8', 'ignore') as file:
-            lines = file.readlines()
-            for line in lines:
-                if "Acquired_Time =" in line:
-                    # print(line[-26:-2])
-                    self.acqTime.append(line[-26:-3])
-            #     print(line)
+        # print(eq)
+        if len(eq)>1:
+            if (('Acq' in eq[0]) + ('Spc.spcData' in eq[0]) +
+                ('Spc.datainfo' in eq[0]) + ('Uncaging' in eq[0])):
+                if (('acqTime' not in eq[0]) 
+                    * ('Acquired_Time' not in eq[0])  #):
+                    * ('PhotonsFileName' not in eq[0])
+                    * ('Program' not in eq[1])
+                    ):
+
+                    exec('self.' + eq[0] + ' = ' + eq[1])
+
     
     def decode_header(self, header, new = True):
-        # infos = header.decode('ASCII').split('\r\n')
-        infos = header.split('\r\n')
-        statedict = dict()
+        infos = header.decode('ASCII').split('\r\n')
         for info in infos:
             info = info.replace(";", "")
             #eq1 = info.split(' = ')
             #numPeriod = len(eq1[0].split('.')) - 1
-            try:
-                if 'Acq' or 'Spc.spcData' or 'Spc.datainfo' or 'Uncaging' in info:
-                    #eq = info.split('.', numPeriod)
-                    self.executeLine (info)
-                if 'Format' in info:
-                    format_str = info.split(' = ')
-                    self.ImageFormat = format_str[1]
-                if "State." in info:
-                    keyitem = info.split(' = ')
-                    if "[" in keyitem[1]:
-                        keyitem[1] = ast.literal_eval(keyitem[1])
-                    else:
-                        keyitem[1] = convert_string(keyitem[1])
-                    self.statedict[keyitem[0]] = keyitem[1]
-            except:
-                print("Could not read image info.")
-
-            #Acquired time will be read in other function
-            # if 'Acquired_Time' in info:
-            #     format_str = info.split(' = ')
-            #     self.acqTime.append(format_str[1])
+            target_strings = ['Acq', 'Spc.spcData', 'Spc.datainfo', 
+                              'Uncaging', 'Motor', 'DO', 'Ephys']
+            if any(target in info for target in target_strings):
+                #eq = info.split('.', numPeriod)
+                self.executeLine (info)
+            if 'Format' in info:
+                format_str = info.split(' = ')
+                self.ImageFormat = format_str[1]
+            if 'Acquired_Time' in info:
+                format_str = info.split(' = ')
+                self.acqTime.append(format_str[1])
+            if "State." in info:
+                keyitem = info.split(' = ')
+                if "[" in keyitem[1]:
+                    keyitem[1] = ast.literal_eval(keyitem[1])
+                else:
+                    keyitem[1] = convert_string(keyitem[1])
+                self.statedict[keyitem[0]] = keyitem[1]
         if self.currentPage == 0 and 'FLIMimage' not in infos[0]:
             print('This file may not be generated by FLIMage')
         
@@ -156,6 +138,8 @@ class FileReader:
                 self.nFastZSlices = self.State.Acq.FastZ_nSlices
             else:
                 self.nFastZSlices = 1
+     
+    
                     
     def decode_FLIM(self, flim):        
         image = []
@@ -183,10 +167,8 @@ class FileReader:
                     offset = 0
                     for i in range(0, self.nChannels):
                         offset2 = offset + self.height * self.width * self.n_time[i]
-
                         if self.n_time[i] > 0:
-                            # imageC.append(np.reshape(flim_each[0, offset : offset2], (self.height, self.width,  self.n_time[i]), 'C'))
-                            imageC.append(np.reshape(flim_each[offset : offset2], (self.height, self.width,  self.n_time[i]), 'C'))
+                            imageC.append(np.reshape(flim_each[0, offset : offset2], (self.height, self.width,  self.n_time[i]), 'C'))
                         else:
                             imageC.append(np.zeros(1)) #If not acquired, it return 0 value.
                         offset = offset2
@@ -200,61 +182,36 @@ class FileReader:
     def read_imageFile(self, file_path, readImage = True):
         self.filename = file_path
         self.n_images = 1
-
-        # These below require libtiff package
-        # tif = TIFF.open(file_path, mode = 'r')
-        #header = tif.GetField('ImageDescription')
-        
-        tif = tifffile.TiffFile(file_path)
-
-        for tag in tif.pages[0].tags:
-            if len(str(tag.value))>500:
-                header=str(tag.value)
-        
-        self.decode_header(header)        
-        self.decode_acquired_time(file_path)
-        
-        tifarray=tif.asarray()
+        self.acqTime = []
+        tif = TIFF.open(file_path, mode = 'r')
+        header = tif.GetField('ImageDescription')
+        self.decode_header(header)
         
         if readImage:
-            if len(tifarray.shape)==3:
-                if (os.path.splitext(file_path)[-1] == '.flim'):
-                    flim = np.array(tifarray[self.currentPage,0,:]).astype(np.ushort) #Sometimes image is stored in 8bit.
-                    self.image.append(self.decode_FLIM(flim))
-                    self.flim = True
-                else:
-                    self.image.append(np.array(tifarray[self.currentPage,0,:]))
-                    self.flim = False
+            if (os.path.splitext(file_path)[-1] == '.flim'):
+                flim = np.array(tif.read_image()).astype(np.ushort) #Sometimes image is stored in 8bit.
+                self.image.append(self.decode_FLIM(flim))
+                self.flim = True
             else:
-                if (os.path.splitext(file_path)[-1] == '.flim'):
-                    flim = np.array(tifarray[0,:]).astype(np.ushort) #Sometimes image is stored in 8bit.
-                    self.image.append(self.decode_FLIM(flim))
-                    self.flim = True
-                else:
-                    self.image.append(np.array(tifarray[0,:]))
-                    self.flim = False
-                    
+                self.image.append(np.array(tif.read_image()))
+                self.flim = False
                 
         self.currentPage += 1  
-        
-        # readdirectory do not work in tifflib
-        # while tif.readdirectory():
-        #
-        while self.currentPage < tifarray.shape[0]:
-            # print(self.currentPage ,tifarray.shape[0])
-            # header = tif.GetField('ImageDescription')
-            # self.decode_header(header, False)
+        while tif.readdirectory():
+            header = tif.GetField('ImageDescription')
+            self.decode_header(header, False)
+
             if readImage:
                 if self.flim:
-                    flim = np.array(tifarray[self.currentPage,0,:]).astype(np.ushort) #Sometimes image is stored in 8bit.
+                    flim = np.array(tif.read_image()).astype(np.ushort) #Sometimes image is stored in 8bit.
                     self.image.append(self.decode_FLIM(flim))            
                 else:
-                    self.image.append(tifarray[self.currentPage,0,:])
+                    self.image.append(tif.read_image())
                     
             self.currentPage += 1    
             self.n_images = self.n_images + 1
             
-        # self.currentPage = 0
+        self.currentPage = 0
         if self.flim:
             self.LoadFLIMFromMemory(0, 0, 0)
             
@@ -309,7 +266,7 @@ class FileReader:
             sumImg = np.sum(img[:,:,lt_range], 2)
             sumImgZero = self.intensity == 0
             sumImg[sumImgZero] = 1 
-            waitedSum = np.sum(img[:,:,lt_range] *  timeMatrix[:,:,lt_range], 2) / sumImg
+            waitedSum = np.sum(img[:,:,lt_range] * timeMatrix[:,:,lt_range], 2) / sumImg
             waitedSum[sumImgZero] = 0
             self.lifetimeMap = waitedSum * self.resolution[self.currentChannel] / 1000 - lifetimeOffset
             
@@ -341,21 +298,16 @@ class FileReader:
         if self.pageValid(page, fastZpage, channel):
             self.LoadFLIMFromMemory(page, fastZpage, channel)
             self.calculateAll(lifetimeRange, intensityLimit, lifetimeLimit, lifetimeOffset)
-    
-    def export_statedict(self, export_txt_path):
-        text = "FLIMimage parameters\n"
-        for each_key in self.statedict:
-            one_line = f"{each_key} = {self.statedict[each_key]};\n"
-            text += one_line
-        f = open(export_txt_path, "w")
-        f.write(text)
-        f.close()       
-    
+            
 class microscope_parameters:
     def __init__(self):
         self.Acq = acquisition_parameters()
         self.Spc = spc_parameters()
         self.Uncaging = uncaging_parameters()
+        self.Motor = motor_parameters()
+        self.DO = do_parameters()
+        self.Ephys = ephys_parameters()
+        self.Files = files_parameters()
         
 class acquisition_parameters:
     def __init__(self):
@@ -423,6 +375,17 @@ class acquisition_parameters:
         self.FastZ_umPerSlice = 1.0
         self.FastZ_degreePerSlice = 4.0
 
+class motor_parameters:
+    def __init__(self):
+        self.stepXY = 1
+        self.stepZ = 1
+        self.velocity = [1000, 0, 0]
+        self.resolutionX = 0.04
+        self.resolutionY = 0.04
+        self.resolutionZ = 0.04
+        self.motorPosition = [0.0, 0.0, 0.0]
+        self.positionID = 0
+
 class uncaging_parameters:
     def __init__(self):
         self.name = "pulse set"
@@ -462,11 +425,12 @@ class uncaging_parameters:
         self.UncagingPositionsVY = [] #voltage
         self.MoveMirrorsToUncagingPosition = True
         self.TurnOffImagingDuringUncaging = True
-        
+
 class spc_parameters:
     def __init__(self):
         self.datainfo = spc_datainfo()
         self.spcData = spc_spcData()
+        self.analysis = spc_analysis()
 
 class spc_datainfo:
     def __init__(self):
@@ -512,56 +476,130 @@ class spc_spcData:
         self.TagID = 2
         self.acq_modePQ = 3
         self.lineID_PQ = 3 #M1, M2, M3, M4
-        
+
+class spc_analysis:
+    def __init__(self):
+        self.offset = [0.8, np.nan]
+        self.fit_range1 = [0, 62]
+        self.fit_range2 = [0, 62]
+        self.fit_param1 = [90000, 2.6, 100000, 0.6, 0.1, 0.9]
+        self.fit_param2 = [90000, 2.6, 100000, 0.6, 0.1, 0.9]
+
+class do_parameters:
+    def __init__(self):
+        self.NChannels = 1
+        self.name = "pulse set"
+        self.DO_whileImage = True
+        self.sync_withFrame = False
+        self.sync_withSlice = True
+        self.FramesBeforeDO = 32
+        self.SlicesBeforeDO = 1
+        self.FrameInterval = 0
+        self.SliceInterval = 1
+        self.pulse_number = 2
+        self.nPulses = [1, 0, 0]
+        self.pulseWidth = [1500, 1500, 6]
+        self.pulseISI = [0, 0, 2048]
+        self.pulseDelay = [0, 0, 100]
+        self.active_high = [True, True, True]
+        self.sampleLength = 1501
+        self.outputRate = 4000
+        self.baselineBeforeTrain_forFrame = 2048
+        self.pulseSetInterval_forFrame = 0
+        self.trainRepeat = 1
+        self.trainInterval = 0
+
+class ephys_parameters:
+    def __init__(self):
+        self.Ephys_on = False
+        self.outputRate = 15000
+        self.pulseSetTotalLength_ms = 3000
+        self.pulse_set_repeat = 300
+        self.pulse_set_interval = 30
+        self.sync_with_image = False
+        self.sync_with_uncage = True
+        self.acquire_data = True
+        self.PulseName = "Simple Record"
+        self.currentPulseN = 1
+        self.cycle = None
+        self.epoch = 7
+        self.nChannelsPatch = 2
+        self.nChannelsStim = 2
+        self.Stim1_Width_ms = 0.1
+        self.Stim1_Amp = 5000
+        self.Stim1_Interval_ms = 50
+        self.Stim1_Delay_ms = 100
+        self.Patch1_Width_ms = 200
+        self.Patch1_Amp = 0
+        self.Patch1_Interval_ms = 10
+        self.Patch1_Delay_ms = 100
+        self.Stim2_Width_ms = 6
+        self.Stim2_Amp = 100
+        self.Stim2_Interval_ms = 50
+        self.Stim2_Delay_ms = 10
+        self.Patch2_Width_ms = 200
+        self.Patch2_Amp = 0
+        self.Patch2_Interval_ms = 10
+        self.Patch2_Delay_ms = 100
+
+class files_parameters:
+    def __init__(self):
+        self.baseName = "test"
+        self.FLIMfolderPath = "\\FLIMage"
+        self.pathName = "C:\\Users\\yasudalab\\Documents\\Data"
+        self.pathNameIntensity = "C:\\Users\\yasudalab\\Documents\\Data\\Intensity"
+        self.pathNameFLIM = "C:\\Users\\yasudalab\\Documents\\Data\\FLIM"
+        self.initFolderPath = "C:\\Users\\yasudalab\\Documents\\FLIMage\\Init_Files"
+        self.initFileName = "C:\\Users\\yasudalab\\Documents\\Data\\Hui\\Settings\\FLIM_init_hela_blulightstim.txt"
+        self.deviceFileName = "C:\\Users\\yasudalab\\Documents\\FLIMage\\Init_Files\\FLIM_deviceFile_V2.txt"
+        self.defaultInitFile = "C:\\Users\\yasudalab\\Documents\\FLIMage\\Init_Files\\Default-4_0_4.txt"
+        self.commandPathName = "C:\\Users\\yasudalab\\Documents\\FLIMage\\Init_Files\\Command"
+        self.eventOutputListFileName = "eventOutputList.txt"
+        self.uncagePathName = "C:\\Users\\yasudalab\\Documents\\FLIMage\\Init_Files\\Uncaging"
+        self.windowsInfoPath = "C:\\Users\\yasudalab\\Documents\\FLIMage\\Init_Files\\WindowsInfo"
+        self.FLIMageOutputFileName = "instructions_fromFLIMage.txt"
+        self.ClientOutputFileName = "instructions_fromClient.txt"
+        self.parameterFile = "scan_parameters.txt"
+        self.fileName = "test001"
+        self.numberedFile = True
+        self.channelsInSeparatedFile = False
+        self.fileChannel = 0
+        self.fileCounter = 3
+        self.extension = ".flim"
+        self.extension2 = ".flim2"
+        self.extension_photon = ".phtn"
+        self.extension_photon_archive = ".photon"
+        self.BH_initFile = "C:\\Users\\yasudalab\\Documents\\FLIMage\\Init_Files\\spcm.ini"
 
 if __name__ == "__main__":
     
-    # If you want to select the path for .flim using GUI, use tkinter below.
-    
-    # import tkinter as tk
-    # from tkinter import filedialog
-    # plotWindow = tk.Tk()
-    # plotWindow.wm_title('Fluorescence lifetime')                
-    # plotWindow.withdraw()    
-    # file_path = filedialog.askopenfilename()
-    
-    
-    # If you will not use tkinter, declare path for .flim file.
-    # file_path=r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20221129\concatenate_aligned_1122p8WTGFP_slice1_dendrites_.flim"
-    # file_path=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20230616\set1\pos1_high_039.flim"
-    file_path = r"G:\ImagingData\Tetsuya\test\test_001.flim"
-    iminfo = FileReader()
-    iminfo.read_imageFile(file_path, True) 
-    ZYXarray = np.array(iminfo.image).sum(axis=tuple([1,2,5]))
-    # Get intensity only data
-    imagearray=np.array(iminfo.image)
-    intensityarray=np.sum(imagearray,axis=-1)    
-    maxproj = np.max(intensityarray,axis=0)
-
-    ch=1
-    
-    iminfo.export_statedict(file_path[:-5]+".txt")
-    
-    # maxproj_singlech = np.max(intensityarray,axis=0)[0,ch,:,:]
-    # vmax = np.percentile(maxproj_singlech,99.5)
-    # plt.imshow(maxproj_singlech, vmin=0, vmax=vmax, cmap='gray')
-
-    # Showing intensity image and lifetime image
+    from time import sleep
     import matplotlib.pyplot as plt
+    import shutil
+    from controlflimage_threading import Control_flimage
+    FLIMageCont = Control_flimage()
+    FLIMageCont.flim.sendCommand(f"SetUncagingLocation, 50, 50")
+    file_path = r"G:\ImagingData\Tetsuya\20241204\test_uncaging_015.flim"
+    temp_path = r"G:\ImagingData\Tetsuya\20241204\temp.flim"
     
-    
-    intensity_range=[0,202]
-    for i in range(intensityarray.shape[0]):
-        plt.imshow(intensityarray[i,0,ch,:,:],cmap="gray",
-                   vmin=intensity_range[0],vmax=intensity_range[1])
-        plt.text(0,-10,str(i));plt.axis('off')
-        plt.show()
-    
-    for i in range(intensityarray.shape[0]):
-        iminfo.calculatePage(page = i, fastZpage = 0, channel = 0, 
-                      lifetimeRange = [5, 62], intensityLimit = [2, 100], 
-                      lifetimeLimit = [1.6, 2.8], lifetimeOffset = 1.6)
+    for i in range(40):
+        try:
+            shutil.copyfile(file_path, temp_path)
+            iminfo = FileReader()
+            iminfo.read_imageFile(temp_path, True)     
+            six_dim = np.array(iminfo.image)
+            print(np.array(iminfo.image).shape)
+            plt.imshow(six_dim[-1].sum(axis = 0).sum(axis = 0).sum(axis = -1))
+            plt.show()
+            unc_xy = 50 + -20 * (i%2)
+            FLIMageCont.flim.sendCommand(f"SetUncagingLocation, {unc_xy}, {unc_xy}")
+        except:
+            print("read error")
+        sleep(2)
         
-        plt.imshow(iminfo.rgbLifetime)
-        plt.text(0,-10,str(i));plt.axis('off')
-        plt.show()
+    iminfo.read_imageFile(file_path, True)     
+    six_dim = np.array(iminfo.image)
+    print(np.array(iminfo.image).shape)
+    plt.imshow(six_dim[-1].sum(axis = 0).sum(axis = 0).sum(axis = -1))
+    plt.show()
+    

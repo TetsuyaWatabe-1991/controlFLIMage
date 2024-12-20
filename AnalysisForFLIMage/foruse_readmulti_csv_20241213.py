@@ -29,9 +29,9 @@ plt.rcParams["font.family"] = "Arial"
 import math
 from read_flimagecsv import arrange_for_multipos3, csv_to_df, detect_uncaging, value_normalize, everymin_normalize
 
-save_True = False
+save_True = True
 target_roi_num = 1
-time_bin = 3
+time_bin = 10
 
 
 one_of_filepath = r"G:\ImagingData\Tetsuya\20241213\24well\highmagGFP200ms55p\tpem_1\Analysis\C1_00_1_1__highmag_1__TimeCourse.csv"
@@ -64,6 +64,10 @@ csvlist = glob.glob(one_of_filepath[:one_of_filepath.rfind("\\")]+"\\*_TimeCours
 #     # r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_dendrite_20h__TimeCourse.csv"
 # ]
 
+exclude_list = ["C1_00_3_2__highmag_4_",
+                "C2_00_4_2__highmag_1_"
+                                ]
+
 one_of_filepath = csvlist[0]
 allcombined_df_savepath= one_of_filepath[:-4] + "_combined.csv"
 
@@ -72,6 +76,11 @@ allcombined_df_savepath= one_of_filepath[:-4] + "_combined.csv"
 
 allcombined_df=pd.DataFrame()
 for csvpath in csvlist:
+    
+    if any(each_exclude in csvpath for each_exclude in exclude_list):
+        print("#"*70,"\n\n", "EXCLUDE: ", csvpath,"\n\n","#"*70)
+    
+    
     print(csvpath)
     resultdf=csv_to_df(csvpath,
                        ch_list=[1])
@@ -87,6 +96,7 @@ for csvpath in csvlist:
         continue
     
     resultdf2 = detect_uncaging(resultdf) 
+    resultdf2 = resultdf2[resultdf2["sumIntensity_bg-ROI"] > 0]
     resultdf3 = arrange_for_multipos3(resultdf2)
     resultdf4 = value_normalize(resultdf3, prefix = "sumIntensity_bg-ROI")
     resultdf5 = resultdf4
@@ -133,7 +143,7 @@ plt.show()
 
 
 # max_time_minute = math.ceil(allcombined_df.time_min_norm.max()/time_bin)*time_bin
-max_time_minute = math.ceil(28/time_bin)*time_bin
+max_time_minute = math.ceil(50/time_bin)*time_bin
 
 min_time_minute = math.floor(allcombined_df.time_min_norm.min()/time_bin)*time_bin
 
@@ -176,7 +186,7 @@ ax.plot([time_binned_df["bin_time"].min(),
          time_binned_df["bin_time"].max()],
          [1,1], "--" , color = "gray")
 
-uncaging_ypos = 3.7
+uncaging_ypos = 2.4
 ax.plot([0,1],
          [uncaging_ypos,uncaging_ypos], 
          color = "k")
@@ -184,12 +194,12 @@ ax.text(-2,uncaging_ypos + 0.1, "Uncaging")
 
 ax.set_ylabel("Norm. spine (a.u.)")
 ax.set_xlabel("Time (min)")
-plt.ylim([0.86, 3.7])
+plt.ylim([0.86, 2.5])
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 
-plt.savefig(one_of_filepath[:-4]+"_mean_plot.pdf", format="pdf", bbox_inches="tight")
-plt.savefig(one_of_filepath[:-4]+"_mean_plot.png", format="png", bbox_inches="tight")
+plt.savefig(one_of_filepath[:-4]+"_mean_plot.pdf", format="pdf", bbox_inches="tight", dpi = 200)
+plt.savefig(one_of_filepath[:-4]+"_mean_plot.png", format="png", bbox_inches="tight", dpi = 200)
 
 # プロットを表示
 plt.show()
@@ -219,8 +229,6 @@ if save_True:
     plt.savefig(savepath, bbox_inches = "tight", dpi = 200)
     plt.savefig(savepath[:-4]+".pdf", bbox_inches = "tight", dpi = 200)
 plt.show()
-
-
 
 
 

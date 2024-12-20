@@ -486,7 +486,8 @@ def threeD_array_click(stack_array,Text="Click",SampleImg=None,
               ],
                Z_change
               ,
-            [sg.Text(key='-INFO-', size=(60, 1)),sg.Button('OK', size=(20, 2))]
+            [sg.Text(key='-INFO-', size=(60, 1)),sg.Button('OK', size=(20, 2))],
+            [sg.Button('Exclude', size=(20, 2))]
             ]
     
     window = sg.Window("Spine selection", layout, finalize=True)
@@ -543,6 +544,12 @@ def threeD_array_click(stack_array,Text="Click",SampleImg=None,
                 window.close()
                 return z,int((512-y)/resize_ratio_yx[0]),int(x/resize_ratio_yx[1])
                 break
+            
+        if event == "Exclude":
+            window.close()
+            return -1, -1, -1
+            break
+        
 
 def multiple_uncaging_click(stack_array,Text="Click",SampleImg=None,ShowPoint=False,ShowPoint_YX=[0,0]):
 
@@ -1186,39 +1193,40 @@ def define_uncagingPoint_dend_click_multiple(flim_file_path,
                                              inipath = ""):    
     iminfo = FileReader()
     print(flim_file_path)
-    iminfo.read_imageFile(flim_file_path, True) 
+    iminfo.read_imageFile(flim_file_path, True)
     imagearray=np.array(iminfo.image)
     intensityarray=np.sum(np.sum(np.sum(imagearray,axis=-1),axis=1),axis=1)
     text = "Click the center of the spine you want to stimulate. (Not the uncaging position itself)"
     maxproj = np.sum(intensityarray,axis=0)
     text2 = "Click the dendrite near the selected spine"
 
-
     if (read_ini == True) * (os.path.exists(inipath)):
         spine_zyx, dend_slope, dend_intercept = read_xyz_single(inipath = inipath)
         spine_zyx = threeD_array_click(intensityarray, text,
                                  SampleImg = None, ShowPoint=False,
                                  predefined = True, predefined_ZYX = spine_zyx)
-        
+        if spine_zyx[0] < 0:
+            return spine_zyx, 0, 0
+            
         predefied_yx_list = []
         for x in range(1,intensityarray.shape[-1]-1):
             y = dend_slope*x + dend_intercept
             if (1<y) * (y < intensityarray.shape[-1]-1):
                 predefied_yx_list.append([y,x])
-        
+
         yx_list = twoD_click_tiff(twoD_numpy = maxproj, Text=text2,
-                                  max_img_xwidth = 600, max_img_ywidth = 600, 
+                                  max_img_xwidth = 600, max_img_ywidth = 600,
                                   ShowPoint_YX=[spine_zyx[1],spine_zyx[2]],
-                                  predefined = True, 
+                                  predefined = True,
                                   predefied_yx_list = predefied_yx_list)
-    
-        
     else:
         spine_zyx = threeD_array_click(intensityarray,text,
-                                 SampleImg=None,ShowPoint=False)        
-    
+                                 SampleImg=None,ShowPoint=False)
+        if spine_zyx[0] < 0:
+            return spine_zyx, 0, 0
+            
         yx_list = twoD_click_tiff(twoD_numpy = maxproj, Text=text2,
-                                  max_img_xwidth = 600, max_img_ywidth = 600, 
+                                  max_img_xwidth = 600, max_img_ywidth = 600,
                                   ShowPoint_YX=[spine_zyx[1],spine_zyx[2]])
     print(yx_list)
     dend_slope, dend_intercept = np.polyfit(np.array(yx_list)[:,1], np.array(yx_list)[:,0], 1)
@@ -1240,6 +1248,7 @@ def save_spine_dend_info(spine_zyx, dend_slope, dend_intercept, inipath):
         
 def read_xyz_single(inipath):
     config = configparser.ConfigParser()
+    assert(os.path.exists(inipath))
     config.read(inipath,encoding='cp932')
     if len(config.sections()) != 1:
         raise Exception('The inifile does not have single section.')

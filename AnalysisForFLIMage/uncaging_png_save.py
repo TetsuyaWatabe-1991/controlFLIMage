@@ -12,7 +12,7 @@ Created on Tue Jul 11 15:00:38 2023
 @author: WatabeT
 """
 import sys
-sys.path.append(r"C:\Users\WatabeT\Documents\Git\controlFLIMage")
+sys.path.append(r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLIMage")
 from FLIMageFileReader2 import FileReader
 import os,codecs,re,glob
 import numpy as np
@@ -21,10 +21,16 @@ import tifffile
 import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw
 
-savefolder = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20240827\24well_0808GFP\highmag_Trans5ms\tpem\uncaging_img"
-folder = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20240827\24well_0808GFP\highmag_Trans5ms\tpem"
+# savefolder = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20240827\24well_0808GFP\highmag_Trans5ms\tpem\uncaging_img"
+# folder     = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20240827\24well_0808GFP\highmag_Trans5ms\tpem"
+
+folder = r"G:\ImagingData\Tetsuya\20241212\24well\highmag_GFP200ms55p\tpem_1"
+
+savefolder = os.path.join(folder,"uncaging_img")
+
+os.makedirs(savefolder, exist_ok=True)
 #"\\RY-LAB-WS04\ImagingData\Tetsuya\20240827\24well_0808GFP\highmag_Trans5ms\tpem\C1_00_5_1__highmag_1_003.flim"
-flimfilelist = glob.glob(os.path.join(folder,"*highmag*003.flim"))
+flimfilelist = glob.glob(os.path.join(folder,"*highmag*004.flim"))
 flimfilelist.sort(key=os.path.getmtime)
 
 search_list = flimfilelist[:]

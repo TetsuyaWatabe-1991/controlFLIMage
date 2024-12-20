@@ -50,11 +50,12 @@ class LaserSettingAuto():
         self.FLIMageCont = Control_flimage(FLIMage_setting_ini)
         
         # window_remote = gw.getWindowsWithTitle("Remote control")[0]
-        # window_remote.minimize()
+        # window_remote.minimiz100
+        
         
         # window = gw.getWindowsWithTitle("FLIMage")[0]
         # window.activate()
-        
+        assert os.path.exists(power_png)
         while True:
             try:
                 self.power_btn = gui.locateOnScreen(power_png, confidence=0.80)
@@ -249,7 +250,7 @@ if __name__ == '__main__':
              now.strftime("%Y-%m-%d 720 nm laser"), ha = 'left',va = "top", 
              transform=plt.gca().transAxes)
     offset = 0.2
-    for mw in [0.7, 1.0, 1.3, 1.6, 2.0, 2.4, 2.8]:
+    for mw in [1.0, 2.0, 2.4, 2.8,3.5, 5.0, 6.0]:
         percent = inv_slope * mw + inv_intercept
         eachtext = f"{round(mw,1)} mW".rjust(7) + f"{round(percent,1)} %".rjust(8)
         ax2.text(0.1,1 - offset,

@@ -15,7 +15,7 @@ from FLIM_pipeClient import FLIM_Com,FLIM_message_received
 from find_close_remotecontrol import close_remote_control, window_exists
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
-from multidim_tiff_viewer import threeD_array_click, multiple_uncaging_click
+from multidim_tiff_viewer import threeD_array_click, read_xyz_single
 import numpy as np
 import cv2
 from skimage.measure import label, regionprops
@@ -130,6 +130,55 @@ def plot_uncaging_point_dend_slope(vector_yx,
     else:
         return f, axarr
 
+def plot_uncaging_point_dend_slope_with_original(
+                                   vector_yx, 
+                                   original,
+                                   binary, blur, image,
+                                   candi_y, candi_x, 
+                                   cuboid_ZYX,just_plot=True,
+                                   ):
+    vmax=blur.max()
+    kwargs_ex = {'cmap':'gray',
+                 'vmin':0,
+                 'vmax':vmax,
+                 'interpolation':'none'}
+    
+    kwargs_bin = {'cmap':'gray',
+                 'vmin':0,
+                 'vmax':1,
+                 'interpolation':'none'}
+    kwargs_uncag = dict(c="y",marker="+",s=200)
+
+    plt.figure()
+    f, axarr = plt.subplots(1,4)
+
+    axarr[3].imshow(binary,**kwargs_bin) #Make sure that vmin is less than 1.
+    axarr[3].arrow(cuboid_ZYX[2],cuboid_ZYX[1],
+                    vector_yx[1], vector_yx[0], 
+                    color = 'g')
+    axarr[3].arrow(cuboid_ZYX[2], cuboid_ZYX[1],
+                    -vector_yx[1], -vector_yx[0], 
+                    color = 'g')
+    
+    axarr[3].scatter(candi_x,candi_y,**kwargs_uncag)
+    
+    axarr[2].imshow(blur,**kwargs_ex)
+    axarr[2].scatter(candi_x,candi_y,**kwargs_uncag)
+
+    axarr[1].imshow(image,**kwargs_ex);
+    axarr[1].scatter(candi_x,candi_y,**kwargs_uncag)
+
+    axarr[0].imshow(original,**kwargs_ex);
+    axarr[0].scatter(candi_x,candi_y,**kwargs_uncag)
+    
+    for j in range(4):
+        axarr[j].axis('off')
+    if just_plot==True:
+        print("plot show")
+        plt.show()
+        return
+    else:
+        return f, axarr
 
 
 class Control_flimage():
@@ -148,7 +197,8 @@ class Control_flimage():
         else:
             self.reconnect()
         self.example_image()
-        self.cuboid_ZYX=[2,20,20]
+        self.cuboid_ZYX=[1,20,20]
+        self.default_cuboid_ZYX=[1,20,20]
         self.uncaging_x=0
         self.uncaging_y=0
         self.SpineHeadToUncaging_um=0.2
@@ -205,6 +255,7 @@ class Control_flimage():
                   track_uncaging=False, drift_control=True,
                   ShowUncagingDetection=False, 
                   drift_cont_galvo=False, drift_cont_XY = True,
+                  defined_dendrite = False,
                   num_avoid_uncaging_frames = 0):
         self.RepeatNum=RepeatNum
         self.interval_sec=interval_sec
@@ -217,10 +268,24 @@ class Control_flimage():
         self.expected_grab_duration_sec=expected_grab_duration_sec
         self.drift_cont_XY = drift_cont_XY
         self.num_avoid_uncaging_frames = num_avoid_uncaging_frames
+        self.defined_dendrite = defined_dendrite
+        
         if LoadSetting==True:
             self.flim.sendCommand(f'LoadSetting, {SettingPath}')
-            
     
+    def set_spine_dendrite_from_ini(self, inipath = False):
+        folder = self.get_val_sendCommand("State.Files.pathName")
+        baseName = self.get_val_sendCommand("State.Files.baseName")
+        
+        if inipath == False:
+            inipath = os.path.join(folder, baseName)[:-1] + ".ini"
+        print("inipath, ",inipath)
+        spine_zyx, dend_slope, dend_intercept = read_xyz_single(inipath)
+        self.Spine_ZYX = spine_zyx
+        self.dend_slope = dend_slope
+        self.dend_intercept = dend_intercept
+        
+
     def get_position(self):
         for i in range(10):
             try:
@@ -555,11 +620,13 @@ class Control_flimage():
         
         
     def AlignSmallRegion(self):
+        
+        
         TrimmedAroundSpine=self.Aligned_4d_array[
                                                 :,
-                                                self.Spine_ZYX[0]-self.cuboid_ZYX[0]:self.Spine_ZYX[0]+self.cuboid_ZYX[0]+1,
-                                                self.Spine_ZYX[1]-self.cuboid_ZYX[1]:self.Spine_ZYX[1]+self.cuboid_ZYX[1],
-                                                self.Spine_ZYX[2]-self.cuboid_ZYX[2]:self.Spine_ZYX[2]+self.cuboid_ZYX[2],
+                                                self.Spine_ZYX[0]-self.cuboid_ZYX[0] : self.Spine_ZYX[0]+self.cuboid_ZYX[0] +1,
+                                                self.Spine_ZYX[1]-self.cuboid_ZYX[1] : self.Spine_ZYX[1]+self.cuboid_ZYX[1] +1,
+                                                self.Spine_ZYX[2]-self.cuboid_ZYX[2] : self.Spine_ZYX[2]+self.cuboid_ZYX[2] +1,
                                                 ]
         
         self.shifts_fromSmall, self.Small_Aligned_4d_array=Align_4d_array(TrimmedAroundSpine)
@@ -601,32 +668,48 @@ class Control_flimage():
     def analyze_uncaging_point(self,threshold_coordinate=0.5,Gaussian_pixel=3):
         
         max_proj=self.Small_Aligned_4d_array[-1].max(axis=0)
+        first_max_proj=self.Small_Aligned_4d_array[0].max(axis=0)
         self.SpinePlaneImg=self.Small_Aligned_4d_array[-1,self.cuboid_ZYX[0],:,:]
         # single_plane_img = self.Small_Aligned_4d_array[self.cuboid_ZYX[0],:,:]
         blur = cv2.GaussianBlur(max_proj,(Gaussian_pixel,Gaussian_pixel),0)
-        self.blur=blur; self.max_proj=max_proj
+        first_max_proj_blurred = cv2.GaussianBlur(first_max_proj,(Gaussian_pixel,Gaussian_pixel),0)
+        self.blur=blur
+        self.max_proj=max_proj
         
-        dend_coord = [self.cuboid_ZYX[1] - (self.Spine_ZYX[1]-self.Dendrite_ZYX[1]),
-                      self.cuboid_ZYX[2] - (self.Spine_ZYX[2]-self.Dendrite_ZYX[2])]
-        Threshold =  min(blur[self.cuboid_ZYX[1],self.cuboid_ZYX[2]],blur[dend_coord[0],dend_coord[1]])*threshold_coordinate
-        ret3,th3 = cv2.threshold(blur,Threshold,255,cv2.THRESH_BINARY)
-        label_img = label(th3)
+        if self.defined_dendrite == False:
+            dend_coord = [self.cuboid_ZYX[1] - (self.Spine_ZYX[1]-self.Dendrite_ZYX[1]),
+                          self.cuboid_ZYX[2] - (self.Spine_ZYX[2]-self.Dendrite_ZYX[2])]
+            # Threshold =  min(blur[self.cuboid_ZYX[1],self.cuboid_ZYX[2]],blur[dend_coord[0],dend_coord[1]])*threshold_coordinate
+            Threshold =  min(first_max_proj_blurred[self.cuboid_ZYX[1],self.cuboid_ZYX[2]],
+                             first_max_proj_blurred[dend_coord[0],dend_coord[1]])*threshold_coordinate
+            ret3,th3 = cv2.threshold(blur,Threshold,255,cv2.THRESH_BINARY)
+            label_img = label(th3)                
+            self.binary_include_dendrite=np.zeros(label_img.shape)
+       
+            for each_label in range(1,label_img.max()+1):
+                if label_img[dend_coord[0],dend_coord[1]] == each_label:
+                    self.binary_include_dendrite[label_img==each_label]=1
+                    
+            if self.binary_include_dendrite.max() == 0:
+                print("\n\n ERROR 102,  Cannot find dendrite \n No update in uncaging position. \n")
             
-        self.binary_include_dendrite=np.zeros(label_img.shape)
-        
-        for each_label in range(1,label_img.max()+1):
-            if label_img[dend_coord[0],dend_coord[1]] == each_label:
-                self.binary_include_dendrite[label_img==each_label]=1
+            else:
+                regions = regionprops(label(self.binary_include_dendrite))
+                self.props=regions[0]
+                self.binarized=th3>0
+                self.find_best_point()
                 
-        if self.binary_include_dendrite.max() == 0:
-            print("\n\n ERROR 102,  Cannot find dendrite \n No update in uncaging position. \n")
-        
-        else:
-            regions = regionprops(label(self.binary_include_dendrite))
-            self.props=regions[0]
-            self.binarized=th3>0
-            self.find_best_point()
+        elif self.defined_dendrite == True:
+            Threshold = blur[self.cuboid_ZYX[1],self.cuboid_ZYX[2]]*threshold_coordinate
+            print(Threshold)
+            ret3,th3 = cv2.threshold(blur,Threshold,255,cv2.THRESH_BINARY)
+                
+            self.binary_include_dendrite=th3
+            self.binarized=th3
+            self.find_best_point_by_slope(ignore_stage_drift = self.drift_control)
+            pass       
             
+      
     
     def analyze_uncaging_point_from_singleplane(self, single_plane_YXarray,
                                                threshold_coordinate=0.5,Gaussian_pixel=3):
@@ -716,6 +799,7 @@ class Control_flimage():
             elif dend_slope_intercept == True:
                 self.find_best_point_by_slope(ignore_stage_drift=ignore_stage_drift)
         
+        
     def find_best_point(self,TwoD=False, ignore_stage_drift=False):
 
         if TwoD==False:
@@ -793,11 +877,12 @@ class Control_flimage():
         vector_x = spine_x - x_intersection
         vector_y = spine_y - y_intersection
         len_vector = (vector_x**2 + vector_y**2)**0.5
-        
+
         norm_vector_x = vector_x / len_vector
         norm_vector_y = vector_y / len_vector
         self.vector_yx = [vector_y, vector_x]
-        
+        print("norm_vector_x", norm_vector_x)
+        print("norm_vector_y", norm_vector_y)
         
         print("spine_x",spine_x)
         print("spine_y",spine_y)
@@ -816,8 +901,8 @@ class Control_flimage():
             
             try:
                 if self.binarized[int(candi_y),int(candi_x)]>0:
-                    candi_x = candi_x + norm_vector_x
-                    candi_y = candi_y + norm_vector_y
+                    candi_x = candi_x + norm_vector_x/3
+                    candi_y = candi_y + norm_vector_y/3
                     print("candidate xy:", candi_x, candi_y)
                 else:
                     distance_pixel = self.SpineHeadToUncaging_um/self.x_um
@@ -826,7 +911,9 @@ class Control_flimage():
                     print("found interface xy:", candi_x, candi_y)
                     break
             except:
-                pass
+                print("Error - - - Could not find candidate. Binarized ")
+                candi_x, candi_y = self.cuboid_ZYX[2],self.cuboid_ZYX[1]
+                break
         
         if i > 990:
                 print("Error 104 - -  could not find spine boundary")
@@ -836,11 +923,13 @@ class Control_flimage():
         self.candi_y = candi_y
 
         if ignore_stage_drift==False:
-            self.uncaging_x=self.Spine_ZYX[2]-self.cuboid_ZYX[2] +candi_x - self.shifts_zyx_pixel[-1][2] - self.shifts_fromSmall[-1][2]
-            self.uncaging_y=self.Spine_ZYX[1]-self.cuboid_ZYX[1] +candi_y - self.shifts_zyx_pixel[-1][1] - self.shifts_fromSmall[-1][1]
+            print("stage drift ignored. \n\n So put that info at uncaging pos")
+            self.uncaging_x = self.Spine_ZYX[2] - self.cuboid_ZYX[2] + candi_x - self.shifts_zyx_pixel[-1][2] - self.shifts_fromSmall[-1][2]
+            self.uncaging_y = self.Spine_ZYX[1] - self.cuboid_ZYX[1] + candi_y - self.shifts_zyx_pixel[-1][1] - self.shifts_fromSmall[-1][1]
         else:
-            self.uncaging_x= self.Spine_ZYX[2] - self.cuboid_ZYX[2] + candi_x - self.shifts_fromSmall[-1][2]
-            self.uncaging_y= self.Spine_ZYX[1] - self.cuboid_ZYX[1] + candi_y - self.shifts_fromSmall[-1][1]
+            print("stage drift done. \n\n So put that info will not be included calc for uncaging pos")
+            self.uncaging_x = self.Spine_ZYX[2] - self.cuboid_ZYX[2] + candi_x - self.shifts_fromSmall[-1][2]
+            self.uncaging_y = self.Spine_ZYX[1] - self.cuboid_ZYX[1] + candi_y - self.shifts_fromSmall[-1][1]
 
         # print("\n self.shifts_zyx_pixel - - \n", self.shifts_zyx_pixel)
         # print("\n self.shifts_fromSmall - - \n", self.shifts_fromSmall)
@@ -856,6 +945,7 @@ class Control_flimage():
         self.relative_zyx_um = [z_move_um, 0, 0]
         self.go_to_relative_pos_motor_checkstate(first_wait_sec = 1,
                                                  iter_wait_sec = 1)
+
 
     def go_to_uncaging_plane(self):
         # sleep(2)
@@ -1078,12 +1168,10 @@ class Control_flimage():
         self.NameStem = self.get_val_sendCommand("State.Files.baseName")
         self.childname = self.NameStem + str(int(self.get_val_sendCommand("State.Files.fileCounter"))).zfill(3)+".flim"
         self.uncaging_each=[]
-        
         thread1 = threading.Thread(target=self.acquire_independent)
         self.stop_acquisition=False
         self.nowGrabbing=True
         self.NthAc = 0
-        
         thread1.start()
         self.loop=True
         
@@ -1098,8 +1186,6 @@ class Control_flimage():
         plt.xlabel("Nth interval")
         plt.show()
         
-
-        
         
     def start_repeat(self):
         self.start=datetime.now()
@@ -1109,12 +1195,13 @@ class Control_flimage():
         self.childname = self.NameStem + str(int(self.get_val_sendCommand("State.Files.fileCounter"))).zfill(3)+".flim"
         self.TxtWind = TextWindow()
         self.showWindow =True
+        if self.defined_dendrite == True:
+            self.set_spine_dendrite_from_ini()
         
         for NthAc in range(self.RepeatNum):
             print("\n","= "*20,"\n"*2 ,NthAc+1 ," / ",self.RepeatNum,"\n"*2 , "= "*20 )
             each_acquisition_from=datetime.now()      
             self.TxtWind.udpate("Now Grabbing")
-            # sleep(0.5) #### This small sleep will prevent from crash, sometimes....
             self.flim_connect_check()
             
             self.flim.sendCommand('StartGrab')  
@@ -1122,11 +1209,11 @@ class Control_flimage():
             self.wait_while_grabbing()
             self.flimlist=glob.glob(os.path.join(self.folder,f"{self.NameStem}*.flim"))
             
+            
             if len(self.flimlist)>1:
                 self.align_two_flimfile()
                 self.flim_connect_check()
-                self.plot_drift(show=True)
-                # self.plot_drift(show=False)
+                # self.plot_drift(show=True)
 
                 if self.drift_control==True:
                     # if NthAc < self.RepeatNum-1:
@@ -1138,7 +1225,8 @@ class Control_flimage():
                 if self.track_uncaging==True:
                     if self.Spine_ZYX==False:
                         print("\n\n\n Spine position is not assigned. Continue.\n\n\n")
-                        
+                        return
+                    self.check_spineZYX_cuboid()
                     self.AlignSmallRegion()
                     self.analyze_uncaging_point()
                     
@@ -1152,15 +1240,32 @@ class Control_flimage():
                     
                     if self.ShowUncagingDetection==True:
                         try:
-                            plot_uncaging_point(self.props, self.binarized, self.blur, self.SpinePlaneImg, 
-                                            self.candi_y, self.candi_x, self.cuboid_ZYX)
+                            if self.defined_dendrite == False:
+                                plot_uncaging_point(self.props, self.binarized, self.blur, self.SpinePlaneImg, 
+                                                    self.candi_y, self.candi_x, self.cuboid_ZYX)
+                            elif self.defined_dendrite == True:
+                                plot_uncaging_point_dend_slope_with_original(vector_yx = self.vector_yx, 
+                                                                original = self.Small_Aligned_4d_array[0].max(axis=0),
+                                                                binary = self.binarized, 
+                                                                blur = self.blur, 
+                                                                image = self.SpinePlaneImg,
+                                                                candi_y = self.candi_y, 
+                                                                candi_x = self.candi_x,
+                                                                cuboid_ZYX = self.cuboid_ZYX
+                                                                )
                         except:
                             print("ERROR on plotting")
             
             if NthAc < self.RepeatNum-1:
                 self.wait_until_next(each_acquisition_from)
 
-
+    def check_spineZYX_cuboid(self):
+        for each_dim in [0,1,2]:            
+            self.cuboid_ZYX[each_dim] = min(
+                        self.Spine_ZYX[each_dim],
+                        self.Aligned_4d_array[0].shape[each_dim] - self.Spine_ZYX[each_dim],
+                        self.default_cuboid_ZYX[each_dim]
+                        )
 
 
 if __name__ == "__main__":

@@ -14,14 +14,16 @@ import copy
 from FLIMageAlignment import  align_two_flimfile
 from FLIMageFileReader2 import FileReader
 from controlflimage_threading import Control_flimage
-
+from multidim_tiff_viewer import read_xyz_single
 
 class Multiarea_from_lowmag():
     def __init__(self, lowmag_path,
                  rel_pos_um_csv_path,
                  high_mag_setting_path,
                  high_mag_zoom = 16,
-                 ch_1or2 = 1):
+                 ch_1or2 = 1,
+                 preassigned_spine = False
+                 ):
         self.lowmag_path = lowmag_path
         self.lowmag_basename = pathlib.Path(lowmag_path).stem[:-3]        
         self.lowmag_iminfo = FileReader()
@@ -35,6 +37,9 @@ class Multiarea_from_lowmag():
         self.high_mag_relpos_dict = {}
         self.high_mag_zoom = high_mag_zoom
         self.rel_pos_um_csv_path = rel_pos_um_csv_path
+        
+        self.preassigned_spine = preassigned_spine
+        
         self.read_rel_pos_um_csv()
         
         bottom_lowmag_xyz_um = list(copy.copy(self.lowmag_iminfo.statedict['State.Motor.motorPosition']))
@@ -49,6 +54,7 @@ class Multiarea_from_lowmag():
         self.Spine_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Spine_example.png"
         self.Dendrite_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Dendrite_example.png"
         self.cuboid_ZYX=[2,20,20]
+        
     
     def read_rel_pos_um_csv(self):
         self.rel_pos_df = pd.read_csv(self.rel_pos_um_csv_path)
@@ -57,6 +63,14 @@ class Multiarea_from_lowmag():
             x_um = self.rel_pos_df.loc[ind,"x_um"]
             y_um = self.rel_pos_df.loc[ind,"y_um"]
             z_um = self.rel_pos_df.loc[ind,"z_um"]
+            
+            if self.preassigned_spine == True:
+                inipath = f"{self.lowmag_path[:-8]}_highmag_{pos_id}.ini"
+                spine_zyx, dend_slope, dend_intercept = read_xyz_single(inipath)
+                if spine_zyx[0]<0:
+                    print(f"Rejected highmag, {inipath}")
+                    continue
+                
             self.high_mag_relpos_dict[pos_id] = {}
             self.high_mag_relpos_dict[pos_id]["x_um"] = x_um
             self.high_mag_relpos_dict[pos_id]["y_um"] = y_um
@@ -152,10 +166,9 @@ class Multiarea_from_lowmag():
         dest_y = y - FLIMageCont.directionMotorY * relative_zyx_um[1]
         dest_z = z - FLIMageCont.directionMotorZ * relative_zyx_um[0]
         FLIMageCont.flim.sendCommand('MotorDisconnect')
-        FastMS2k.move_pos_mm(self, 
-                             x_mm = dest_x*10**3,
-                             y_mm = dest_y*10**3, 
-                             z_mm = dest_z*10**3)
+        FastMS2k.move_pos_mm(x_mm = dest_x/10**3,
+                             y_mm = dest_y/10**3, 
+                             z_mm = dest_z/10**3)
         FLIMageCont.flim.sendCommand('MotorReopen')
         
 
