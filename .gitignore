@@ -1,3 +1,6 @@
 *.pyc
+*.tif
+*.tiff
 *.png
 */__pycache__/*
+./Archive/*
