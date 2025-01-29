@@ -31,38 +31,11 @@ from read_flimagecsv import arrange_for_multipos3, csv_to_df, detect_uncaging, v
 
 save_True = False
 target_roi_num = 1
-time_bin = 3
+time_bin = 10
 
 
-one_of_filepath = r"G:\ImagingData\Tetsuya\20241213\24well\highmagGFP200ms55p\tpem_1\Analysis\C1_00_1_1__highmag_1__TimeCourse.csv"
-csvlist = glob.glob(one_of_filepath[:one_of_filepath.rfind("\\")]+"\\*_TimeCourse.csv")
-
-# csvlist = [
-#     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_72h_dend4_28um__TimeCourse.csv",
-#     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_72h_dend3_28um__TimeCourse.csv",
-#     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_72h_dend2_34um__TimeCourse.csv",
-#     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_72h_dend1__TimeCourse.csv",
-#     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_72h_dend5_23um__TimeCourse.csv"
-#     ]
-
-# # csvlist = [
-# #     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_dendrite_11_15um_41h__TimeCourse.csv",
-# #     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_dendrite_10_20um_40h__TimeCourse.csv",
-# #     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_dendrite_9_12um_40h__TimeCourse.csv",
-# #     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_dendrite_13_10um_42h__TimeCourse.csv",
-# #     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_dendrite_12_25um_42h__TimeCourse.csv"
-# #     ]
-
-
-# csvlist = [
-#     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_dendrite_7_25um_28h__TimeCourse.csv",
-#     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_dendrite_6_25um_27h__TimeCourse.csv",
-#     # r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_dendrite_5_25um_27h__TimeCourse.csv",
-#     # r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_dendrite_4_25um_25h__TimeCourse.csv",
-#     # r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_dendrite_3_24h__TimeCourse.csv",
-#     # r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_dendrite_2_20h__TimeCourse.csv",
-#     # r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_dendrite_20h__TimeCourse.csv"
-# ]
+one_of_filepath = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250104\24well\highmag_Trans5ms\tpem\Analysis - Copy\A2_00_1_1__highmag_2__TimeCourse.csv"
+csvlist = glob.glob(one_of_filepath[:one_of_filepath.rfind("\\")]+"\\C1*_TimeCourse.csv")
 
 one_of_filepath = csvlist[0]
 allcombined_df_savepath= one_of_filepath[:-4] + "_combined.csv"
@@ -133,7 +106,7 @@ plt.show()
 
 
 # max_time_minute = math.ceil(allcombined_df.time_min_norm.max()/time_bin)*time_bin
-max_time_minute = math.ceil(28/time_bin)*time_bin
+max_time_minute = math.ceil(48/time_bin)*time_bin
 
 min_time_minute = math.floor(allcombined_df.time_min_norm.min()/time_bin)*time_bin
 
@@ -224,10 +197,13 @@ plt.show()
 
 
 
-adf = allcombined_df[(allcombined_df["binned_min"]>25)&
-                     (allcombined_df["binned_min"]<35)&
-                     (allcombined_df["ch"]==1)]
+# adf = allcombined_df[(allcombined_df["binned_min"]>25)&
+#                      (allcombined_df["binned_min"]<35)&
+#                      (allcombined_df["ch"]==1)]
 
+adf = allcombined_df[(allcombined_df["time_min_norm"]>=25)&
+                     (allcombined_df["time_min_norm"]<35)&
+                     (allcombined_df["ch"]==1)]
 # groupdf = adf.groupby(["FilePath",
 #                        "ROInum"]).mean()
 
@@ -237,7 +213,7 @@ groupdf = adf.groupby(["FilePath",
 Mean = groupdf["norm_sumIntensity_bg-ROI"].mean()
 print("Mean, ",Mean)
 
-plt.figure(figsize = [2,4])
+plt.figure(figsize = [1.3,2.6])
 plt.plot([-0.2,0.2],[Mean.mean(),Mean.mean()],'k-')
 xmin, xmax = plt.gca().get_xlim()
 sns.swarmplot(Mean,palette = ['gray'])
@@ -245,6 +221,8 @@ plt.title("25 to 35 min after uncaging")
 plt.ylabel("Spine volume")
 plt.text(0.3,Mean.mean(),str(round(Mean.mean(),2)))
 plt.gca().spines[['right', 'top']].set_visible(False)
+
+plt.ylim([0.6,2.7])
 
 if save_True:
     savepath = allcombined_df_savepath[:-4]+"_norm_sumIntensity_bg-ROI_mean_swarm.png"

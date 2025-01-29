@@ -33,9 +33,8 @@ save_True = True
 target_roi_num = 1
 time_bin = 10
 
-
-one_of_filepath = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241213\24well\highmagGFP200ms55p\tpem_1\Analysis\C1_00_1_1__highmag_1__TimeCourse.csv"
-csvlist = glob.glob(one_of_filepath[:one_of_filepath.rfind("\\")]+"\\*_TimeCourse.csv")
+one_of_filepath = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250116\96well_ibidi\highmag_GFP200ms47p\tpem\Analysis - Copy\B1_1_2__highmag_1__TimeCourse.csv"
+csvlist = glob.glob(one_of_filepath[:one_of_filepath.rfind("\\")]+"\\F*_TimeCourse.csv")
 
 # csvlist = [
 #     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_72h_dend4_28um__TimeCourse.csv",
@@ -64,23 +63,15 @@ csvlist = glob.glob(one_of_filepath[:one_of_filepath.rfind("\\")]+"\\*_TimeCours
 #     # r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_dendrite_20h__TimeCourse.csv"
 # ]
 
-exclude_list = ["C1_00_3_2__highmag_4_",
-                "C2_00_4_2__highmag_1_"
-                                ]
-
 one_of_filepath = csvlist[0]
-allcombined_df_savepath= one_of_filepath[:-4] + "_combined.csv"
+allcombined_df_savepath= one_of_filepath[:-4] + "_C1andA2_combined.csv"
+
 
 # allcombined_df_savepath= r"\\RY-LAB-WS04\ImagingData\Tetsuya\20240827\24well_0808GFP\highmag_Trans5ms\tpem_tpem2_combined.xxx"
 
 
 allcombined_df=pd.DataFrame()
 for csvpath in csvlist:
-    
-    if any(each_exclude in csvpath for each_exclude in exclude_list):
-        print("#"*70,"\n\n", "EXCLUDE: ", csvpath,"\n\n","#"*70)
-    
-    
     print(csvpath)
     resultdf=csv_to_df(csvpath,
                        ch_list=[1])
@@ -91,12 +82,11 @@ for csvpath in csvlist:
         print("len = ",len(resultdf),"   less than 2")
         continue
     
-    if len(resultdf)<38:
+    if len(resultdf)<36:
         print("len = ",len(resultdf),"   less than 38")
         continue
     
     resultdf2 = detect_uncaging(resultdf) 
-    resultdf2 = resultdf2[resultdf2["sumIntensity_bg-ROI"] > 0]
     resultdf3 = arrange_for_multipos3(resultdf2)
     resultdf4 = value_normalize(resultdf3, prefix = "sumIntensity_bg-ROI")
     resultdf5 = resultdf4
@@ -109,7 +99,6 @@ for csvpath in csvlist:
 
 allcombined_df = everymin_normalize(allcombined_df)
 allcombined_df.to_csv(allcombined_df_savepath)
-
 
 plt.figure(figsize = [3,2])
 ##################################
@@ -144,7 +133,7 @@ plt.show()
 
 
 # max_time_minute = math.ceil(allcombined_df.time_min_norm.max()/time_bin)*time_bin
-max_time_minute = math.ceil(50/time_bin)*time_bin
+max_time_minute = math.ceil(28/time_bin)*time_bin
 
 min_time_minute = math.floor(allcombined_df.time_min_norm.min()/time_bin)*time_bin
 
@@ -187,7 +176,7 @@ ax.plot([time_binned_df["bin_time"].min(),
          time_binned_df["bin_time"].max()],
          [1,1], "--" , color = "gray")
 
-uncaging_ypos = 2.4
+uncaging_ypos = 3.7
 ax.plot([0,1],
          [uncaging_ypos,uncaging_ypos], 
          color = "k")
@@ -195,12 +184,12 @@ ax.text(-2,uncaging_ypos + 0.1, "Uncaging")
 
 ax.set_ylabel("Norm. spine (a.u.)")
 ax.set_xlabel("Time (min)")
-plt.ylim([0.86, 2.5])
+plt.ylim([0.86, 3.7])
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 
-plt.savefig(one_of_filepath[:-4]+"_mean_plot.pdf", format="pdf", bbox_inches="tight", dpi = 200)
-plt.savefig(one_of_filepath[:-4]+"_mean_plot.png", format="png", bbox_inches="tight", dpi = 200)
+plt.savefig(one_of_filepath[:-4]+"_mean_plot.pdf", format="pdf", bbox_inches="tight")
+plt.savefig(one_of_filepath[:-4]+"_mean_plot.png", format="png", bbox_inches="tight")
 
 # プロットを表示
 plt.show()
@@ -233,8 +222,13 @@ plt.show()
 
 
 
-adf = allcombined_df[(allcombined_df["binned_min"]>25)&
-                     (allcombined_df["binned_min"]<35)&
+
+
+# adf = allcombined_df[(allcombined_df["binned_min"]>25)&
+#                      (allcombined_df["binned_min"]<35)&
+#                      (allcombined_df["ch"]==1)]
+adf = allcombined_df[(allcombined_df["binned_min"]>20)&
+                     (allcombined_df["binned_min"]<30)&
                      (allcombined_df["ch"]==1)]
 
 # groupdf = adf.groupby(["FilePath",

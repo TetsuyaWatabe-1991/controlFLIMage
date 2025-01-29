@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw
 # savefolder = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20240827\24well_0808GFP\highmag_Trans5ms\tpem\uncaging_img"
 # folder     = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20240827\24well_0808GFP\highmag_Trans5ms\tpem"
 
-folder = r"G:\ImagingData\Tetsuya\20241212\24well\highmag_GFP200ms55p\tpem_1"
+folder = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241226\24well\highmag_GFP200ms55p\tpem_1"
 
 savefolder = os.path.join(folder,"uncaging_img")
 
