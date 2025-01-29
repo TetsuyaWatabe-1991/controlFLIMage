@@ -300,10 +300,11 @@ def z_stack_multi_z_click(stack_array, pre_assigned_pix_zyx_list=[], show_text =
 
     layout = [
                 [
-                    sg.Text(show_text, font='Arial 10', size=(60, 1))
+                    sg.Text(show_text, font='Arial 8', size=(90, 1))
                     ],
                 [
-                    sg.Text(first_text_at_upper, key='notification', font='Arial 10', text_color='black', background_color='white', size=(60, 2))
+                    sg.Text(first_text_at_upper, key='notification', font='Arial 10', 
+                            text_color='black', background_color='white', size=(60, 2))
                     ],
                 [
                     sg.Graph(
@@ -1248,6 +1249,8 @@ def save_spine_dend_info(spine_zyx, dend_slope, dend_intercept, inipath):
         
 def read_xyz_single(inipath):
     config = configparser.ConfigParser()
+    if os.path.exists(inipath) == False:
+        print(inipath, "do not exist")
     assert(os.path.exists(inipath))
     config.read(inipath,encoding='cp932')
     if len(config.sections()) != 1:

@@ -415,7 +415,11 @@ class Control_flimage():
             self.relative_zyx_um[2]=0
             self.go_to_relative_pos_motor()
             
-            
+    def get_laser_pulse_rate(self):
+        value = self.get_val_sendCommand("State.Spc.datainfo.syncRate")
+        laser_pulse_rate = int(value[1:value.find(",")])
+        return laser_pulse_rate    
+        
     def get_val_sendCommand(self,command):
         Reply = self.flim.sendCommand(command)
         value = Reply[len(command)+3:]

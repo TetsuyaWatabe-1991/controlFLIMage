@@ -111,7 +111,7 @@ class FileReader:
             if "State." in info:
                 keyitem = info.split(' = ')
                 if "[" in keyitem[1]:
-                    keyitem[1] = ast.literal_eval(keyitem[1])
+                    keyitem[1] = ast.literal_eval(keyitem[1].replace('NaN','0'))
                 else:
                     keyitem[1] = convert_string(keyitem[1])
                 self.statedict[keyitem[0]] = keyitem[1]
