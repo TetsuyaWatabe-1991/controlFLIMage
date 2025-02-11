@@ -1191,7 +1191,9 @@ def multiuncaging():
 
 def define_uncagingPoint_dend_click_multiple(flim_file_path,
                                              read_ini = False,
-                                             inipath = ""):    
+                                             inipath = "",
+                                             SampleImg = None,
+                                             only_for_exclusion = False):    
     iminfo = FileReader()
     print(flim_file_path)
     iminfo.read_imageFile(flim_file_path, True)
@@ -1204,7 +1206,7 @@ def define_uncagingPoint_dend_click_multiple(flim_file_path,
     if (read_ini == True) * (os.path.exists(inipath)):
         spine_zyx, dend_slope, dend_intercept = read_xyz_single(inipath = inipath)
         spine_zyx = threeD_array_click(intensityarray, text,
-                                 SampleImg = None, ShowPoint=False,
+                                 SampleImg = SampleImg, ShowPoint=False,
                                  predefined = True, predefined_ZYX = spine_zyx)
         if spine_zyx[0] < 0:
             return spine_zyx, 0, 0
@@ -1214,7 +1216,10 @@ def define_uncagingPoint_dend_click_multiple(flim_file_path,
             y = dend_slope*x + dend_intercept
             if (1<y) * (y < intensityarray.shape[-1]-1):
                 predefied_yx_list.append([y,x])
-
+                
+        if only_for_exclusion:
+            return spine_zyx, 0, 0
+        
         yx_list = twoD_click_tiff(twoD_numpy = maxproj, Text=text2,
                                   max_img_xwidth = 600, max_img_ywidth = 600,
                                   ShowPoint_YX=[spine_zyx[1],spine_zyx[2]],
@@ -1222,20 +1227,21 @@ def define_uncagingPoint_dend_click_multiple(flim_file_path,
                                   predefied_yx_list = predefied_yx_list)
     else:
         spine_zyx = threeD_array_click(intensityarray,text,
-                                 SampleImg=None,ShowPoint=False)
+                                 SampleImg=SampleImg,ShowPoint=False)
         if spine_zyx[0] < 0:
             return spine_zyx, 0, 0
             
         yx_list = twoD_click_tiff(twoD_numpy = maxproj, Text=text2,
                                   max_img_xwidth = 600, max_img_ywidth = 600,
                                   ShowPoint_YX=[spine_zyx[1],spine_zyx[2]])
-    print(yx_list)
+
     dend_slope, dend_intercept = np.polyfit(np.array(yx_list)[:,1], np.array(yx_list)[:,0], 1)
     print("dend_slope, dend_intercept :", dend_slope, dend_intercept)
     return spine_zyx, dend_slope, dend_intercept
 
 
-def save_spine_dend_info(spine_zyx, dend_slope, dend_intercept, inipath):
+def save_spine_dend_info(spine_zyx, dend_slope, dend_intercept, inipath,
+                         excluded = 0):
     config = configparser.ConfigParser()
     config['uncaging_settings'] = {}
     config['uncaging_settings']['spine_z'] = str(spine_zyx[0])
@@ -1243,11 +1249,12 @@ def save_spine_dend_info(spine_zyx, dend_slope, dend_intercept, inipath):
     config['uncaging_settings']['spine_x'] = str(spine_zyx[2])
     config['uncaging_settings']['dend_slope'] = str(dend_slope)
     config['uncaging_settings']['dend_intercept'] = str(dend_intercept)
+    config['uncaging_settings']['excluded'] = str(excluded)
     with open(inipath, 'w') as configfile:
         config.write(configfile)
     print("spine and dend info saved as",inipath)
         
-def read_xyz_single(inipath):
+def read_xyz_single(inipath, return_excluded = False):
     config = configparser.ConfigParser()
     if os.path.exists(inipath) == False:
         print(inipath, "do not exist")
@@ -1262,6 +1269,16 @@ def read_xyz_single(inipath):
         dend_slope = float(config['uncaging_settings']['dend_slope'])
         dend_intercept = float(config['uncaging_settings']['dend_intercept'])
         spine_zyx = (z, y, x)
+        if return_excluded:
+            try:
+                excluded = int(config['uncaging_settings']['excluded'])
+            except:
+                if spine_zyx[0] < -1:
+                    excluded = 1
+                else:
+                    print("\n"*3,"could not read exclusion info","\n"*3)
+                    excluded = 0
+            return spine_zyx, dend_slope, dend_intercept, excluded
         return spine_zyx, dend_slope, dend_intercept
 
     
