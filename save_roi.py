@@ -81,8 +81,11 @@ MultiROI
 """
     text_3 = "ROI-type,Elipsoid,Roi-ID,0,polyLineRadius,8\n"
     
+    
+    print("len(center_x_list)", len(center_x_list))
+    print("select_ROI_1toN0, ",select_ROI_1toN)
     selectedROI = f"Rect,{center_x_list[select_ROI_1toN -1] - radius_list[select_ROI_1toN -1]},{center_y_list[select_ROI_1toN -1] - radius_list[select_ROI_1toN -1]},{radius_list[select_ROI_1toN -1]*2},{radius_list[select_ROI_1toN -1]*2}\n"
-    roi_text = text_1 + selectedROI + text_2 + text_3
+    roi_text = text_1 + selectedROI + text_2
     
     for center_x, center_y, radius in zip(center_x_list, 
                                           center_y_list, 

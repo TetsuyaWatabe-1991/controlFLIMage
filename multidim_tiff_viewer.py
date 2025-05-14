@@ -463,7 +463,7 @@ def threeD_array_click(stack_array,Text="Click",SampleImg=None,
     sg.theme('Dark Blue 3')
 
     layout = [
-                [sg.Text(Text, font='Arial 10', text_color='black', background_color='white', size=(60, 2))],
+                [sg.Text(Text, font='Arial 10', text_color='black', background_color='white', size=(80, 2))],
                 [
                 sg.Graph(
                 canvas_size=(512, 512), graph_bottom_left=(0, 0),
@@ -487,8 +487,7 @@ def threeD_array_click(stack_array,Text="Click",SampleImg=None,
               ],
                Z_change
               ,
-            [sg.Text(key='-INFO-', size=(60, 1)),sg.Button('OK', size=(20, 2))],
-            [sg.Button('Exclude', size=(20, 2))]
+            [sg.Text(key='-INFO-', size=(60, 1)),sg.Button('OK', size=(20, 2)),sg.Button('Exclude', size=(20, 2))],
             ]
     
     window = sg.Window("Spine selection", layout, finalize=True)

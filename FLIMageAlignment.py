@@ -15,7 +15,7 @@ from scipy.signal import medfilt
 from datetime import datetime
 
 def get_flimfile_list(one_file_path):
-    filelist=glob.glob(one_file_path[:-8]+'*.flim')
+    filelist=glob.glob(one_file_path[:-8]+'[0-9][0-9][0-9].flim')
     # filelist=filelist[:-1]
     return filelist
 
@@ -98,10 +98,15 @@ def Align_4d_array(Tiff_MultiArray):
     return shifts, Aligned_4d_array
 
 def align_two_flimfile(flim_1, flim_2, ch, return_pixel = False):
+    if False:
+        filelist = [r"G:\ImagingData\Tetsuya\20250511\2ndslice\lowmag2__highmag_6_002.flim",
+                    r"G:\ImagingData\Tetsuya\20250511\2ndslice\lowmag2__highmag_6_040.flim"]
+        ch = 1#0 is for gfp, 1 is for RFP
+    
     filelist = [flim_1, flim_2]
-    print("filelist",filelist)
+    print("filelist", filelist)
     Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(filelist,ch=ch)
-    shifts_zyx_pixel, Aligned_4d_array=Align_4d_array(Tiff_MultiArray)
+    shifts_zyx_pixel, Aligned_4d_array = Align_4d_array(Tiff_MultiArray)
     # print(shifts_zyx_pixel)
     x_um, y_um, z_um = get_xyz_pixel_um(iminfo)
     

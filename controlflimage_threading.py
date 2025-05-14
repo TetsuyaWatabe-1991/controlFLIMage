@@ -10,7 +10,7 @@ import math
 import subprocess
 from time import sleep
 from datetime import datetime
-from FLIMageAlignment import flim_files_to_nparray,Align_4d_array,Align_3d_array,get_xyz_pixel_um,single_plane_align_with3dstack_flimfile
+from FLIMageAlignment import flim_files_to_nparray,Align_4d_array,Align_3d_array,get_xyz_pixel_um,single_plane_align_with3dstack_flimfile, get_flimfile_list
 from FLIM_pipeClient import FLIM_Com,FLIM_message_received
 from find_close_remotecontrol import close_remote_control, window_exists
 import matplotlib.pyplot as plt
@@ -181,12 +181,34 @@ def plot_uncaging_point_dend_slope_with_original(
         return f, axarr
 
 
+def sleep_countdown(total_sec: int):
+    for i in range(total_sec):
+        print(total_sec - i, "sec  ", end = "")
+        #Below makes thre responce to Ctrl + C quicker
+        for j in range(10):
+            sleep(0.1) 
+
+class Timecounter():
+    def __init__(self):
+        pass
+    def tick(self):
+        self.start = datetime.now()
+    def tock(self, return_int = True):
+        end = datetime.now()
+        diff = end - self.start
+        if return_int:
+            return int(diff.total_seconds())
+        else:
+            return diff
+
+
 class Control_flimage():
 
     def __init__(self,ini_path=r'DirectionSetting.ini'):
         print("START")
         self.flim = FLIM_Com()
         self.flim.start()
+        self.flim.print_responses = False
         self.error_dict = {}
         self.max_error_num = 20
         self.flimage_exe = r"C:\Users\yasudalab\Documents\GIT\flimage1_3\bin\Debug\FLIMage.exe"
@@ -231,6 +253,13 @@ class Control_flimage():
         self.directionGalvoX = int(config['Direction']['GalvoX'])
         self.directionGalvoY = int(config['Direction']['GalvoY'])        
         print("\n\nDirection setting was modified at ",config['ModifiedDate']['Date'],"\n\n")
+    
+    def get_filelist(self):
+        res = self.flim.sendCommand('GetFullFileName')
+        one_file = res[res.find(",")+2:]
+        filelist = get_flimfile_list(one_file)
+        return(filelist)
+    
     
     def example_image(self):
         self.Spine_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Spine_example.png"
@@ -624,7 +653,14 @@ class Control_flimage():
         
         
     def AlignSmallRegion(self):
-        
+        if False:
+            TrimmedAroundSpine=FLIMageCont.Aligned_4d_array[
+                                                    :,
+                                                    FLIMageCont.Spine_ZYX[0]-FLIMageCont.cuboid_ZYX[0] : FLIMageCont.Spine_ZYX[0]+FLIMageCont.cuboid_ZYX[0] +1,
+                                                    FLIMageCont.Spine_ZYX[1]-FLIMageCont.cuboid_ZYX[1] : FLIMageCont.Spine_ZYX[1]+FLIMageCont.cuboid_ZYX[1] +1,
+                                                    FLIMageCont.Spine_ZYX[2]-FLIMageCont.cuboid_ZYX[2] : FLIMageCont.Spine_ZYX[2]+FLIMageCont.cuboid_ZYX[2] +1,
+                                                    ]        
+            FLIMageCont.shifts_fromSmall, FLIMageCont.Small_Aligned_4d_array=Align_4d_array(TrimmedAroundSpine)
         
         TrimmedAroundSpine=self.Aligned_4d_array[
                                                 :,
@@ -1191,7 +1227,8 @@ class Control_flimage():
         plt.show()
         
         
-    def start_repeat(self):
+    def start_repeat(self, 
+                     spine_inipath = False):
         self.start=datetime.now()
         
         self.folder = self.get_val_sendCommand("State.Files.pathName")
@@ -1200,7 +1237,7 @@ class Control_flimage():
         self.TxtWind = TextWindow()
         self.showWindow =True
         if self.defined_dendrite == True:
-            self.set_spine_dendrite_from_ini()
+            self.set_spine_dendrite_from_ini(spine_inipath)
         
         for NthAc in range(self.RepeatNum):
             print("\n","= "*20,"\n"*2 ,NthAc+1 ," / ",self.RepeatNum,"\n"*2 , "= "*20 )

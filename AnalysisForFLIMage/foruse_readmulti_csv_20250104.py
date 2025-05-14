@@ -33,8 +33,8 @@ save_True = True
 target_roi_num = 1
 time_bin = 10
 
-one_of_filepath = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250116\96well_ibidi\highmag_GFP200ms47p\tpem\Analysis - Copy\B1_1_2__highmag_1__TimeCourse.csv"
-csvlist = glob.glob(one_of_filepath[:one_of_filepath.rfind("\\")]+"\\F*_TimeCourse.csv")
+one_of_filepath = r"Z:\Users\WatabeT\20250424\Analysis\copy\HACSF_ltp_1_aligned_TimeCourse.csv"
+csvlist = glob.glob(one_of_filepath[:one_of_filepath.rfind("\\")]+"\\*_TimeCourse.csv")
 
 # csvlist = [
 #     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20241029\24well_1011_1016_FLEXGFP\highmag_GFP200ms55p\tpem\Analysis - Copy\A1_72h_dend4_28um__TimeCourse.csv",
@@ -64,7 +64,7 @@ csvlist = glob.glob(one_of_filepath[:one_of_filepath.rfind("\\")]+"\\F*_TimeCour
 # ]
 
 one_of_filepath = csvlist[0]
-allcombined_df_savepath= one_of_filepath[:-4] + "_C1andA2_combined.csv"
+allcombined_df_savepath= one_of_filepath[:-4] + "_combined.csv"
 
 
 # allcombined_df_savepath= r"\\RY-LAB-WS04\ImagingData\Tetsuya\20240827\24well_0808GFP\highmag_Trans5ms\tpem_tpem2_combined.xxx"
@@ -74,7 +74,7 @@ allcombined_df=pd.DataFrame()
 for csvpath in csvlist:
     print(csvpath)
     resultdf=csv_to_df(csvpath,
-                       ch_list=[1])
+                       ch_list=[2])
                        # ch_list=[1,2])#,
                        # prefix_list=["sumIntensity_bg-ROI"])
     
@@ -104,7 +104,7 @@ plt.figure(figsize = [3,2])
 ##################################
 sns.lineplot(x="time_min_norm", y="norm_sumIntensity_bg-ROI",
                 legend=False, hue = "CellName", #marker='o',
-                data = allcombined_df[allcombined_df['ch']==1],
+                data = allcombined_df[allcombined_df['ch']==2],
                 zorder = 10)
 
 plt.plot([allcombined_df["time_min_norm"].min(),
@@ -200,7 +200,7 @@ plt.show()
 
 sns.lineplot(x="time_min_norm", y="norm_sumIntensity_bg-ROI",
                 legend=False, hue = "CellName", marker='o',
-                data = allcombined_df[allcombined_df['ch']==1],
+                data = allcombined_df[allcombined_df['ch']==2],
                 zorder = 10)
 
 
@@ -229,7 +229,7 @@ plt.show()
 #                      (allcombined_df["ch"]==1)]
 adf = allcombined_df[(allcombined_df["binned_min"]>20)&
                      (allcombined_df["binned_min"]<30)&
-                     (allcombined_df["ch"]==1)]
+                     (allcombined_df["ch"]==2)]
 
 # groupdf = adf.groupby(["FilePath",
 #                        "ROInum"]).mean()

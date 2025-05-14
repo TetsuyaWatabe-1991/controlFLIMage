@@ -9,7 +9,7 @@ sys.path.append("../")
 #%%
 import time
 from controlflimage_threading import Control_flimage
-from send_line import line_notification
+# from send_line import line_notification
 import winsound
 
 
@@ -26,11 +26,12 @@ FLIMageCont = Control_flimage(ini_path=ini_path)
 FLIMageCont.directionMotorY = FLIMageCont.directionMotorY 
 
 
-repeat_times = 3
+repeat_times = 13
 
 interval_sec = 120
-ch_1or2 = 1
-expected_grab_duration_sec = 25
+
+ch_1or2 = 2
+expected_grab_duration_sec = 10
 
 FLIMageCont.set_param(RepeatNum=repeat_times, interval_sec=interval_sec, ch_1or2=ch_1or2,
                       LoadSetting=False,
@@ -39,9 +40,9 @@ FLIMageCont.set_param(RepeatNum=repeat_times, interval_sec=interval_sec, ch_1or2
                       drift_cont_galvo = False, 
                       expected_grab_duration_sec=expected_grab_duration_sec)       
 FLIMageCont.start_repeat()
-
-line_notification(message = f"{repeat_times} loop  finished")
-
+FLIMageCont.plot_drift()
+# line_notification(message = f"{repeat_times} loop  finished")
+import winsound
 for i in range(1):
     winsound.PlaySound("SystemExit", winsound.SND_ALIAS)
 

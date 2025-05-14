@@ -15,7 +15,7 @@ FLIMageCont.directionMotorY = FLIMageCont.directionMotorY
 #                       LoadSetting=False,drift_control=True,
 #                       ShowUncagingDetection=True,drift_cont_galvo=False,expected_grab_duration_sec=40) 
 
-FLIMageCont.set_param(RepeatNum=800, interval_sec=300, ch_1or2=2,
+FLIMageCont.set_param(RepeatNum=800, interval_sec=120, ch_1or2=2,
                       LoadSetting=False,drift_control=True,
                       ShowUncagingDetection=True,drift_cont_galvo=False,expected_grab_duration_sec=20)       
 FLIMageCont.start_repeat()

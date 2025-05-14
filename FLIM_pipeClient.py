@@ -57,6 +57,7 @@ class Event:
 class FLIM_Com:        
     def __init__(self):
         self.debug = False #More message printed for Debug mode.
+        self.print_responses = True  # Flag to control whether to print responses
         self.__handShakeCode = 'FLIMage'
         self.writeServerName = 'FLIMageW'
         self.readServerName = 'FLIMageR'
@@ -201,17 +202,20 @@ Example event triggered message. FLIMage sometimes send message like
 AcquisitionDone, or MotorMoveDone etc. 
 """
 def FLIM_message_received(data, source):
-    if source == 'R':
-        print (f'    Message Received: {data}\n', end="") 
-        #For PIPE, end="" and include "\n" is more stable.
-    else:
-        print (f'    Reply: {data}\n', end="");
-
+    if not hasattr(FLIM_message_received, 'flim_instance'):
+        return
+        
+    if FLIM_message_received.flim_instance.print_responses:
+        if source == 'R':
+            print (f'    Message Received: {data}\n', end="") 
+        else:
+            print (f'    Reply: {data}\n', end="");
 
 if __name__ == "__main__":
     flim = FLIM_Com()
     flim.start()
     
     if flim.Connected:
+        FLIM_message_received.flim_instance = flim  # Store reference to FLIM instance
         flim.messageReceived += FLIM_message_received #Add your function to  handle.
         

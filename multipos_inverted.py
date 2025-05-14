@@ -5,7 +5,7 @@ Created on Wed Jun 26 10:19:07 2024
 @author: yasudalab
 """
 
-
+import time
 import os
 import glob
 import pathlib
@@ -133,9 +133,12 @@ class Multiarea_from_lowmag():
         FLIMageCont.flim.sendCommand(f'State.Acq.zoom = {self.high_mag_zoom}')      
         counter = self.count_high_mag_flimfiles(pos_id = pos_id)
         FLIMageCont.flim.sendCommand(f'State.Files.fileCounter = {counter}')
+        # FLIMageCont.relative_zyx_um = [(-1)*self.high_mag_relpos_dict[pos_id]["z_um"],
+        #                                self.high_mag_relpos_dict[pos_id]["y_um"],
+        #                                self.high_mag_relpos_dict[pos_id]["x_um"]]
         FLIMageCont.relative_zyx_um = [(-1)*self.high_mag_relpos_dict[pos_id]["z_um"],
-                                       self.high_mag_relpos_dict[pos_id]["y_um"],
-                                       self.high_mag_relpos_dict[pos_id]["x_um"]]
+                                       (-1)*self.high_mag_relpos_dict[pos_id]["y_um"],
+                                       (-1)*self.high_mag_relpos_dict[pos_id]["x_um"]]
         
         if use_galvo:
             FLIMageCont.go_to_absolute_pos_um_galvo(z_move = True)
@@ -157,7 +160,8 @@ class Multiarea_from_lowmag():
                              x_mm = dest_x/10**3,
                              y_mm = dest_y/10**3, 
                              z_mm = dest_z/10**3)
-        
+        #20250212 not sure... but try adding sleep
+        time.sleep(1)
         FLIMageCont.flim.sendCommand('MotorReopen')
         
     def go_to_relative_pos_after_(self, relative_zyx_um, FLIMageCont, FastMS2k):

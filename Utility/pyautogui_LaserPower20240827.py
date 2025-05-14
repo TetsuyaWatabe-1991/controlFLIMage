@@ -18,6 +18,8 @@ from sklearn.metrics import r2_score
 import numpy as np
 from controlflimage_threading import Control_flimage
 
+    
+    
 class Thorlab_PM100():
     
     def __init__(self):
@@ -250,7 +252,7 @@ if __name__ == '__main__':
              now.strftime("%Y-%m-%d 720 nm laser"), ha = 'left',va = "top", 
              transform=plt.gca().transAxes)
     offset = 0.2
-    for mw in [1.0, 2.0, 2.4, 2.8,3.5, 5.0, 6.0]:
+    for mw in [1.0, 2.0, 2.4, 2.8,3.5, 5.0, 6.0, 7.0, 9.0]:
         percent = inv_slope * mw + inv_intercept
         eachtext = f"{round(mw,1)} mW".rjust(7) + f"{round(percent,1)} %".rjust(8)
         ax2.text(0.1,1 - offset,
