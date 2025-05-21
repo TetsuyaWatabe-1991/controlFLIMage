@@ -19,16 +19,19 @@ import numpy as np
 from controlflimage_threading import Control_flimage
 
     
-    
 class Thorlab_PM100():
-    
     def __init__(self):
         rm = pyvisa.ResourceManager()
-        if False:
-            rm.list_resources()
-        # self.my_instrument = rm.open_resource(rm.list_resources()[0])
-        self.my_instrument = rm.open_resource('USB0::0x1313::0x8070::PM002347::INSTR')
-        
+        powermeter_index = self.find_pm_index(rm)
+        self.my_instrument = rm.open_resource(rm.list_resources()[powermeter_index])
+    
+    def find_pm_index(self, rm):
+        for nth, instr in enumerate(rm.list_resources()):
+            if "PM" in instr:
+                return nth
+        print("rm.list_resources()\n",rm.list_resources())
+        raise ValueError("No instrument found  string containing 'PM'")
+
     def set_wavelength(self, wavelength):
         self.my_instrument.write(f'CORR:WAV {wavelength}')
         time.sleep(0.2)
@@ -44,20 +47,24 @@ class Thorlab_PM100():
 
 class LaserSettingAuto():
     
-    def __init__(self, power_png=r"Z:\Data Temp\Tetsuya\Power.png"):
-        self.power_png=power_png        
+    def __init__(self, 
+                 power_png_possible_list=[
+                    r"Z:\Data Temp\Tetsuya\Power.png",
+                    r"Z:\Yasuda_lab\Data Temp\Tetsuya\Power.png",
+                    r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Power.png"
+                    ]):
+        for power_png in power_png_possible_list:
+            if os.path.exists(power_png):
+                self.power_png=power_png        
+                break
+        else:
+            raise ValueError("No power png found")
         self.PM100D = Thorlab_PM100()
         self.pow_result = {}
         FLIMage_setting_ini = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
         self.FLIMageCont = Control_flimage(FLIMage_setting_ini)
         
-        # window_remote = gw.getWindowsWithTitle("Remote control")[0]
-        # window_remote.minimiz100
         
-        
-        # window = gw.getWindowsWithTitle("FLIMage")[0]
-        # window.activate()
-        assert os.path.exists(power_png)
         while True:
             try:
                 self.power_btn = gui.locateOnScreen(power_png, confidence=0.80)
@@ -97,12 +104,12 @@ class LaserSettingAuto():
                 gui.press(i)
             gui.press('enter')
            
-            time.sleep(0.2)
+            time.sleep(0.1)
             self.FLIMageCont.flim.sendCommand("SetDIOPanel, 1, 1")             
             
             if laser_1or2==2:
                 pos = self.Laser2_tab
-                time.sleep(0.2)
+                time.sleep(0.4)
                 self.FLIMageCont.flim.sendCommand("SetDIOPanel, 3, 1")
 
             time.sleep(interval)
@@ -140,7 +147,7 @@ class LaserSettingAuto():
 
     def zero_all(self):
         percent_list=[0]
-        interval=0.5
+        interval=0.3
         for laser_1or2 in [1,2]:
             self.gui_auto(laser_1or2, 
                           percent_list,
@@ -153,7 +160,7 @@ def main1():
     laser_1or2 = 1
     
     percent_list = [0,10,20,30,50,75,100]
-    LaserAuto.gui_auto(laser_1or2,percent_list,interval=5)
+    LaserAuto.gui_auto(laser_1or2,percent_list,interval=0.3)
 
 
 def do_measurement(LaserAuto,
@@ -162,7 +169,7 @@ def do_measurement(LaserAuto,
                    percent_list = [0,10,20,30,50,75,100]):                    
     
     LaserAuto.PM100D.set_wavelength(wavelength)
-    LaserAuto.gui_auto(laser_1or2, percent_list, interval=2)
+    LaserAuto.gui_auto(laser_1or2, percent_list, interval=0.3)
     print(f"Imaging laser, {wavelength} nm, Laser {laser_1or2}")
     print(LaserAuto.pow_result)
     copied_pow_result = LaserAuto.pow_result.copy()
@@ -175,20 +182,16 @@ def do_measurement(LaserAuto,
     # LaserAuto.gui_focus_abort()
 
 if __name__ == '__main__':
-    
     LaserAuto = LaserSettingAuto()
     pow_result_920 = do_measurement(LaserAuto,
                             wavelength =920,
                             laser_1or2 = 1,
-                            percent_list = [0,10,20,30,50,75,100])
-    
+                            percent_list = [0,10,20,30,50,70])
     LaserAuto.zero_all()
     pow_result_720 = do_measurement(LaserAuto,
                            wavelength =720,
                            laser_1or2 = 2,
                            percent_list = [0,10,20,30,50,70])
-    
-
     
     fig, (ax0, ax1, ax2) = plt.subplots(1, 3, figsize = (14,4))
     
@@ -211,8 +214,6 @@ if __name__ == '__main__':
     ax0.set_xlabel('Power (%)')
     ax0.set_ylabel('Laser power (mW)')
     ax0.set_title('Laser1 920 nm')
-    
-    
     
     x_laser2 = np.array(list(pow_result_720.keys())).reshape(-1, 1)
     y_laser2 = np.array(list(pow_result_720.values()))
@@ -252,7 +253,8 @@ if __name__ == '__main__':
              now.strftime("%Y-%m-%d 720 nm laser"), ha = 'left',va = "top", 
              transform=plt.gca().transAxes)
     offset = 0.2
-    for mw in [1.0, 2.0, 2.4, 2.8,3.5, 5.0, 6.0, 7.0, 9.0]:
+
+    for mw in [3.0, 4.8, 6.0, 6.9, 8.4, 9.3, 12]:
         percent = inv_slope * mw + inv_intercept
         eachtext = f"{round(mw,1)} mW".rjust(7) + f"{round(percent,1)} %".rjust(8)
         ax2.text(0.1,1 - offset,
@@ -262,8 +264,8 @@ if __name__ == '__main__':
     
     ax2.axis("off")
     
-    savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_Imaging\powermeter"
-    savepath = os.path.join(savefolder,now.strftime("%Y%m%d%H%M.png"))
+    savefolder = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\powermeter"
+    savepath = os.path.join(savefolder,now.strftime("%Y%m%d_%H%M.png"))
     plt.savefig(savepath, dpi = 300)
     plt.show()
     print("saved as  ",savepath)
@@ -277,6 +279,6 @@ if __name__ == '__main__':
                 "Laser2": pow_result_720
                     }
     
-    savejsonpath = os.path.join(savefolder,now.strftime("%Y%m%d%H%M.json"))
+    savejsonpath = os.path.join(savefolder,now.strftime("%Y%m%d_%H%M.json"))
     with open(savejsonpath, "w") as outfile: 
         json.dump(result_dict, outfile)

@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Dec 20 08:56:14 2022
-
-@author: yasudalab
-"""
 import math
 import os
 import numpy as np
@@ -534,6 +528,137 @@ def threeD_array_click(stack_array,Text="Click",SampleImg=None,
 
         if len(TiffShape)==3:
             NthSlice = int(values['Z'])
+<<<<<<< HEAD
+
+        if event == tg.WIN_CLOSED:
+            break
+
+        if event in ['Update', 'Z', "Intensity"]:
+            im_PIL = tiffarray_to_PIL(stack_array,Percent=ShowIntensityMax,NthSlice=NthSlice)
+            data = PILimg_to_data(im_PIL)
+            graph.draw_image(data=data, location=(0, 0))
+            if x != -1:
+                graph.draw_point((x,y), size=5, color = col_list[0])
+            if ShowPoint==True:
+                graph.draw_point((x_2,y_2), size=5, color = col_list[1])
+
+        if event == 'OK':
+            if x==-1:
+                window["-INFO-"].update(value="Please click")
+                continue
+            else:
+                z,y,x=NthSlice-1, y, x
+                window.close()
+                return z,int((y)/resize_ratio_yx[0]),int(x/resize_ratio_yx[1])
+                break
+
+def multiple_uncaging_click(stack_array, Text="Click", SampleImg=None, ShowPoint=False, ShowPoint_YX=[0,0]):
+    TiffShape = stack_array.shape
+    col_list = ['red', 'cyan']
+    ShowPointsYXlist = []
+    
+    if len(TiffShape)==3:
+        NumOfZ = TiffShape[0]
+        Z_change=[tg.Text("Z position", size=(20, 1)),
+                  tg.Slider(orientation ='horizontal', key='Z',
+                            default_value=int(NumOfZ/2), range=(1,NumOfZ),enable_events = True)            
+                  ]
+        im_PIL,resize_ratio_yx = tiffarray_to_PIL(stack_array,Percent=100, show_size_xy=[512,512],
+                                                  return_ratio=True,NthSlice=int(NumOfZ/2))
+    else:
+        NumOfZ = 1
+        Z_change=[]
+        im_PIL,resize_ratio_yx = tiffarray_to_PIL(stack_array,Percent=100, show_size_xy=[512,512],
+                                                  return_ratio=True,NthSlice=1)
+
+    data = PILimg_to_data(im_PIL)    
+    data_sample = OpenPNG(pngpath=SampleImg)
+
+    layout = [
+                [tg.Text(Text, font='Arial 10', text_color='black', background_color='white', size=(60, 2))],
+                [
+                tg.Graph(
+                canvas_size=(512, 512), 
+                graph_bottom_left=(0, 0),
+                graph_top_right=(512, 512),
+                key="-GRAPH-",
+                background_color='lightblue'
+                ),
+                tg.Graph(
+                canvas_size=(512, 512), 
+                graph_bottom_left=(0, 0),
+                graph_top_right=(512, 512),
+                key="-Sample-",
+                background_color='black'
+                )
+                ],
+              [
+               tg.Text("Contrast", size=(20, 1)),
+               tg.Slider(orientation ='horizontal', key='Intensity',default_value=100,
+                         range=(1,100),enable_events = True),
+              ],
+               Z_change
+              ,
+            [tg.Text(key='-INFO-', size=(60, 1)),tg.Button('Assign', size=(20, 2)),tg.Button('Reset', size=(20, 2)),tg.Button('OK', size=(20, 2))]
+            ]
+    
+    window = tg.Window("Spine selection", layout, finalize=True)
+    graph = window["-GRAPH-"]
+    graph_sample = window["-Sample-"]
+    
+    # Initialize variables
+    ShowIntensityMax = 100
+    NthSlice = int(NumOfZ/2)
+    x = -1
+    y = -1
+    fixZ = False
+    fixedSlice = -1
+    
+    # Draw initial images
+    graph.draw_image(data=data, location=(0, 0))
+    if data_sample:
+        graph_sample.draw_image(data=data_sample, location=(0, 0))
+    
+    if len(ShowPointsYXlist)>0:
+        col_list=['cyan','red']
+        y_2 = 512 - ShowPoint_YX[0]*resize_ratio_yx[0]
+        x_2 = ShowPoint_YX[1]*resize_ratio_yx[1]
+        graph.draw_point((x_2,y_2), size=5, color = col_list[1])
+    
+    def redraw_all():
+        im_PIL = tiffarray_to_PIL(stack_array,Percent=ShowIntensityMax,NthSlice=NthSlice)
+        data = PILimg_to_data(im_PIL)
+        graph.erase()
+        graph.draw_image(data=data, location=(0, 0))
+        
+        # Draw current point
+        if x != -1:
+            graph.draw_point((x,y), size=5, color = col_list[0])
+            
+        # Draw all assigned points
+        if len(ShowPointsYXlist)>0:
+            for EachYX in ShowPointsYXlist:
+                graph.draw_point((EachYX[1],EachYX[0]), size=5, color = col_list[1])
+    
+    # Bind mouse click event
+    def on_click(event):
+        nonlocal x, y
+        x, y = event.x, event.y
+        redraw_all()
+            
+    graph.widget.bind('<Button-1>', on_click)
+    
+    while True:
+        event, values = window.read()
+        ShowIntensityMax = values['Intensity']
+
+        if len(TiffShape)==3:
+            if not fixZ:
+                NthSlice = int(values['Z'])
+            else:
+                NthSlice = fixedSlice
+=======
+>>>>>>> aa2c2321ee0c09e815c66121102ca6feadcb60ce
 
         if event == tg.WIN_CLOSED:
             break
@@ -745,4 +870,164 @@ if __name__=="__main__":
 
 
 
+<<<<<<< HEAD
     
+
+def threeD_array_click2(stack_array, Text="Click", SampleImg=None,
+                       ShowPoint=False, ShowPoint_YX=[0,0],
+                       predefined=False, predefined_ZYX=[0,0,0]):
+    """
+    A TkEasyGUI version of threeD_array_click for selecting points in a 3D array.
+    """
+    import tkinter as tk
+    from tkinter import ttk
+    from PIL import Image, ImageTk
+    import numpy as np
+    
+    TiffShape = stack_array.shape
+    col_list = ['red', 'cyan']
+    
+    # Create main window
+    root = tk.Tk()
+    root.title("Spine selection")
+    
+    # Create frames
+    top_frame = ttk.Frame(root, padding="5")
+    top_frame.pack(fill=tk.X)
+    
+    # Add text label
+    text_label = ttk.Label(top_frame, text=Text, font=('Arial', 10))
+    text_label.pack(fill=tk.X)
+=======
+>>>>>>> aa2c2321ee0c09e815c66121102ca6feadcb60ce
+    
+    # Create canvas frame
+    canvas_frame = ttk.Frame(root)
+    canvas_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Create main canvas
+    canvas = tk.Canvas(canvas_frame, width=512, height=512, bg='lightblue')
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    
+    # Create sample canvas if SampleImg is provided
+    if SampleImg:
+        sample_canvas = tk.Canvas(canvas_frame, width=512, height=512, bg='black')
+        sample_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sample_img = Image.open(SampleImg)
+        sample_img = sample_img.resize((512, 512))
+        sample_photo = ImageTk.PhotoImage(sample_img)
+        sample_canvas.create_image(0, 0, anchor=tk.NW, image=sample_photo)
+        sample_canvas.image = sample_photo  # Keep reference
+    
+    # Create control frame
+    control_frame = ttk.Frame(root, padding="5")
+    control_frame.pack(fill=tk.X)
+    
+    # Add contrast slider
+    contrast_label = ttk.Label(control_frame, text="Contrast")
+    contrast_label.pack(side=tk.LEFT)
+    contrast_var = tk.DoubleVar(value=100)
+    contrast_slider = ttk.Scale(control_frame, from_=1, to=100, 
+                               orient=tk.HORIZONTAL, variable=contrast_var)
+    contrast_slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    
+    # Add Z slider if 3D
+    z_var = tk.IntVar()
+    if len(TiffShape) == 3:
+        NumOfZ = TiffShape[0]
+        z_label = ttk.Label(control_frame, text="Z position")
+        z_label.pack(side=tk.LEFT)
+        z_slider = ttk.Scale(control_frame, from_=1, to=NumOfZ,
+                            orient=tk.HORIZONTAL, variable=z_var)
+        if predefined:
+            z_var.set(predefined_ZYX[0] + 1)
+        else:
+            z_var.set(int(NumOfZ/2 + 1))
+        z_slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    
+    # Add buttons frame
+    button_frame = ttk.Frame(root, padding="5")
+    button_frame.pack(fill=tk.X)
+    
+    info_label = ttk.Label(button_frame, text="", width=60)
+    info_label.pack(side=tk.LEFT)
+    
+    ok_button = ttk.Button(button_frame, text="OK", width=20)
+    ok_button.pack(side=tk.LEFT, padx=5)
+    
+    exclude_button = ttk.Button(button_frame, text="Exclude", width=20)
+    exclude_button.pack(side=tk.LEFT, padx=5)
+    
+    # Variables to store click coordinates
+    click_x = -1
+    click_y = -1
+    result = None
+    
+    def update_image(*args):
+        nonlocal click_x, click_y
+        ShowIntensityMax = contrast_var.get()
+        NthSlice = z_var.get() if len(TiffShape) == 3 else 1
+        
+        im_PIL = tiffarray_to_PIL(stack_array, Percent=ShowIntensityMax, 
+                                 show_size_xy=[512, 512],
+                                 return_ratio=False, NthSlice=NthSlice)
+        photo = ImageTk.PhotoImage(im_PIL)
+        canvas.delete("all")
+        canvas.create_image(0, 0, anchor=tk.NW, image=photo)
+        canvas.image = photo  # Keep reference
+        
+        if click_x != -1 and click_y != -1:
+            canvas.create_oval(click_x-5, click_y-5, click_x+5, click_y+5,
+                             fill=col_list[0], outline=col_list[0])
+    
+    def on_canvas_click(event):
+        nonlocal click_x, click_y
+        click_x, click_y = event.x, event.y
+        update_image()
+    
+    def on_ok():
+        nonlocal result
+        if click_x == -1:
+            info_label.config(text="Please click", foreground="red")
+            return
+        z = z_var.get() - 1 if len(TiffShape) == 3 else 0
+        result = (z, click_y, click_x)
+        root.quit()
+    
+    def on_exclude():
+        nonlocal result
+        result = (-1, -1, -1)
+        root.quit()
+    
+    # Bind events
+    canvas.bind("<Button-1>", on_canvas_click)
+    ok_button.config(command=on_ok)
+    exclude_button.config(command=on_exclude)
+    contrast_var.trace_add("write", update_image)
+    if len(TiffShape) == 3:
+        z_var.trace_add("write", update_image)
+    
+    # Initial image display
+    update_image()
+    
+    # Show predefined point if specified
+    if predefined:
+        click_x = predefined_ZYX[2]
+        click_y = predefined_ZYX[1]
+        update_image()
+    
+    # Start the main loop
+    root.mainloop()
+    root.destroy()
+    
+    if result is None:
+        return -1, -1, -1
+    
+    # Convert coordinates back to original image space
+    if result[0] >= 0:  # Only convert if not excluded
+        z, y, x = result
+        resize_ratio_yx = (512/stack_array.shape[1], 512/stack_array.shape[2])
+        y = int(y/resize_ratio_yx[0])
+        x = int(x/resize_ratio_yx[1])
+        return z, y, x
+    return result

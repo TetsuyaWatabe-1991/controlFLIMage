@@ -4,7 +4,6 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 import os
 
-
 def color_fue(savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLIMage\ForUse",
               vmin =1, vmax=10, cmap='inferno', label_text = "F/F0",fontsize = 48,
               savefig = True

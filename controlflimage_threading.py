@@ -211,7 +211,9 @@ class Control_flimage():
         self.flim.print_responses = False
         self.error_dict = {}
         self.max_error_num = 20
-        self.flimage_exe = r"C:\Users\yasudalab\Documents\GIT\flimage1_3\bin\Debug\FLIMage.exe"
+        self.XYsize_ini_path = r"XYsize.ini"
+        # self.flimage_exe = r"C:\Users\yasudalab\Documents\GIT\flimage1_3\bin\Debug\FLIMage.exe"
+        self.flimage_exe = r"C:\Program Files\FLIMage\FLIMage 4.0.8\FLIMage.exe"
         
         if self.flim.Connected:
             print("Good Connection")
@@ -230,7 +232,7 @@ class Control_flimage():
         self.Num_zyx_drift = {}
         self.showWindow = False
         self.syncrate = 0
-        
+        self.bool_show_drift_after_align = True
         self.x_um = 0 #For detecting not assigned value
         
         FOVres = self.get_val_sendCommand('State.Acq.FOV_default')
@@ -242,7 +244,17 @@ class Control_flimage():
         self.nSlices = self.get_val_sendCommand('State.Acq.nSlices')
         self.config_ini(ini_path)
 
-    
+    def xy_zoom1_setting(self):
+        config = configparser.ConfigParser()
+        print("XYsize_ini_path, ",self.XYsize_ini_path)
+        config.read(self.XYsize_ini_path)
+        # XYsize_ini_path is a file that contains the XY size of the zoom1
+        # [Size]
+        # X_zoom1_um=1
+        # Y_zoom1_um=1.
+        self.FOV_default = float(config['Size']['X_zoom1_um']), float(config['Size']['Y_zoom1_um'])
+        self.flim.sendCommand(f"State.Acq.FOV_default = [{self.FOV_default[0]}, {self.FOV_default[1]}]\n")
+
     def config_ini(self,ini_path):
         config = configparser.ConfigParser()
         self.config=config
@@ -496,41 +508,98 @@ class Control_flimage():
     def convert_shifts_pix_to_micro(self, shifts_zyx_pixel):
         x_relative = self.x_um*shifts_zyx_pixel[-1][2]
         y_relative = self.y_um*shifts_zyx_pixel[-1][1]
-        z_relative = self.z_um*shifts_zyx_pixel[-1][0]
-        
+        z_relative = self.z_um*shifts_zyx_pixel[-1][0]        
         self.relative_zyx_um = [z_relative,y_relative,x_relative]
         
     def append_drift_list(self):
         FileNumber = int(self.flimlist[-1][-8:-5])
-        self.Num_zyx_drift[FileNumber]=[]
-        for drift in self.relative_zyx_um:
-            self.Num_zyx_drift[FileNumber].append(drift)
+        self.Num_zyx_drift[FileNumber]={}
+        self.Num_zyx_drift[FileNumber]["z"]=self.z_um*self.shifts_zyx_pixel[-1][0]
+        self.Num_zyx_drift[FileNumber]["y"]=self.y_um*self.shifts_zyx_pixel[-1][1]
+        self.Num_zyx_drift[FileNumber]["x"]=self.x_um*self.shifts_zyx_pixel[-1][2]
     
     def plot_drift(self,show=True):
-        self.f = plt.figure()
-        col_list=["g","k","m"]
-        label_list=["z","y","x"]
-        FileNum,zyx_drift_list=[int(self.flimlist[0][-8:-5])],[[0],[0],[0]]
-        for Num in self.Num_zyx_drift:
-            FileNum.append(Num)
-            for i in range(3):
-                zyx_drift_list[i].append(self.Num_zyx_drift[Num][i])
-                
-        for i in range(3):
-            plt.plot(FileNum, zyx_drift_list[i], c=col_list[i], ls="-", label=label_list[i])
-            plt.scatter(FileNum, zyx_drift_list[i],c=col_list[i])
-            
-        plt.xlabel("File#");plt.ylabel("\u03BCm")
-        # ax = plt.figure().gca()
-        self.f.gca().xaxis.set_major_locator(MaxNLocator(integer=True)) #show only integer ticks
+        plt.figure(figsize=(4, 3))
+        # Change order to plot z last so it's on top
+        label_list=["y","x","z"]  # Changed order
+        col_dict={"z":"g","y":"k","x":"m"}
+        marker_dict = {"z":"$z$", "y":"$y$", "x":"$x$"} 
+        size_dict = {"z":50, "y":50, "x":50}  # Increased sizes, z is largest
+        # Create filenum_list only once
+        filenumber_0th = int(self.flimlist[0][-8:-5])
+        self.Num_zyx_drift[filenumber_0th]={}
+        for xyz in label_list:
+            self.Num_zyx_drift[filenumber_0th][xyz] = 0
+
+        filenum_list = sorted(list(self.Num_zyx_drift.keys()))
+        zyx_drift_dict = {}
+        for xyz in label_list:
+            zyx_drift_dict[xyz] = []
+            for EachFileNum in filenum_list:  # Use the same filenum_list for all dimensions
+                zyx_drift_dict[xyz].append(self.Num_zyx_drift[EachFileNum][xyz])
+        filenum_list = np.array(filenum_list)
+        for xyz in label_list:
+            zyx_drift_dict[xyz] = np.array(zyx_drift_dict[xyz])
+        # Plot lines first
+        for xyz in label_list:
+            plt.plot(filenum_list, zyx_drift_dict[xyz], c=col_dict[xyz], ls="-", label=xyz)
+        # Plot scatter points in reverse order (z last so it's on top)
+        for xyz in reversed(label_list):
+            plt.scatter(filenum_list, zyx_drift_dict[xyz], 
+                       c=col_dict[xyz], 
+                       marker=marker_dict[xyz],
+                       s=size_dict[xyz],
+                       alpha=0.8)  # slightly less transparent
+        plt.xlabel("File#")
+        plt.ylabel("\u03BCm")
+        plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True)) #show only integer ticks
         plt.legend()
-        savepath = self.NameStem+"drift.png"
+
+        savepath = os.path.join(self.folder, self.NameStem+"_drift.png")
         print(savepath)
-        plt.savefig(savepath,dpi=300,bbox_inches='tight')
+        try:
+            plt.savefig(savepath,dpi=300,bbox_inches='tight')
+        except:
+            print("Error on saving drift plot")
         if show==True:
             plt.show()
-    
+            sleep(0.5)
+        plt.close();plt.clf();
+
+    def plot_drift_img(self, Tiff_MultiArray):
+        # Get Z projections for both time points
+        first_t_proj = np.max(Tiff_MultiArray[0], axis=0)  # First time point Z projection
+        second_t_proj = np.max(Tiff_MultiArray[1], axis=0)  # Second time point Z projection
+        
+        # Normalize both projections to 0-1 range for better visualization
+        first_t_proj = (first_t_proj - first_t_proj.min()) / (first_t_proj.max() - first_t_proj.min())
+        second_t_proj = (second_t_proj - second_t_proj.min()) / (second_t_proj.max() - second_t_proj.min())        
+        # Create RGB image
+        rgb_img = np.zeros((*first_t_proj.shape, 3))
+        # Green channel for first time point
+        rgb_img[:,:,1] = first_t_proj
+        # Magenta channel (red + blue) for second time point
+        rgb_img[:,:,0] = second_t_proj  # Red
+        rgb_img[:,:,2] = second_t_proj  # Blue
+        
+        # Create figure and plot
+        plt.figure(figsize=(4, 4))
+        plt.imshow(rgb_img)
+        plt.title('Z Projection Overlay\nGreen: Reference time point\nMagenta: Query time point')
+        plt.axis('off')
+        # Save the image
+        savepath = os.path.join(self.folder, self.NameStem+"_drift_overlay.png")
+        try:
+            plt.savefig(savepath, dpi=300, bbox_inches='tight')
+            print(f"Saved drift overlay image to: {savepath}")
+        except:
+            print("Error saving drift overlay image")
+        
+        plt.show()
+        plt.close()
+
     def align_two_flimfile(self,last_flimNth=-1):
+        print("Aligning two FLIM files")
         filelist=[self.flimlist[0],self.flimlist[last_flimNth]]
         print(filelist)
         # FileNum.append(int(flimlist[-1][-8:-5]))
@@ -540,7 +609,8 @@ class Control_flimage():
         
         self.convert_shifts_pix_to_micro(self.shifts_zyx_pixel)
         self.append_drift_list()
-      
+        if self.bool_show_drift_after_align==True:
+            self.plot_drift_img(Tiff_MultiArray)
 
     def align_2dframe_with_3d(self,ref_t=0,query_t=-1,
                               predefined_Z = False):
@@ -1248,13 +1318,12 @@ class Control_flimage():
             self.flim.sendCommand('StartGrab')  
 
             self.wait_while_grabbing()
-            self.flimlist=glob.glob(os.path.join(self.folder,f"{self.NameStem}*.flim"))
-            
+            self.flimlist=glob.glob(os.path.join(self.folder,f"{self.NameStem}*.flim"))            
             
             if len(self.flimlist)>1:
                 self.align_two_flimfile()
                 self.flim_connect_check()
-                # self.plot_drift(show=True)
+                self.plot_drift(show=True)
 
                 if self.drift_control==True:
                     # if NthAc < self.RepeatNum-1:
@@ -1308,6 +1377,7 @@ class Control_flimage():
                         self.default_cuboid_ZYX[each_dim]
                         )
 
+#%%
 
 if __name__ == "__main__":
     
@@ -1317,8 +1387,15 @@ if __name__ == "__main__":
     Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128fast.txt"
     # singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging.txt"
     # singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging_test.txt"
-    
-    FLIMageCont = Control_flimage()
+    inipath = r"C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
+    FLIMageCont = Control_flimage(ini_path = inipath)
+
+    if False:
+        FLIMageCont.flim.sendCommand(f'LoadSetting, {Zstack_ini}')
+        FLIMageCont.flim.sendCommand(f'SetDIOPanel, 1, 1')
+
+
+
     # FLIMageCont.directionMotorZ=-1 #sometimes, it changes. Why?
     
     # FLIMageCont.set_param(RepeatNum=5, interval_sec=30, ch_1or2=2,
@@ -1356,8 +1433,6 @@ if __name__ == "__main__":
     
     # FLIMageCont.start_repeat()
     
-    FLIMageCont.flim.sendCommand(f'LoadSetting, {Zstack_ini}')
-    FLIMageCont.flim.sendCommand(f'SetDIOPanel, 1, 1')
 
 
     
@@ -1373,3 +1448,5 @@ if __name__ == "__main__":
 #     FLIMageCont.flim.sendCommand('IsGrabbing')
 #     print(datetime.now() - each_acquisition_from)
 # print(i)    
+
+# %%

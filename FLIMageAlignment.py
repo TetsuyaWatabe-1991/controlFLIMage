@@ -205,15 +205,14 @@ def flim_files_to_nparray_uncaging(filelist,
     return Tiff_MultiArray, iminfo, relative_sec_list, uncaging_array, uncaging_iminfo, uncaging_relative_sec_list
 
 
-
-    
-
 def get_xyz_pixel_um(iminfo):
-    field_len = iminfo.State.Acq.FOV_default[0]
+    field_len_x = iminfo.State.Acq.FOV_default[0]
+    field_len_y = iminfo.State.Acq.FOV_default[1]
     zoom = iminfo.State.Acq.zoom
-    pixels = iminfo.State.Acq.pixelsPerLine
-    x_um = field_len/zoom/pixels
-    y_um = field_len/zoom/pixels
+    pixels_x = iminfo.State.Acq.pixelsPerLine
+    pixels_y = iminfo.State.Acq.linesPerFrame
+    x_um = field_len_x/zoom/pixels_x
+    y_um = field_len_y/zoom/pixels_y
     z_um = iminfo.State.Acq.sliceStep 
     return x_um, y_um, z_um
 

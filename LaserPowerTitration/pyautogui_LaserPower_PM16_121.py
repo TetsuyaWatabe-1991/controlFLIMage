@@ -1,9 +1,9 @@
-# -*- coding: utf-8 -*-
 """
 Created on Fri Dec 23 17:23:07 2022
 
 @author: yasudalab
 """
+# %%
 import time
 import datetime
 import json
@@ -73,6 +73,7 @@ class LaserGUIController:
         assert os.path.exists(power_png), f"Power PNG not found: {power_png}"
         self.power_png = power_png
         self.FLIMageCont = Control_flimage(flim_ini_path)
+        self.FLIMageCont.flim.print_responses = False
         self._locate_gui_elements()
 
     def _locate_gui_elements(self):
@@ -99,29 +100,6 @@ class LaserGUIController:
             gui.press(i)
         gui.press('enter')
 
-    def set_power_percent_keyboard(self, laser_1or2, percent):
-        """
-        Set laser power using only keyboard shortcuts (no mouse movement).
-        Assumes FLIMage window is active and focused.
-        """
-        # Press Tab to cycle through controls until we reach the power input
-        # The number of tabs needed depends on the current focus position
-        # We'll press Tab multiple times to ensure we reach the power input
-        for _ in range(10):  # Press Tab multiple times to cycle through controls
-            gui.press('tab')
-            time.sleep(0.1)  # Small delay to let the focus change
-            
-        # Clear existing value
-        for _ in range(3):
-            gui.press("backspace")
-            
-        # Type the new value
-        for i in str(percent):
-            gui.press(i)
-            
-        # Press Enter to confirm
-        gui.press('enter')
-
     def focus_abort(self):
         gui.click(self.Focus)
 
@@ -135,20 +113,13 @@ class LaserSettingAuto:
         self.pow_result = {}
         self.zero_all()
 
-    def gui_auto(self, laser_1or2, percent_list, interval=10, no_record=False, use_keyboard=False):
+    def gui_auto(self, laser_1or2, percent_list, interval=10, no_record=False):
         self.gui.FLIMageCont.flim.sendCommand("SetDIOPanel, 1, 0")
         self.gui.FLIMageCont.flim.sendCommand("SetDIOPanel, 1, 1")
         time.sleep(0.1)
-        
-        if not use_keyboard:
-            self.gui.click_laser_tab(laser_1or2)
-            
+        self.gui.click_laser_tab(laser_1or2)
         for power in percent_list:
-            if use_keyboard:
-                self.gui.set_power_percent_keyboard(laser_1or2, power)
-            else:
-                self.gui.set_power_percent(power)
-                
+            self.gui.set_power_percent(power)
             self.gui.FLIMageCont.flim.sendCommand("SetDIOPanel, 1, 1")
             if laser_1or2 == 2:
                 self.gui.FLIMageCont.flim.sendCommand("SetDIOPanel, 3, 1")
@@ -159,12 +130,9 @@ class LaserSettingAuto:
             if not no_record:
                 self.pow_result[power] = power_mW
 
-    def change_power(self, laser_1or2, percent, use_keyboard=False):
-        if not use_keyboard:
-            self.gui.click_laser_tab(laser_1or2)
-            self.gui.set_power_percent(percent)
-        else:
-            self.gui.set_power_percent_keyboard(laser_1or2, percent)
+    def change_power(self, laser_1or2, percent):
+        self.gui.click_laser_tab(laser_1or2)
+        self.gui.set_power_percent(percent)
 
     def gui_focus_abort(self):
         self.gui.focus_abort()
@@ -289,12 +257,14 @@ def main():
     Main entry point for running the laser power measurement and plotting workflow.
     """
     power_png = r"Z:\Data Temp\Tetsuya\Power.png"
-    flim_ini_path = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
-    savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_Imaging\powermeter"
+    flim_ini_path = r"C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
+    savefolder = r"Z:\Yasuda_lab\Data Temp\Tetsuya\Data\laserpower"
     percent_list_1 = [0, 10, 20, 30, 50, 70]
     percent_list_2 = [0, 10, 20, 30, 50, 70]
     run_measurements(power_png, flim_ini_path, savefolder, percent_list_1, percent_list_2)
 
+# %%
 
 if __name__ == '__main__':
     main()
+# %%

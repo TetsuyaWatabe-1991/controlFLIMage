@@ -5,7 +5,7 @@ Created on Wed Jun 26 10:19:07 2024
 @author: yasudalab
 """
 
-
+import time
 import os
 import glob
 import pathlib
@@ -13,24 +13,33 @@ import pandas as pd
 import copy
 from FLIMageAlignment import  align_two_flimfile
 from FLIMageFileReader2 import FileReader
-from controlflimage_threading import control_flimage
-
+from controlflimage_threading import Control_flimage
+from multidim_tiff_viewer import read_xyz_single
 
 class Multiarea_from_lowmag():
     def __init__(self, lowmag_path,
                  rel_pos_um_csv_path,
                  high_mag_setting_path,
                  high_mag_zoom = 16,
-                 ch_1or2 = 1):
+                 ch_1or2 = 1,
+                 preassigned_spine = False
+                 ):
         self.lowmag_path = lowmag_path
         self.lowmag_basename = pathlib.Path(lowmag_path).stem[:-3]        
         self.lowmag_iminfo = FileReader()
         self.lowmag_iminfo.read_imageFile(self.lowmag_path, True)
         self.lowmag_magnification = self.lowmag_iminfo.statedict['State.Acq.zoom']
+        latestpath = self.latest_path()
+        self.lowmag_iminfo = FileReader()
+        self.lowmag_iminfo.read_imageFile(latestpath, True)
+        
         self.high_mag_setting_path = high_mag_setting_path
         self.high_mag_relpos_dict = {}
         self.high_mag_zoom = high_mag_zoom
         self.rel_pos_um_csv_path = rel_pos_um_csv_path
+        
+        self.preassigned_spine = preassigned_spine
+        
         self.read_rel_pos_um_csv()
         
         bottom_lowmag_xyz_um = list(copy.copy(self.lowmag_iminfo.statedict['State.Motor.motorPosition']))
@@ -45,6 +54,7 @@ class Multiarea_from_lowmag():
         self.Spine_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Spine_example.png"
         self.Dendrite_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Dendrite_example.png"
         self.cuboid_ZYX=[2,20,20]
+        
     
     def read_rel_pos_um_csv(self):
         self.rel_pos_df = pd.read_csv(self.rel_pos_um_csv_path)
@@ -53,6 +63,14 @@ class Multiarea_from_lowmag():
             x_um = self.rel_pos_df.loc[ind,"x_um"]
             y_um = self.rel_pos_df.loc[ind,"y_um"]
             z_um = self.rel_pos_df.loc[ind,"z_um"]
+            
+            if self.preassigned_spine == True:
+                inipath = f"{self.lowmag_path[:-8]}_highmag_{pos_id}.ini"
+                spine_zyx, dend_slope, dend_intercept = read_xyz_single(inipath)
+                if spine_zyx[0]<0:
+                    print(f"Rejected highmag, {inipath}")
+                    continue
+                
             self.high_mag_relpos_dict[pos_id] = {}
             self.high_mag_relpos_dict[pos_id]["x_um"] = x_um
             self.high_mag_relpos_dict[pos_id]["y_um"] = y_um
@@ -109,29 +127,42 @@ class Multiarea_from_lowmag():
         FLIMageCont.flim.sendCommand('SetScanMirrorXY_um, 0, 0')
         FLIMageCont.flim.sendCommand('SetCenter')
     
-    def send_highmag_acq_info(self, FLIMageCont, pos_id):
+    def send_highmag_acq_info(self, FLIMageCont, pos_id, use_galvo = True):
         FLIMageCont.flim.sendCommand(f'LoadSetting, {self.high_mag_setting_path}')
         FLIMageCont.flim.sendCommand(f'State.Files.baseName = "{self.lowmag_basename}_highmag_{pos_id}_"')
         FLIMageCont.flim.sendCommand(f'State.Acq.zoom = {self.high_mag_zoom}')      
         counter = self.count_high_mag_flimfiles(pos_id = pos_id)
         FLIMageCont.flim.sendCommand(f'State.Files.fileCounter = {counter}')
         FLIMageCont.relative_zyx_um = [(-1)*self.high_mag_relpos_dict[pos_id]["z_um"],
-                                       self.high_mag_relpos_dict[pos_id]["y_um"],
-                                       self.high_mag_relpos_dict[pos_id]["x_um"]]
-        FLIMageCont.go_to_absolute_pos_um_galvo(z_move = True)
+                                       (-1)*self.high_mag_relpos_dict[pos_id]["y_um"],
+                                       (-1)*self.high_mag_relpos_dict[pos_id]["x_um"]]
+        
+        if use_galvo:
+            FLIMageCont.go_to_absolute_pos_um_galvo(z_move = True)
+        else:
+            FLIMageCont.go_to_relative_pos_motor_checkstate()
         FLIMageCont.flim.sendCommand('SetCenter')
     
     def update_pos_fromcurrent(self, FLIMageCont):
         self.corrected_lowmag_xyz_um = FLIMageCont.get_position()
     
     def go_to_lowmag_center_pos(self, FLIMageCont):
-        dest_x,dest_y,dest_z = self.corrected_lowmag_xyz_um
-        FLIMageCont.go_to_absolute_pos_motor_checkstate(dest_x,dest_y,dest_z)
+        dest_x,dest_y,dest_z = self.corrected_lowmag_xyz_um        
+        FLIMageCont.go_to_absolute_pos_motor_checkstate(dest_x, dest_y, dest_z)
+        time.sleep(1)
+        
+    def go_to_relative_pos_after_(self, relative_zyx_um, FLIMageCont):
+        x,y,z=FLIMageCont.get_position()        
+        dest_x = x - FLIMageCont.directionMotorX * relative_zyx_um[2]
+        dest_y = y - FLIMageCont.directionMotorY * relative_zyx_um[1]
+        dest_z = z - FLIMageCont.directionMotorZ * relative_zyx_um[0]
+        FLIMageCont.go_to_absolute_pos_motor_checkstate(dest_x, dest_y, dest_z)
+
 
 
 if __name__ == "__main__":
     high_mag_setting_path = r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\z7_10_kal8.txt"
-    FLIMageCont = control_flimage()
+    FLIMageCont = Control_flimage()
     FLIMageCont.interval_sec = 600
     FLIMageCont.expected_grab_duration_sec = 5
     ch_1or2 = 2
@@ -146,9 +177,11 @@ if __name__ == "__main__":
     for each_lowmag in lowmag_path_list:
         # lowmag_path = r"G:\ImagingData\Tetsuya\20240626\b_001.flim"
         # rel_pos_um_csv_path = r"G:\ImagingData\Tetsuya\20240626\b_001\assigned_relative_um_pos.csv"
+        
         rel_pos_um_csv_path = os.path.join(pathlib.Path(each_lowmag).parent, 
                                           pathlib.Path(each_lowmag).stem,
                                           "assigned_relative_um_pos.csv")
+        
         lowmag_instance_list.append(Multiarea_from_lowmag(lowmag_path = each_lowmag,
                                                           rel_pos_um_csv_path = rel_pos_um_csv_path,
                                                           high_mag_setting_path = high_mag_setting_path))
@@ -170,4 +203,7 @@ if __name__ == "__main__":
                 Each_lowmag_instance.go_to_lowmag_center_pos(FLIMageCont)
                 Each_lowmag_instance.send_highmag_acq_info(FLIMageCont, each_high_mag_id)
                 FLIMageCont.acquisition_include_connect_wait()
+                
+                
+                
                 
