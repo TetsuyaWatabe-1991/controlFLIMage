@@ -28,6 +28,34 @@ def read_multiple_uncagingpos(flimpath):
     else:
         return z, ylist, xlist
 
+def read_xyz_single(inipath, return_excluded = False):
+    config = configparser.ConfigParser()
+    if os.path.exists(inipath) == False:
+        print(inipath, "do not exist")
+    assert(os.path.exists(inipath))
+    config.read(inipath,encoding='cp932')
+    if len(config.sections()) != 1:
+        raise Exception('The inifile does not have single section.')
+    else:
+        z = int(config['uncaging_settings']['spine_z'])
+        y = int(config['uncaging_settings']['spine_y'])
+        x = int(config['uncaging_settings']['spine_x'])
+        dend_slope = float(config['uncaging_settings']['dend_slope'])
+        dend_intercept = float(config['uncaging_settings']['dend_intercept'])
+        spine_zyx = (z, y, x)
+        if return_excluded:
+            try:
+                excluded = int(config['uncaging_settings']['excluded'])
+            except:
+                if spine_zyx[0] < -1:
+                    excluded = 1
+                else:
+                    print("\n"*3,"could not read exclusion info","\n"*3)
+                    excluded = 0
+            return spine_zyx, dend_slope, dend_intercept, excluded
+        return spine_zyx, dend_slope, dend_intercept
+
+
 def read_dendriteinfo(flimpath):
     txtpath = flimpath[:-5]+"dendrite.txt"    
     direction_list, orientation_list, dendylist, dendxlist = [], [], [], []
@@ -844,17 +872,17 @@ def test_all_click_functions():
     
     # Test multiple_uncaging_click
     print("\n=== Testing multiple_uncaging_click ===")
-    z1, ylist1, xlist1 = multiple_uncaging_click(FirstStack, Text="Click points in PySimpleGUI version")
+    z1, ylist1, xlist1 = multiple_uncaging_click(FirstStack, Text="Click points")
     print(f"Results - Z: {z1}, Y points: {ylist1}, X points: {xlist1}")
     
     # Test z_stack_multi_z_click
     print("\n=== Testing z_stack_multi_z_click ===")
-    pix_zyx_list1 = z_stack_multi_z_click(FirstStack, show_text="Click points in PySimpleGUI version")
+    pix_zyx_list1 = z_stack_multi_z_click(FirstStack, show_text="Click points")
     print(f"Results - Points: {pix_zyx_list1}")
         
     # Test threeD_img_click with a sample tiff file
     print("\n=== Testing threeD_img_click ===")
-    z3, y3, x3 = threeD_array_click(FirstStack, Text="Click in PySimpleGUI version")
+    z3, y3, x3 = threeD_array_click(FirstStack, Text="Click")
     print(f" Results - Z: {z3}, Y: {y3}, X: {x3}")
 
 
