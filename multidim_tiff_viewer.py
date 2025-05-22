@@ -10,6 +10,8 @@ from FLIMageAlignment import flim_files_to_nparray
 from skimage.measure import label, regionprops
 import matplotlib.pyplot as plt
 import TkEasyGUI as tg
+from FLIMageFileReader2 import FileReader
+import configparser
 
 def read_multiple_uncagingpos(flimpath):
     
@@ -27,6 +29,20 @@ def read_multiple_uncagingpos(flimpath):
         raise Exception(f"{txtpath} do not have any uncaging position")
     else:
         return z, ylist, xlist
+
+def save_spine_dend_info(spine_zyx, dend_slope, dend_intercept, inipath,
+                         excluded = 0):
+    config = configparser.ConfigParser()
+    config['uncaging_settings'] = {}
+    config['uncaging_settings']['spine_z'] = str(spine_zyx[0])
+    config['uncaging_settings']['spine_y'] = str(spine_zyx[1])
+    config['uncaging_settings']['spine_x'] = str(spine_zyx[2])
+    config['uncaging_settings']['dend_slope'] = str(dend_slope)
+    config['uncaging_settings']['dend_intercept'] = str(dend_intercept)
+    config['uncaging_settings']['excluded'] = str(excluded)
+    with open(inipath, 'w') as configfile:
+        config.write(configfile)
+    print("spine and dend info saved as",inipath)
 
 def read_xyz_single(inipath, return_excluded = False):
     config = configparser.ConfigParser()
@@ -72,7 +88,20 @@ def read_dendriteinfo(flimpath):
         raise Exception(f"{txtpath} do not have any uncaging position")
     else:
         return direction_list, orientation_list, dendylist, dendxlist 
+
+def get_axis_position(y0,x0,orientation, HalfLen_c=10):
+    # x0,x1,x2,x1_1,x2_1,y0,y1,y2,y1_1,y2_1 = get_axis_position(y0,x0,orientation, HalfLen_c=10)
     
+    x1 = x0 + math.cos(orientation) * HalfLen_c #* props.minor_axis_length
+    y1 = y0 - math.sin(orientation) * HalfLen_c #* props.minor_axis_length
+    x2 = x0 - math.sin(orientation) * HalfLen_c #* props.major_axis_length
+    y2 = y0 - math.cos(orientation) * HalfLen_c #* props.major_axis_length
+    x1_1 = x0 - math.cos(orientation) * HalfLen_c #* props.minor_axis_length
+    y1_1 = y0 + math.sin(orientation) * HalfLen_c #* props.minor_axis_length
+    x2_1 = x0 + math.sin(orientation) * HalfLen_c #* props.major_axis_length
+    y2_1 = y0 + math.cos(orientation) * HalfLen_c #* props.major_axis_length
+    return x0,x1,x2,x1_1,x2_1,y0,y1,y2,y1_1,y2_1
+
     
 def dend_props_forEach(flimpath, ch1or2=1,
                        square_side_half_len = 20,
@@ -251,6 +280,33 @@ def tiffarray_to_PIL_8bit(stack_array, vmax = 255, show_size_yx=[512,512],
     else:
         return im_PIL
 
+
+def tiffarray_to_PIL2(stack_array,Percent=100,show_size_xy=[512,512],
+                     return_ratio=False,NthSlice=1):
+    # This can be used for two D image also.
+    
+    if Percent<1 or Percent>100:
+        Percent=100
+        
+    if len(stack_array.shape)== 3:
+        im_array = stack_array[NthSlice-1,:,:]
+    else:
+        im_array = stack_array
+    
+    norm_array = (100/Percent)*255*(im_array/im_array.max())
+    # print(norm_array)
+    norm_array[norm_array>255]=255
+    rgb_array = cv2.cvtColor(norm_array.astype(np.uint8),cv2.COLOR_GRAY2RGB)
+    im_PIL = Image.fromarray(rgb_array)
+    
+    im_PIL = im_PIL.resize(show_size_xy)
+    resize_ratio_yx = (show_size_xy[0]/im_array.shape[0],show_size_xy[1]/im_array.shape[1])
+    if return_ratio==True:    
+        return im_PIL,resize_ratio_yx
+    else:
+        return im_PIL 
+
+
 def calc_zoom_rate_based_on_maxsize(yx_shape: tuple, 
                                     show_size_YX_max: list, 
                                     show_size_YX_min: list) -> tuple:
@@ -265,6 +321,8 @@ def calc_zoom_rate_based_on_maxsize(yx_shape: tuple,
 
     resize_yx_shape = list(candidate_yxshape.astype(np.uint16))
     return resize_yx_shape
+
+
 
 def z_stack_multi_z_click(stack_array, pre_assigned_pix_zyx_list=[], show_text = ""):
     first_text_at_upper = "Click each position and click assign"
@@ -688,134 +746,6 @@ def multiple_uncaging_click(stack_array, Text="Click", SampleImg=None, ShowPoint
         if event == tg.WIN_CLOSED:
             break
 
-        if event in ['Update', 'Z', "Intensity"]:
-            im_PIL = tiffarray_to_PIL(stack_array,Percent=ShowIntensityMax,NthSlice=NthSlice)
-            data = PILimg_to_data(im_PIL)
-            graph.draw_image(data=data, location=(0, 0))
-            if x != -1:
-                graph.draw_point((x,y), size=5, color = col_list[0])
-            if ShowPoint==True:
-                graph.draw_point((x_2,y_2), size=5, color = col_list[1])
-
-        if event == 'OK':
-            if x==-1:
-                window["-INFO-"].update(value="Please click")
-                continue
-            else:
-                z,y,x=NthSlice-1, y, x
-                window.close()
-                return z,int((y)/resize_ratio_yx[0]),int(x/resize_ratio_yx[1])
-                break
-
-def multiple_uncaging_click(stack_array, Text="Click", SampleImg=None, ShowPoint=False, ShowPoint_YX=[0,0]):
-    TiffShape = stack_array.shape
-    col_list = ['red', 'cyan']
-    ShowPointsYXlist = []
-    
-    if len(TiffShape)==3:
-        NumOfZ = TiffShape[0]
-        Z_change=[tg.Text("Z position", size=(20, 1)),
-                  tg.Slider(orientation ='horizontal', key='Z',
-                            default_value=int(NumOfZ/2), range=(1,NumOfZ),enable_events = True)            
-                  ]
-        im_PIL,resize_ratio_yx = tiffarray_to_PIL(stack_array,Percent=100, show_size_xy=[512,512],
-                                                  return_ratio=True,NthSlice=int(NumOfZ/2))
-    else:
-        NumOfZ = 1
-        Z_change=[]
-        im_PIL,resize_ratio_yx = tiffarray_to_PIL(stack_array,Percent=100, show_size_xy=[512,512],
-                                                  return_ratio=True,NthSlice=1)
-
-    data = PILimg_to_data(im_PIL)    
-    data_sample = OpenPNG(pngpath=SampleImg)
-
-    layout = [
-                [tg.Text(Text, font='Arial 10', text_color='black', background_color='white', size=(60, 2))],
-                [
-                tg.Graph(
-                canvas_size=(512, 512), 
-                graph_bottom_left=(0, 0),
-                graph_top_right=(512, 512),
-                key="-GRAPH-",
-                background_color='lightblue'
-                ),
-                tg.Graph(
-                canvas_size=(512, 512), 
-                graph_bottom_left=(0, 0),
-                graph_top_right=(512, 512),
-                key="-Sample-",
-                background_color='black'
-                )
-                ],
-              [
-               tg.Text("Contrast", size=(20, 1)),
-               tg.Slider(orientation ='horizontal', key='Intensity',default_value=100,
-                         range=(1,100),enable_events = True),
-              ],
-               Z_change
-              ,
-            [tg.Text(key='-INFO-', size=(60, 1)),tg.Button('Assign', size=(20, 2)),tg.Button('Reset', size=(20, 2)),tg.Button('OK', size=(20, 2))]
-            ]
-    
-    window = tg.Window("Spine selection", layout, finalize=True)
-    graph = window["-GRAPH-"]
-    graph_sample = window["-Sample-"]
-    
-    # Initialize variables
-    ShowIntensityMax = 100
-    NthSlice = int(NumOfZ/2)
-    x = -1
-    y = -1
-    fixZ = False
-    fixedSlice = -1
-    
-    # Draw initial images
-    graph.draw_image(data=data, location=(0, 0))
-    if data_sample:
-        graph_sample.draw_image(data=data_sample, location=(0, 0))
-    
-    if len(ShowPointsYXlist)>0:
-        col_list=['cyan','red']
-        y_2 = 512 - ShowPoint_YX[0]*resize_ratio_yx[0]
-        x_2 = ShowPoint_YX[1]*resize_ratio_yx[1]
-        graph.draw_point((x_2,y_2), size=5, color = col_list[1])
-    
-    def redraw_all():
-        im_PIL = tiffarray_to_PIL(stack_array,Percent=ShowIntensityMax,NthSlice=NthSlice)
-        data = PILimg_to_data(im_PIL)
-        graph.erase()
-        graph.draw_image(data=data, location=(0, 0))
-        
-        # Draw current point
-        if x != -1:
-            graph.draw_point((x,y), size=5, color = col_list[0])
-            
-        # Draw all assigned points
-        if len(ShowPointsYXlist)>0:
-            for EachYX in ShowPointsYXlist:
-                graph.draw_point((EachYX[1],EachYX[0]), size=5, color = col_list[1])
-    
-    # Bind mouse click event
-    def on_click(event):
-        nonlocal x, y
-        x, y = event.x, event.y
-        redraw_all()
-            
-    graph.widget.bind('<Button-1>', on_click)
-    
-    while True:
-        event, values = window.read()
-        ShowIntensityMax = values['Intensity']
-
-        if len(TiffShape)==3:
-            if not fixZ:
-                NthSlice = int(values['Z'])
-            else:
-                NthSlice = fixedSlice
-
-        if event == tg.WIN_CLOSED:
-            break
-
         if event == 'Assign':
             z,y,x = NthSlice-1, y, x
             ShowPointsYXlist.append([y,x])
@@ -830,11 +760,10 @@ def multiple_uncaging_click(stack_array, Text="Click", SampleImg=None, ShowPoint
             redraw_all()
             
         if event == 'OK':
-            if x==-1:
+            if len(ShowPointsYXlist)<1:
                 window["-INFO-"].update(value="Please click")
                 continue
-            else:
-                z = fixedSlice-1
+            else:                
                 window.close()
                 xlist, ylist = [], []
                 for EachYX in ShowPointsYXlist:
@@ -842,25 +771,177 @@ def multiple_uncaging_click(stack_array, Text="Click", SampleImg=None, ShowPoint
                     ylist.append(EachYX[0]/resize_ratio_yx[0])
                 return z,ylist,xlist
                 break
+                
 
-def multiple_uncaging_click_savetext(flimpath, ch1or2=1):
-    ch = ch1or2 - 1
-    Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray([flimpath],
-                                                                       ch=ch)
-    FirstStack = Tiff_MultiArray[0]
-    z, ylist, xlist = multiple_uncaging_click(FirstStack,SampleImg=None,
-                                              ShowPoint=False,ShowPoint_YX=[110,134])
-    print(z, ylist, xlist)
+def twoD_click_tiff(twoD_numpy, Text="Click",
+                    max_img_xwidth = 600, max_img_ywidth = 600, 
+                    ShowPoint_YX=[0,0],
+                    predefined = False, predefied_yx_list = []):
+    y_pix,x_pix= twoD_numpy.shape
+    showratio = max(x_pix/max_img_xwidth, y_pix/max_img_ywidth)
+    show_size_xy = [int(x_pix/showratio),int(y_pix/showratio) ]
+
+    col_list=['magenta', 'green']
     
-    num_pos = len(ylist)
+    im_PIL,resize_ratio_yx = tiffarray_to_PIL(stack_array = twoD_numpy,
+                                              Percent=100,
+                                              show_size_xy=show_size_xy,
+                                              return_ratio=True)
+   
+    ShowPointsYXlist = []
+    if predefined == True:
+        for each_yx in predefied_yx_list:
+            pre_def_y = show_size_xy[1] - each_yx[0] * resize_ratio_yx[0]
+            pre_def_x = each_yx[1] * resize_ratio_yx[1]
+            ShowPointsYXlist.append([pre_def_y,pre_def_x])
+            
+    showpoint_y = show_size_xy[1] - ShowPoint_YX[0] * resize_ratio_yx[0]
+    showpoint_x = ShowPoint_YX[1] * resize_ratio_yx[1]
+     
+    data = PILimg_to_data(im_PIL)    
+
+    layout = [
+                [tg.Text(Text, font='Arial 10', text_color='black', background_color='white', size=(60, 2))],
+                [
+                tg.Graph(
+                canvas_size=show_size_xy, 
+                graph_bottom_left=(0, 0),
+                graph_top_right=show_size_xy,
+                key="-GRAPH-",
+                background_color='lightblue'
+                )
+                ],
+              [
+               tg.Text("Contrast", size=(20, 1)),
+               tg.Slider(orientation ='horizontal', key='Intensity',default_value=100,
+                         range=(1,100),enable_events = True),
+              ],
+              [
+               tg.Text(key='-INFO-', size=(60, 1)), 
+               tg.Button('Reset', size=(20, 2)),
+               tg.Button('OK', size=(20, 2))
+              ]
+            ]
     
-    txtpath = flimpath[:-5]+".txt"
+    window = tg.Window("Neuron selection", layout, finalize=True)
+    graph = window["-GRAPH-"]
     
-    with open(txtpath, 'w') as f:
-        f.write(str(num_pos)+'\n')
-        for nth_pos in range(num_pos):
-            f.write(f'{z},{ylist[nth_pos]},{xlist[nth_pos]}\n')
-    print(f"Uncaging pos file was saved as {txtpath}")
+    # Initialize variables
+    ShowIntensityMax = 100
+    x = -1
+    y = -1
+    
+    # Draw initial images
+    graph.draw_image(data=data, location=(0, 0))
+    graph.draw_point((showpoint_x,showpoint_y), size=10, color = col_list[0])
+    if len(ShowPointsYXlist)>0:
+        for EachYX in ShowPointsYXlist:
+            graph.draw_point((EachYX[1],EachYX[0]), size=5, color = col_list[1])
+    
+    def redraw_all():
+        im_PIL = tiffarray_to_PIL(stack_array = twoD_numpy,
+                                  Percent=ShowIntensityMax,
+                                  show_size_xy=show_size_xy,
+                                  return_ratio=False)
+        data = PILimg_to_data(im_PIL)
+        graph.erase()
+        graph.draw_image(data=data, location=(0, 0))
+        graph.draw_point((showpoint_x,showpoint_y), size=10, color = col_list[0])
+        
+        # Draw all assigned points
+        if len(ShowPointsYXlist)>0:
+            for EachYX in ShowPointsYXlist:
+                graph.draw_point((EachYX[1],EachYX[0]), size=5, color = col_list[1])
+    
+    # Bind mouse click event
+    def on_click(event):
+        nonlocal x, y
+        x, y = event.x, event.y
+        ShowPointsYXlist.append([y, x])
+        redraw_all()
+            
+    graph.widget.bind('<Button-1>', on_click)
+    
+    while True:
+        event, values = window.read()
+        ShowIntensityMax = values['Intensity']
+
+        if event == tg.WIN_CLOSED:
+            break
+
+        if event == 'Reset':
+            ShowPointsYXlist = []
+            redraw_all()
+            
+        if event in ['Update', "Intensity"]:
+            redraw_all()
+            
+        if event == 'OK':
+            if len(ShowPointsYXlist)<1:
+                window["-INFO-"].update(value="Please click")
+                continue
+            else:                
+                window.close()
+                yx_list = []
+                for EachYX in ShowPointsYXlist:
+                    each_yx = [(show_size_xy[1]-EachYX[0])/resize_ratio_yx[0],
+                               EachYX[1]/resize_ratio_yx[1]]
+                    yx_list.append(each_yx)
+                return yx_list
+                break
+
+
+
+def define_uncagingPoint_dend_click_multiple(flim_file_path,
+                                             read_ini = False,
+                                             inipath = "",
+                                             SampleImg = None,
+                                             only_for_exclusion = False):    
+    iminfo = FileReader()
+    print(flim_file_path)
+    iminfo.read_imageFile(flim_file_path, True)
+    imagearray=np.array(iminfo.image)
+    intensityarray=np.sum(np.sum(np.sum(imagearray,axis=-1),axis=1),axis=1)
+    text = "Click the center of the spine you want to stimulate. (Not the uncaging position itself)"
+    maxproj = np.sum(intensityarray,axis=0)
+    text2 = "Click the dendrite near the selected spine"
+
+    if (read_ini == True) * (os.path.exists(inipath)):
+        spine_zyx, dend_slope, dend_intercept = read_xyz_single(inipath = inipath)
+        spine_zyx = threeD_array_click(intensityarray, text,
+                                 SampleImg = SampleImg, ShowPoint=False,
+                                 predefined = True, predefined_ZYX = spine_zyx)
+        if spine_zyx[0] < 0:
+            return spine_zyx, 0, 0
+            
+        predefied_yx_list = []
+        for x in range(1,intensityarray.shape[-1]-1):
+            y = dend_slope*x + dend_intercept
+            if (1<y) * (y < intensityarray.shape[-1]-1):
+                predefied_yx_list.append([y,x])
+                
+        if only_for_exclusion:
+            return spine_zyx, 0, 0
+        
+        yx_list = twoD_click_tiff(twoD_numpy = maxproj, Text=text2,
+                                  max_img_xwidth = 600, max_img_ywidth = 600,
+                                  ShowPoint_YX=[spine_zyx[1],spine_zyx[2]],
+                                  predefined = True,
+                                  predefied_yx_list = predefied_yx_list)
+    else:
+        spine_zyx = threeD_array_click(intensityarray,text,
+                                 SampleImg=SampleImg,ShowPoint=False)
+        if spine_zyx[0] < 0:
+            return spine_zyx, 0, 0
+            
+        yx_list = twoD_click_tiff(twoD_numpy = maxproj, Text=text2,
+                                  max_img_xwidth = 600, max_img_ywidth = 600,
+                                  ShowPoint_YX=[spine_zyx[1],spine_zyx[2]])
+
+    dend_slope, dend_intercept = np.polyfit(np.array(yx_list)[:,1], np.array(yx_list)[:,0], 1)
+    print("dend_slope, dend_intercept :", dend_slope, dend_intercept)
+    return spine_zyx, dend_slope, dend_intercept
+
 
 
 def test_all_click_functions():
