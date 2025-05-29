@@ -2,5 +2,12 @@
 *.tif
 *.tiff
 *.png
+*.ipynb
+*.h5
+DirectionSetting.ini
+DirectionSetting*.ini
+XYsize.ini
+XYsize*.ini
 */__pycache__/*
 ./Archive/*
+Archive/*
