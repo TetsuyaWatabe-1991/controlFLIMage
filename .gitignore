@@ -4,6 +4,7 @@
 *.png
 *.ipynb
 *.h5
+*.bat
 DirectionSetting.ini
 DirectionSetting*.ini
 XYsize.ini

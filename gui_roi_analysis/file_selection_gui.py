@@ -6,7 +6,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
                             QWidget, QTableWidget, QTableWidgetItem, QPushButton,
                             QLabel, QHeaderView, QCheckBox, QMessageBox, QProgressBar,
-                            QSplitter, QTextEdit)
+                            QSplitter, QTextEdit, QLineEdit)
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QColor
 
@@ -14,17 +14,30 @@ from PyQt5.QtGui import QFont, QColor
 class FileSelectionGUI(QMainWindow):
     roi_analysis_completed = pyqtSignal(str, int, str)  # group, set_label, header
     
-    def __init__(self, combined_df, parent=None):
+    def __init__(self, combined_df, df_save_path_2=None, additional_columns=None, parent=None):
         super().__init__(parent)
         
         print("Initializing FileSelectionGUI...")
         
         try:
             self.combined_df = combined_df
+            self.df_save_path_2 = df_save_path_2  # Store the save path for auto-saving
+            self.additional_columns = additional_columns or []  # Store additional columns to display
+            
+            # Initialize reject column if it doesn't exist
+            if 'reject' not in self.combined_df.columns:
+                self.combined_df['reject'] = False
+            
+            # Initialize comment column if it doesn't exist
+            if 'comment' not in self.combined_df.columns:
+                self.combined_df['comment'] = ""
+            
             print(f"DataFrame shape: {combined_df.shape if combined_df is not None else 'None'}")
+            if self.additional_columns:
+                print(f"Additional columns to display: {self.additional_columns}")
             
             self.setWindowTitle("ROI Analysis File Selection")
-            self.setGeometry(100, 100, 1400, 900)
+            self.setGeometry(100, 100, 1600, 900)  # Made wider for comment column
             
             # Create central widget and layout
             central_widget = QWidget()
@@ -138,36 +151,13 @@ class FileSelectionGUI(QMainWindow):
             print("Creating table widget...")
             self.table = QTableWidget()
             
-            # Set column headers
-            headers = [
-                "Group", "Set Label", "TIFF Path", 
-                "Spine ROI", "Spine Date",
-                "DendriticShaft ROI", "DendriticShaft Date", 
-                "Background ROI", "Background Date",
-                "All ROIs", "Individual ROIs"
-            ]
-            
-            self.table.setColumnCount(len(headers))
-            self.table.setHorizontalHeaderLabels(headers)
+            # Basic table setup - columns will be configured in populate_table
+            # based on actual DataFrame structure
             
             # Set table properties
             self.table.setSortingEnabled(True)
             self.table.setAlternatingRowColors(True)
             self.table.setSelectionBehavior(QTableWidget.SelectRows)
-            
-            # Set column widths
-            header = self.table.horizontalHeader()
-            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Group
-            header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Set Label
-            header.setSectionResizeMode(2, QHeaderView.Stretch)          # TIFF Path
-            header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Spine ROI
-            header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Spine Date
-            header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # DendriticShaft ROI
-            header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # DendriticShaft Date
-            header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Background ROI
-            header.setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Background Date
-            header.setSectionResizeMode(9, QHeaderView.ResizeToContents)  # All ROIs
-            header.setSectionResizeMode(10, QHeaderView.ResizeToContents) # Individual ROIs
             
             print("Table widget created successfully.")
             
@@ -226,6 +216,64 @@ class FileSelectionGUI(QMainWindow):
                 self.status_label.setStyleSheet("color: red; font-weight: bold;")
                 return
             
+            # Check if z columns exist in the DataFrame
+            z_columns_exist = all(col in self.combined_df.columns for col in ['z_from', 'z_to', 'len_z'])
+            
+            # Check which additional columns actually exist in the DataFrame
+            available_additional_columns = [col for col in self.additional_columns if col in self.combined_df.columns]
+            if self.additional_columns:
+                missing_columns = [col for col in self.additional_columns if col not in self.combined_df.columns]
+                if missing_columns:
+                    print(f"Warning: Additional columns not found in DataFrame: {missing_columns}")
+                if available_additional_columns:
+                    print(f"Available additional columns: {available_additional_columns}")
+            
+            # Recreate table with proper column structure now that we know z column availability
+            headers = ["TIFF Path", "Reject", "Comment"]
+            if z_columns_exist:
+                headers.extend(["z_from", "z_to", "len_z"])
+            
+            # Add available additional columns
+            headers.extend(available_additional_columns)
+            
+            headers.extend([
+                "Spine ROI", "Spine Date",
+                "DendriticShaft ROI", "DendriticShaft Date", 
+                "Background ROI", "Background Date",
+                "All ROIs", "Individual ROIs"
+            ])
+            
+            self.table.setColumnCount(len(headers))
+            self.table.setHorizontalHeaderLabels(headers)
+            
+            # Update column widths based on new structure
+            header = self.table.horizontalHeader()
+            header.setSectionResizeMode(0, QHeaderView.Stretch)          # TIFF Path (immutable)
+            header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Reject
+            header.setSectionResizeMode(2, QHeaderView.Interactive)      # Comment - make it resizable
+            header.resizeSection(2, 150)  # Set initial width for comment column
+            
+            col_idx = 3
+            if z_columns_exist:
+                header.setSectionResizeMode(col_idx, QHeaderView.ResizeToContents)      # z_from
+                header.setSectionResizeMode(col_idx + 1, QHeaderView.ResizeToContents)  # z_to
+                header.setSectionResizeMode(col_idx + 2, QHeaderView.ResizeToContents)  # len_z
+                col_idx += 3
+            
+            # Set resize mode for additional columns
+            for i, _ in enumerate(available_additional_columns):
+                header.setSectionResizeMode(col_idx + i, QHeaderView.ResizeToContents)
+            col_idx += len(available_additional_columns)
+            
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeToContents)      # Spine ROI
+            header.setSectionResizeMode(col_idx + 1, QHeaderView.ResizeToContents)  # Spine Date
+            header.setSectionResizeMode(col_idx + 2, QHeaderView.ResizeToContents)  # DendriticShaft ROI
+            header.setSectionResizeMode(col_idx + 3, QHeaderView.ResizeToContents)  # DendriticShaft Date
+            header.setSectionResizeMode(col_idx + 4, QHeaderView.ResizeToContents)  # Background ROI
+            header.setSectionResizeMode(col_idx + 5, QHeaderView.ResizeToContents)  # Background Date
+            header.setSectionResizeMode(col_idx + 6, QHeaderView.ResizeToContents)  # All ROIs
+            header.setSectionResizeMode(col_idx + 7, QHeaderView.ResizeToContents)  # Individual ROIs
+            
             # Check required columns
             required_columns = ['group', 'nth_set_label']
             missing_columns = [col for col in required_columns if col not in self.combined_df.columns]
@@ -274,14 +322,64 @@ class FileSelectionGUI(QMainWindow):
                         if len(tiff_paths) > 0:
                             tiff_path = tiff_paths.iloc[0]
                     
-                    # Basic info
-                    self.table.setItem(row_idx, 0, QTableWidgetItem(str(group)))
-                    self.table.setItem(row_idx, 1, QTableWidgetItem(str(int(set_label))))
-                    
-                    # TIFF path with tooltip showing full path
+                    # TIFF path with tooltip showing full path (immutable)
                     tiff_item = QTableWidgetItem(os.path.basename(str(tiff_path)) if tiff_path else "No TIFF file")
                     tiff_item.setToolTip(str(tiff_path))
-                    self.table.setItem(row_idx, 2, tiff_item)
+                    tiff_item.setFlags(tiff_item.flags() & ~Qt.ItemIsEditable)  # Make immutable
+                    self.table.setItem(row_idx, 0, tiff_item)
+                    
+                    col_idx = 1  # Start after TIFF Path
+                    
+                    # Reject checkbox
+                    reject_checkbox = QCheckBox()
+                    # Get current reject status for this group/set
+                    current_reject = group_set_df['reject'].iloc[0] if len(group_set_df) > 0 else False
+                    reject_checkbox.setChecked(current_reject)
+                    reject_checkbox.stateChanged.connect(
+                        lambda state, g=group, s=set_label: self.on_reject_changed(g, s, state)
+                    )
+                    
+                    # Center the checkbox
+                    reject_widget = QWidget()
+                    reject_layout = QHBoxLayout(reject_widget)
+                    reject_layout.addWidget(reject_checkbox)
+                    reject_layout.setAlignment(Qt.AlignCenter)
+                    reject_layout.setContentsMargins(0, 0, 0, 0)
+                    
+                    self.table.setCellWidget(row_idx, col_idx, reject_widget)
+                    col_idx += 1
+                    
+                    # Comment input field
+                    comment_line_edit = QLineEdit()
+                    current_comment = group_set_df['comment'].iloc[0] if len(group_set_df) > 0 else ""
+                    comment_line_edit.setText(str(current_comment))
+                    comment_line_edit.setPlaceholderText("Enter comment...")
+                    comment_line_edit.editingFinished.connect(
+                        lambda g=group, s=set_label, widget=comment_line_edit: self.on_comment_changed(g, s, widget.text())
+                    )
+                    
+                    self.table.setCellWidget(row_idx, col_idx, comment_line_edit)
+                    col_idx += 1
+                    
+                    # Add z columns if they exist
+                    if z_columns_exist:
+                        for z_col in ['z_from', 'z_to', 'len_z']:
+                            z_value = group_set_df[z_col].iloc[0] if len(group_set_df) > 0 and z_col in group_set_df.columns else ""
+                            z_item = QTableWidgetItem(str(z_value) if pd.notna(z_value) else "")
+                            z_item.setTextAlignment(Qt.AlignCenter)
+                            z_item.setFlags(z_item.flags() & ~Qt.ItemIsEditable)  # Make immutable
+                            self.table.setItem(row_idx, col_idx, z_item)
+                            col_idx += 1
+                    
+                    # Add additional columns if they exist
+                    for add_col in available_additional_columns:
+                        add_value = group_set_df[add_col].iloc[0] if len(group_set_df) > 0 and add_col in group_set_df.columns else ""
+                        add_item = QTableWidgetItem(str(add_value) if pd.notna(add_value) else "")
+                        add_item.setTextAlignment(Qt.AlignCenter)
+                        add_item.setFlags(add_item.flags() & ~Qt.ItemIsEditable)  # Make immutable by default
+                        add_item.setToolTip(f"{add_col}: {add_value}")  # Add tooltip showing column name and value
+                        self.table.setItem(row_idx, col_idx, add_item)
+                        col_idx += 1
                     
                     # Check ROI status for each type
                     roi_types = ["Spine", "DendriticShaft", "Background"]
@@ -301,7 +399,8 @@ class FileSelectionGUI(QMainWindow):
                             status_item.setToolTip(f"{roi_type} ROI is not defined")
                             all_defined = False
                         
-                        self.table.setItem(row_idx, 3 + i*2, status_item)
+                        self.table.setItem(row_idx, col_idx, status_item)
+                        col_idx += 1
                         
                         # Date column
                         date_item = QTableWidgetItem(date_str)
@@ -310,7 +409,8 @@ class FileSelectionGUI(QMainWindow):
                             date_item.setToolTip(f"ROI defined on: {date_str}")
                         else:
                             date_item.setToolTip("No ROI definition date available")
-                        self.table.setItem(row_idx, 4 + i*2, date_item)
+                        self.table.setItem(row_idx, col_idx, date_item)
+                        col_idx += 1
                     
                     # All ROIs button
                     all_roi_btn = QPushButton("🎯 Define All ROIs")
@@ -324,7 +424,8 @@ class FileSelectionGUI(QMainWindow):
                         all_roi_btn.setText("🔄 Redefine All ROIs")
                         all_roi_btn.setToolTip(f"All ROIs are defined. Click to redefine for {group}, Set {set_label}")
                     
-                    self.table.setCellWidget(row_idx, 9, all_roi_btn)
+                    self.table.setCellWidget(row_idx, col_idx, all_roi_btn)
+                    col_idx += 1
                     
                     # Individual ROI buttons
                     individual_widget = QWidget()
@@ -358,7 +459,7 @@ class FileSelectionGUI(QMainWindow):
                         
                         individual_layout.addWidget(btn)
                     
-                    self.table.setCellWidget(row_idx, 10, individual_widget)
+                    self.table.setCellWidget(row_idx, col_idx, individual_widget)
                     
                 except Exception as e:
                     print(f"Error processing row {row_idx}: {e}")
@@ -401,6 +502,9 @@ class FileSelectionGUI(QMainWindow):
                 launch_roi_analysis_gui(self.combined_df, tiff_path, group, set_label, header=roi_type)
                 self.roi_analysis_completed.emit(group, set_label, roi_type)
             
+            # Auto-save after ROI analysis completion
+            self.auto_save_dataframe()
+            
             # Schedule delayed refresh if auto-refresh is enabled
             if self.auto_refresh_check.isChecked():
                 self.refresh_timer.start(1000)  # Refresh after 1 second
@@ -434,6 +538,9 @@ class FileSelectionGUI(QMainWindow):
             launch_roi_analysis_gui(self.combined_df, tiff_path, group, set_label, header=roi_type)
             self.roi_analysis_completed.emit(group, set_label, roi_type)
             
+            # Auto-save after ROI analysis completion
+            self.auto_save_dataframe()
+            
             # Schedule delayed refresh if auto-refresh is enabled
             if self.auto_refresh_check.isChecked():
                 self.refresh_timer.start(1000)  # Refresh after 1 second
@@ -458,9 +565,53 @@ class FileSelectionGUI(QMainWindow):
         self.log_message("Refreshing table...")
         self.populate_table()
 
+    def on_reject_changed(self, group, set_label, state):
+        """Handle reject checkbox state change"""
+        try:
+            self.combined_df.loc[(self.combined_df['group'] == group) & (self.combined_df['nth_set_label'] == set_label), 'reject'] = state == Qt.Checked
+            self.log_message(f"Reject status changed for {group}, Set {set_label}: {'Rejected' if state == Qt.Checked else 'Accepted'}")
+            self.auto_save_dataframe()
+        except Exception as e:
+            print(f"Error handling reject change: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def on_comment_changed(self, group, set_label, comment):
+        """Handle comment text change"""
+        try:
+            self.combined_df.loc[(self.combined_df['group'] == group) & (self.combined_df['nth_set_label'] == set_label), 'comment'] = comment
+            self.log_message(f"Comment changed for {group}, Set {set_label}: {comment}")
+            self.auto_save_dataframe()
+        except Exception as e:
+            print(f"Error handling comment change: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def auto_save_dataframe(self):
+        """Auto-save the combined_df to the specified path"""
+        if self.df_save_path_2:
+            try:
+                self.combined_df.to_pickle(self.df_save_path_2)
+                self.log_message(f"DataFrame auto-saved to {self.df_save_path_2}")
+            except Exception as e:
+                self.log_message(f"ERROR: Failed to auto-save DataFrame: {e}")
+                print(f"Auto-save error: {e}")
+        else:
+            self.log_message("No save path specified for auto-save")
 
-def launch_file_selection_gui(combined_df):
-    """Launch the file selection GUI"""
+
+def launch_file_selection_gui(combined_df, df_save_path_2=None, additional_columns=None):
+    """Launch the file selection GUI
+    
+    Args:
+        combined_df: DataFrame containing the analysis data
+        df_save_path_2: Optional path to save the DataFrame automatically
+        additional_columns: Optional list of column names to display in addition to the standard columns
+                          Example: ['relative_time_min', 'nth_omit_induction', 'phase']
+    
+    Returns:
+        FileSelectionGUI instance
+    """
     try:
         print("Starting file selection GUI launcher...")
         
@@ -470,7 +621,7 @@ def launch_file_selection_gui(combined_df):
             print("Created new QApplication instance")
         
         print("Creating FileSelectionGUI instance...")
-        gui = FileSelectionGUI(combined_df)
+        gui = FileSelectionGUI(combined_df, df_save_path_2, additional_columns)
         print("Showing GUI window...")
         gui.show()
         

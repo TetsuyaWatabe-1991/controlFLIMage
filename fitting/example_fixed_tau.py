@@ -1,5 +1,5 @@
 #%%
-#!/usr/bin/env python3
+#!C:\Users\WatabeT\Documents\Git\venv\Scripts\python.exe
 """
 Simple example demonstrating how to use fixed tau (lifetime) fitting with FLIM data.
 
