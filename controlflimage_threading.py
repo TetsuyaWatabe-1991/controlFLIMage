@@ -208,7 +208,8 @@ class Control_flimage():
         print("START")
         self.flim = FLIM_Com()
         self.flim.start()
-        self.flim.print_responses = False
+        self.print_responses = False
+        self.flim.print_responses = self.print_responses
         self.error_dict = {}
         self.max_error_num = 20
         self.flimage_exe = r"C:\Users\yasudalab\Documents\GIT\flimage1_3\bin\Debug\FLIMage.exe"
@@ -469,6 +470,7 @@ class Control_flimage():
         close_remote_control()
         self.flim = FLIM_Com()
         self.flim.start()
+        self.flim.print_responses = self.print_responses
         self.flim.messageReceived += FLIM_message_received
         if self.flim.Connected:
             print("\n  Reconnected.  Good Connection now.\n")

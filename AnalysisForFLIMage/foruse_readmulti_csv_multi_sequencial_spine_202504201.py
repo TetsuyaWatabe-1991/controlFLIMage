@@ -20,10 +20,13 @@ from read_flimagecsv import arrange_for_multipos3, csv_to_df, detect_uncaging, v
 save_True = True
 
 
-one_of_filepath = r"G:\ImagingData\Tetsuya\20250428\B6GC6sTom0331\lowmag\Analysis\copy\lowmag_pos1__highmag_1_concat_TimeCourse.csv"
+one_of_filepath = r"Z:\Users\WatabeT\20250420\Analysis\copy\xxx.csv"
+# one_of_filepath = r"G:\ImagingData\Tetsuya\20250428\B6GC6sTom0331\lowmag\Analysis\copy\lowmag_pos1__highmag_1_concat_TimeCourse.csv"
+# one_of_filepath = r"Z:\Users\WatabeT\20250424\Analysis\copy\0423B6_0428TomGC6s_LTP1_14um__TimeCourse.csv"
+# one_of_filepath = r"Z:\Users\WatabeT\20250505\Analysis\copy\0423B6_0428TomGC6s_LTP1_14um__TimeCourse.csv"
 # one_of_filepath = r"G:\ImagingData\Tetsuya\20250331\B6_cut0319_FlxGC6sTom_0322\highmag_RFP50ms100p\tpem2\Analysis\copy\lowmag2__highmag_1_concat_TimeCourse.csv"
 
-
+ymin, ymax = [-0.8, 3.2]
 
 csvlist = glob.glob(one_of_filepath[:one_of_filepath.rfind("\\")]+"\\*_TimeCourse.csv")
 one_of_filepath = csvlist[0]
@@ -119,42 +122,100 @@ for each_filepath in allcombined_df["FilePath"].unique():
         continue
 
 summarized_df.to_csv(summarized_df_savepath)
-        
-# plt.figure(figsize = [3,2])
+time_aligned_df['delta_volume'] = time_aligned_df['Norm_intensity'] - 1
+
+
+plt.figure(figsize = [3,2])
 # ##################################
-sns.lineplot(x="Norm_time_min", y="Norm_intensity",
-                legend=False, hue = "unique_spine_label", #marker='o',
+sns.lineplot(x="Norm_time_min", y="delta_volume" ,
+                legend=False, hue = "unique_spine_label", marker='o',
                 data = time_aligned_df
                 )
 
+plt.rcParams['axes.spines.top'] = False
+plt.rcParams['axes.spines.right'] = False
+
 np.array(spine_vol_list).mean()
 savepath = summarized_df_savepath[:-4]+"_plot_all.png"
-plt.savefig(savepath, dpi = 150, bbox_inches = "tight")
-ymin, ymax = plt.ylim()
 xmin, xmax = plt.xlim()
-plt.show()
+plt.ylabel("\u0394Volume")
+plt.xlabel("Time (min)")
+plt.savefig(savepath, dpi = 150, bbox_inches = "tight",transparent=True)
+plt.show() 
+    
+
+
+
 
 each_save_folder = "\\".join(summarized_df_savepath.split("\\")[:-1]+["each_spine"])
 os.makedirs(each_save_folder, exist_ok=True)
 for each_hue in time_aligned_df["unique_spine_label"].unique():
     print(each_hue)
     each_df = time_aligned_df[time_aligned_df["unique_spine_label"] == each_hue]
-    
+    plt.figure(figsize = [3,2])
     plt.title(os.path.basename(each_df["FilePath"].values[0])+"  spine "+ 
               str(each_df["ROInum"].values[0]))
     plt.plot(each_df["Norm_time_min"],
-             each_df["Norm_intensity"],
+             each_df["delta_volume"],
                       )
-    plt.plot([xmin, xmax],[1,1],"gray")
+    plt.plot([xmin, xmax],[0,0],"gray")
     plt.ylim([ymin, ymax])
     plt.xlim([xmin, xmax])
+    plt.ylabel("\u0394Volume")
+    plt.xlabel("Time (min)")
     savepath = os.path.join(each_save_folder,
                             os.path.basename(each_df["FilePath"].values[0][:-4])
                             +f"_spine_{each_df["ROInum"].values[0]}.png")
-    plt.savefig(savepath, dpi = 150, bbox_inches = "tight")
+    plt.savefig(savepath, dpi = 150, bbox_inches = "tight",transparent=True)
     plt.show()
     
+
+# Set scientific plotting style
+
+plt.figure(figsize = [3,2])
+# ##################################
+sns.lineplot(x="Norm_time_min", y="delta_volume" ,
+                legend=False, hue = "unique_spine_label", marker='o',
+                data = time_aligned_df
+                )
+
+plt.rcParams['axes.spines.top'] = False
+plt.rcParams['axes.spines.right'] = False
+
+np.array(spine_vol_list).mean()
+savepath = summarized_df_savepath[:-4]+"_plot_all.png"
+xmin, xmax = plt.xlim()
+plt.ylim([ymin, ymax])
+plt.plot([xmin, xmax],[0,0],"gray",linestyle="--",alpha=0.5)
+plt.ylabel("\u0394Volume")
+plt.xlabel("Time (min)")
+plt.savefig(savepath, dpi = 150, bbox_inches = "tight",transparent=True)
+plt.show() 
+
+print('\\'.join(summarized_df_savepath.split("\\")[:-1]))
+
+# Calculate mean and SD of delta_volume between 20-30 minutes
+time_window_start = 20
+time_window_end = 30
+spine_means = []
+
+for spine_label in time_aligned_df['unique_spine_label'].unique():
+    spine_data = time_aligned_df[time_aligned_df['unique_spine_label'] == spine_label]
     
+    # Get data points between time_window_start and time_window_end
+    window_data = spine_data[(spine_data['Norm_time_min'] >= time_window_start) & 
+                            (spine_data['Norm_time_min'] <= time_window_end)]
     
-    
-    
+    if len(window_data) > 0:
+        # Calculate mean for this spine in the time window
+        spine_mean = window_data['delta_volume'].mean()
+        spine_means.append(spine_mean)
+        print(f"Spine {spine_label}: Mean delta_volume = {spine_mean:.3f} (using {len(window_data)} timepoints)")
+
+spine_means = np.array(spine_means)
+print(f"\nAnalysis of mean delta_volume between {time_window_start}-{time_window_end} min:")
+print(f"Overall Mean: {spine_means.mean():.3f}")
+print(f"Standard Deviation: {spine_means.std():.3f}")
+print(f"Number of spines analyzed: {len(spine_means)}")
+
+# %%
