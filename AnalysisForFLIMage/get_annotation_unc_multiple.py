@@ -61,6 +61,7 @@ def get_uncaging_pos_multiple(one_of_file_list, pre_length = 1):
                 "nth": [nth],
                 "nth_omit_induction": [df_nth_omit_induction],
                 "group": os.path.basename(each_firstfilepath)[:-8],
+                "filepath_without_number": each_firstfilepath[:-8],
                 "file_path": file_path,
                 "uncaging_frame": uncaging_TF,
                 "center_x": x_pix * uncaging_x_y_0to1[0],
@@ -113,13 +114,36 @@ def get_uncaging_pos_multiple(one_of_file_list, pre_length = 1):
         combined_df = pd.concat([combined_df, each_group_df],ignore_index=True)
     return combined_df
 
+
 if __name__ == "__main__":
-    
-    one_of_filepath = r"C:\Users\WatabeT\Desktop\test\lowmag1__highmag_1_002.flim"
-    one_of_file_list = glob.glob(os.path.join(
-                                    os.path.dirname(one_of_filepath),"*_highmag_*002.flim"))
 
-    combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length = 2)
-    display(combined_df)
+    import subprocess
 
+    one_of_filepath_list = [
+        r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250531\4lines_2_auto\lowmag1__highmag_1_002.flim",
+        r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250531\2lines_1\lowmag1__highmag_1_002.flim",
+        r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250601\2lines3_auto\lowmag1__highmag_1_002.flim",
+        r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250601\2lines4_auto\lowmag1__highmag_1_002.flim",
+        r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\lowmag1__highmag_1_002.flim",
+        r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\4lines_neuron4\lowmag1__highmag_1_002.flim",        
+    ]
+
+    combined_df = pd.DataFrame()
+    for one_of_filepath in one_of_filepath_list:
+        one_of_file_list = glob.glob(os.path.join(
+                                        os.path.dirname(one_of_filepath),"*_highmag_*002.flim"))
+
+        each_df = get_uncaging_pos_multiple(one_of_file_list, pre_length = 2)
+        combined_df = pd.concat([combined_df, each_df],ignore_index=True)
+        break
+
+    # display(combined_df)
+
+    # this looks strange, but it make it work in interactive window
+    dialog_script = 'import tkinter as tk;from tkinter import filedialog;root=tk.Tk();root.withdraw();print(filedialog.asksaveasfilename(defaultextension=".pkl",filetypes=[("Pickle files","*.pkl")]))'
+    save_path = subprocess.check_output(['python', '-c', dialog_script]).decode().strip()
+    if save_path:
+        combined_df.to_pickle(save_path)
+    print("saved at:")
+    print(save_path)
     # %%

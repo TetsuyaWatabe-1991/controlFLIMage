@@ -2,11 +2,13 @@ import sys
 import os
 import pandas as pd
 import numpy as np
+import subprocess
+import platform
 from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
                             QWidget, QTableWidget, QTableWidgetItem, QPushButton,
                             QLabel, QHeaderView, QCheckBox, QMessageBox, QProgressBar,
-                            QSplitter, QTextEdit, QLineEdit)
+                            QSplitter, QTextEdit, QLineEdit, QComboBox)
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QColor
 
@@ -145,6 +147,36 @@ class FileSelectionGUI(QMainWindow):
         except Exception as e:
             print(f"Error logging message: {e}")
         
+    def open_file_with_os_viewer(self, file_path):
+        """Open file with OS standard viewer"""
+        try:
+            if not file_path or pd.isna(file_path) or str(file_path).strip() == "":
+                QMessageBox.warning(self, "Error", "No file path available")
+                return
+            
+            file_path = str(file_path).strip()
+            
+            if not os.path.exists(file_path):
+                QMessageBox.warning(self, "File Not Found", f"File does not exist:\n{file_path}")
+                self.log_message(f"ERROR: File not found: {file_path}")
+                return
+            
+            # Open file with OS default viewer
+            system = platform.system()
+            if system == "Windows":
+                os.startfile(file_path)
+            elif system == "Darwin":  # macOS
+                subprocess.run(["open", file_path])
+            else:  # Linux and other Unix-like systems
+                subprocess.run(["xdg-open", file_path])
+            
+            self.log_message(f"Opened file: {os.path.basename(file_path)}")
+            
+        except Exception as e:
+            error_msg = f"Failed to open file: {str(e)}"
+            QMessageBox.critical(self, "Error", error_msg)
+            self.log_message(f"ERROR: {error_msg}")
+    
     def create_table(self):
         """Create the main table widget"""
         try:
@@ -215,9 +247,18 @@ class FileSelectionGUI(QMainWindow):
                 self.status_label.setText("No data")
                 self.status_label.setStyleSheet("color: red; font-weight: bold;")
                 return
-            
+
             # Check if z columns exist in the DataFrame
             z_columns_exist = all(col in self.combined_df.columns for col in ['z_from', 'z_to', 'len_z'])
+            
+            # Check if full_plot_with_roi_path column exists
+            plot_path_column_exists = 'full_plot_with_roi_path' in self.combined_df.columns
+            print(f"full_plot_with_roi_path column exists: {plot_path_column_exists}")
+            if plot_path_column_exists:
+                non_null_plot_paths = self.combined_df['full_plot_with_roi_path'].dropna()
+                print(f"Number of non-null plot paths: {len(non_null_plot_paths)}")
+                if len(non_null_plot_paths) > 0:
+                    print(f"Sample plot paths: {non_null_plot_paths.head(3).tolist()}")
             
             # Check which additional columns actually exist in the DataFrame
             available_additional_columns = [col for col in self.additional_columns if col in self.combined_df.columns]
@@ -229,7 +270,7 @@ class FileSelectionGUI(QMainWindow):
                     print(f"Available additional columns: {available_additional_columns}")
             
             # Recreate table with proper column structure now that we know z column availability
-            headers = ["TIFF Path", "Reject", "Comment"]
+            headers = ["View Plot", "TIFF Path", "Reject", "Comment"]
             if z_columns_exist:
                 headers.extend(["z_from", "z_to", "len_z"])
             
@@ -246,14 +287,18 @@ class FileSelectionGUI(QMainWindow):
             self.table.setColumnCount(len(headers))
             self.table.setHorizontalHeaderLabels(headers)
             
+            print(f"Table columns set to: {len(headers)}")
+            print(f"Headers: {headers}")
+            
             # Update column widths based on new structure
             header = self.table.horizontalHeader()
-            header.setSectionResizeMode(0, QHeaderView.Stretch)          # TIFF Path (immutable)
-            header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Reject
-            header.setSectionResizeMode(2, QHeaderView.Interactive)      # Comment - make it resizable
-            header.resizeSection(2, 150)  # Set initial width for comment column
+            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)   # View Plot button
+            header.setSectionResizeMode(1, QHeaderView.Stretch)          # TIFF Path (immutable)
+            header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Reject
+            header.setSectionResizeMode(3, QHeaderView.Interactive)      # Comment - make it resizable
+            header.resizeSection(3, 150)  # Set initial width for comment column
             
-            col_idx = 3
+            col_idx = 4
             if z_columns_exist:
                 header.setSectionResizeMode(col_idx, QHeaderView.ResizeToContents)      # z_from
                 header.setSectionResizeMode(col_idx + 1, QHeaderView.ResizeToContents)  # z_to
@@ -274,8 +319,16 @@ class FileSelectionGUI(QMainWindow):
             header.setSectionResizeMode(col_idx + 6, QHeaderView.ResizeToContents)  # All ROIs
             header.setSectionResizeMode(col_idx + 7, QHeaderView.ResizeToContents)  # Individual ROIs
             
-            # Check required columns
-            required_columns = ['group', 'nth_set_label']
+            # Check required columns - use filepath_without_number as primary key
+            if 'filepath_without_number' in self.combined_df.columns:
+                primary_grouping_col = 'filepath_without_number'
+                required_columns = ['filepath_without_number', 'nth_set_label']
+                print("Using 'filepath_without_number' as primary grouping column")
+            else:
+                primary_grouping_col = 'group'
+                required_columns = ['group', 'nth_set_label']
+                print("Falling back to 'group' as primary grouping column")
+            
             missing_columns = [col for col in required_columns if col not in self.combined_df.columns]
             if missing_columns:
                 error_msg = f"Missing required columns: {missing_columns}"
@@ -285,7 +338,7 @@ class FileSelectionGUI(QMainWindow):
                 QMessageBox.critical(self, "Data Error", error_msg)
                 return
             
-            # Get unique combinations of group and set_label
+            # Get unique combinations using the appropriate primary column
             valid_data = self.combined_df[
                 (self.combined_df['nth_set_label'] >= 0) & 
                 (self.combined_df['nth_set_label'].notna())
@@ -297,21 +350,28 @@ class FileSelectionGUI(QMainWindow):
                 self.status_label.setStyleSheet("color: red; font-weight: bold;")
                 return
             
-            unique_combinations = valid_data.groupby(['group', 'nth_set_label']).first().reset_index()
-            print(f"Found {len(unique_combinations)} unique group/set combinations")
+            unique_combinations = valid_data.groupby([primary_grouping_col, 'nth_set_label']).first().reset_index()
+            print(f"Found {len(unique_combinations)} unique {primary_grouping_col}/set combinations")
             
             self.table.setRowCount(len(unique_combinations))
             
             for row_idx, (_, row_data) in enumerate(unique_combinations.iterrows()):
                 try:
-                    group = row_data['group']
+                    # Use the primary grouping column value
+                    group_id = row_data[primary_grouping_col]
                     set_label = row_data['nth_set_label']
                     
-                    print(f"Processing row {row_idx}: Group={group}, Set={set_label}")
+                    # Get display name (show 'group' if available, otherwise use the primary identifier)
+                    if 'group' in row_data and primary_grouping_col == 'filepath_without_number':
+                        display_group = row_data['group']
+                        print(f"Processing row {row_idx}: Filepath={group_id}, Group={display_group}, Set={set_label}")
+                    else:
+                        display_group = group_id
+                        print(f"Processing row {row_idx}: Group={group_id}, Set={set_label}")
                     
-                    # Get group/set specific data
+                    # Get group/set specific data using the primary grouping column
                     group_set_df = self.combined_df[
-                        (self.combined_df['group'] == group) & 
+                        (self.combined_df[primary_grouping_col] == group_id) & 
                         (self.combined_df['nth_set_label'] == set_label)
                     ]
                     
@@ -322,13 +382,52 @@ class FileSelectionGUI(QMainWindow):
                         if len(tiff_paths) > 0:
                             tiff_path = tiff_paths.iloc[0]
                     
+                    # Get full_plot_with_roi_path for View Plot button
+                    plot_path = ""
+                    if 'full_plot_with_roi_path' in group_set_df.columns:
+                        plot_paths = group_set_df['full_plot_with_roi_path'].dropna()
+                        if len(plot_paths) > 0:
+                            plot_path = plot_paths.iloc[0]
+                            print(f"Row {row_idx}: Found plot path: {plot_path}")
+                        else:
+                            print(f"Row {row_idx}: No plot path found in data")
+                    else:
+                        print(f"Row {row_idx}: full_plot_with_roi_path column not found in group_set_df")
+                    
+                    # View Plot button (first column) - ALWAYS create this button
+                    view_plot_btn = QPushButton("📊 View")
+                    view_plot_btn.setToolTip("Open full region plot with OS default viewer")
+                    
+                    if plot_path and os.path.exists(str(plot_path)):
+                        view_plot_btn.setEnabled(True)
+                        view_plot_btn.setStyleSheet("background-color: lightblue;")
+                        view_plot_btn.clicked.connect(
+                            lambda checked, path=plot_path: self.open_file_with_os_viewer(path)
+                        )
+                        print(f"Row {row_idx}: Created enabled View button for {plot_path}")
+                    else:
+                        view_plot_btn.setEnabled(False)
+                        if plot_path:
+                            view_plot_btn.setToolTip(f"Plot file not found: {plot_path}")
+                            print(f"Row {row_idx}: Plot file not found: {plot_path}")
+                        else:
+                            view_plot_btn.setToolTip("Plot file not available")
+                            print(f"Row {row_idx}: No plot path available")
+                        view_plot_btn.setStyleSheet("background-color: lightgray;")
+                    
+                    # CRITICAL: Always set the button in the table
+                    self.table.setCellWidget(row_idx, 0, view_plot_btn)
+                    print(f"Row {row_idx}: View Plot button set in column 0")
+                    
                     # TIFF path with tooltip showing full path (immutable)
-                    tiff_item = QTableWidgetItem(os.path.basename(str(tiff_path)) if tiff_path else "No TIFF file")
+                    # Show the display group name for better readability
+                    tiff_display_name = f"{display_group}_set{set_label}_{os.path.basename(str(tiff_path))}" if tiff_path else f"{display_group}_set{set_label}_NoTIFF"
+                    tiff_item = QTableWidgetItem(tiff_display_name)
                     tiff_item.setToolTip(str(tiff_path))
                     tiff_item.setFlags(tiff_item.flags() & ~Qt.ItemIsEditable)  # Make immutable
-                    self.table.setItem(row_idx, 0, tiff_item)
+                    self.table.setItem(row_idx, 1, tiff_item)
                     
-                    col_idx = 1  # Start after TIFF Path
+                    col_idx = 2  # Start after TIFF Path
                     
                     # Reject checkbox
                     reject_checkbox = QCheckBox()
@@ -336,7 +435,7 @@ class FileSelectionGUI(QMainWindow):
                     current_reject = group_set_df['reject'].iloc[0] if len(group_set_df) > 0 else False
                     reject_checkbox.setChecked(current_reject)
                     reject_checkbox.stateChanged.connect(
-                        lambda state, g=group, s=set_label: self.on_reject_changed(g, s, state)
+                        lambda state, g=group_id, s=set_label: self.on_reject_changed(g, s, state)
                     )
                     
                     # Center the checkbox
@@ -355,7 +454,7 @@ class FileSelectionGUI(QMainWindow):
                     comment_line_edit.setText(str(current_comment))
                     comment_line_edit.setPlaceholderText("Enter comment...")
                     comment_line_edit.editingFinished.connect(
-                        lambda g=group, s=set_label, widget=comment_line_edit: self.on_comment_changed(g, s, widget.text())
+                        lambda g=group_id, s=set_label, widget=comment_line_edit: self.on_comment_changed(g, s, widget.text())
                     )
                     
                     self.table.setCellWidget(row_idx, col_idx, comment_line_edit)
@@ -405,69 +504,48 @@ class FileSelectionGUI(QMainWindow):
                         # Date column
                         date_item = QTableWidgetItem(date_str)
                         date_item.setTextAlignment(Qt.AlignCenter)
-                        if date_str:
-                            date_item.setToolTip(f"ROI defined on: {date_str}")
-                        else:
-                            date_item.setToolTip("No ROI definition date available")
+                        date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)  # Make immutable
                         self.table.setItem(row_idx, col_idx, date_item)
                         col_idx += 1
                     
                     # All ROIs button
-                    all_roi_btn = QPushButton("🎯 Define All ROIs")
-                    all_roi_btn.setToolTip(f"Define Spine, DendriticShaft, and Background ROIs for {group}, Set {set_label}")
-                    all_roi_btn.clicked.connect(
-                        lambda checked, g=group, s=set_label, p=tiff_path: 
-                        self.launch_all_roi_analysis(g, s, p)
+                    all_button = QPushButton("Launch All")
+                    all_button.setEnabled(bool(tiff_path and os.path.exists(tiff_path)))
+                    all_button.clicked.connect(
+                        lambda checked, g=group_id, s=set_label, path=tiff_path: 
+                        self.launch_all_roi_analysis(g, s, path)
                     )
-                    if all_defined:
-                        all_roi_btn.setStyleSheet("background-color: lightgreen;")
-                        all_roi_btn.setText("🔄 Redefine All ROIs")
-                        all_roi_btn.setToolTip(f"All ROIs are defined. Click to redefine for {group}, Set {set_label}")
                     
-                    self.table.setCellWidget(row_idx, col_idx, all_roi_btn)
+                    if all_defined:
+                        all_button.setStyleSheet("background-color: lightgreen;")
+                        all_button.setToolTip("All ROIs are defined - click to reanalyze")
+                    else:
+                        all_button.setToolTip("Launch ROI analysis for all three types")
+                    
+                    self.table.setCellWidget(row_idx, col_idx, all_button)
                     col_idx += 1
                     
-                    # Individual ROI buttons
-                    individual_widget = QWidget()
-                    individual_layout = QHBoxLayout(individual_widget)  # Changed from QVBoxLayout to QHBoxLayout
-                    individual_layout.setContentsMargins(1, 1, 1, 1)  # Reduced margins
-                    individual_layout.setSpacing(2)  # Reduced spacing
+                    # Individual ROIs dropdown
+                    individual_combo = QComboBox()
+                    individual_combo.addItem("Select ROI type...")
+                    individual_combo.addItems(roi_types)
+                    individual_combo.setEnabled(bool(tiff_path and os.path.exists(tiff_path)))
+                    individual_combo.currentTextChanged.connect(
+                        lambda roi_type, g=group_id, s=set_label, path=tiff_path: 
+                        self.launch_individual_roi_analysis(g, s, path, roi_type) if roi_type != "Select ROI type..." else None
+                    )
                     
-                    roi_icons = {"Spine": "🔴", "DendriticShaft": "🔵", "Background": "🟢"}
-                    roi_short_names = {"Spine": "Sp", "DendriticShaft": "Ds", "Background": "Bg"}  # Short names
+                    self.table.setCellWidget(row_idx, col_idx, individual_combo)
+                    col_idx += 1
                     
-                    for roi_type in roi_types:
-                        icon = roi_icons.get(roi_type, "⭕")
-                        short_name = roi_short_names.get(roi_type, roi_type[:2])
-                        btn = QPushButton(f"{icon}{short_name}")  # Use icon + short name
-                        btn.setMaximumHeight(20)  # Reduced height
-                        btn.setMaximumWidth(35)   # Set maximum width to keep buttons small
-                        btn.setMinimumWidth(30)   # Set minimum width
-                        btn.setToolTip(f"Define {roi_type} ROI for {group}, Set {set_label}")
-                        btn.clicked.connect(
-                            lambda checked, g=group, s=set_label, p=tiff_path, h=roi_type: 
-                            self.launch_individual_roi_analysis(g, s, p, h)
-                        )
-                        
-                        # Check if this ROI is already defined
-                        has_roi, _ = self.get_roi_status_and_date(group_set_df, roi_type)
-                        if has_roi:
-                            btn.setStyleSheet("background-color: lightgreen; font-size: 9px;")  # Smaller font
-                            btn.setToolTip(f"{roi_type} ROI is already defined. Click to redefine for {group}, Set {set_label}")
-                        else:
-                            btn.setStyleSheet("font-size: 9px;")  # Smaller font for undefined ROIs too
-                        
-                        individual_layout.addWidget(btn)
-                    
-                    self.table.setCellWidget(row_idx, col_idx, individual_widget)
-                    
-                except Exception as e:
-                    print(f"Error processing row {row_idx}: {e}")
+                except Exception as row_error:
+                    print(f"Error processing row {row_idx}: {row_error}")
                     import traceback
                     traceback.print_exc()
+                    self.log_message(f"ERROR processing row {row_idx}: {row_error}")
                     continue
             
-            self.status_label.setText("Ready")
+            self.status_label.setText(f"Loaded {len(unique_combinations)} entries")
             self.status_label.setStyleSheet("color: green; font-weight: bold;")
             self.log_message(f"Table populated with {len(unique_combinations)} file entries.")
             print("Table populated successfully.")
@@ -505,6 +583,9 @@ class FileSelectionGUI(QMainWindow):
             # Auto-save after ROI analysis completion
             self.auto_save_dataframe()
             
+            # DEBUG: Log the state of ROI masks after analysis
+            self.debug_roi_mask_state(group, set_label)
+            
             # Schedule delayed refresh if auto-refresh is enabled
             if self.auto_refresh_check.isChecked():
                 self.refresh_timer.start(1000)  # Refresh after 1 second
@@ -541,6 +622,9 @@ class FileSelectionGUI(QMainWindow):
             # Auto-save after ROI analysis completion
             self.auto_save_dataframe()
             
+            # DEBUG: Log the state of ROI masks after analysis
+            self.debug_roi_mask_state(group, set_label, roi_type)
+            
             # Schedule delayed refresh if auto-refresh is enabled
             if self.auto_refresh_check.isChecked():
                 self.refresh_timer.start(1000)  # Refresh after 1 second
@@ -565,22 +649,34 @@ class FileSelectionGUI(QMainWindow):
         self.log_message("Refreshing table...")
         self.populate_table()
 
-    def on_reject_changed(self, group, set_label, state):
+    def on_reject_changed(self, group_id, set_label, state):
         """Handle reject checkbox state change"""
         try:
-            self.combined_df.loc[(self.combined_df['group'] == group) & (self.combined_df['nth_set_label'] == set_label), 'reject'] = state == Qt.Checked
-            self.log_message(f"Reject status changed for {group}, Set {set_label}: {'Rejected' if state == Qt.Checked else 'Accepted'}")
+            # Determine which column to use for filtering
+            if 'filepath_without_number' in self.combined_df.columns:
+                mask = (self.combined_df['filepath_without_number'] == group_id) & (self.combined_df['nth_set_label'] == set_label)
+            else:
+                mask = (self.combined_df['group'] == group_id) & (self.combined_df['nth_set_label'] == set_label)
+            
+            self.combined_df.loc[mask, 'reject'] = state == Qt.Checked
+            self.log_message(f"Reject status changed for {group_id}, Set {set_label}: {'Rejected' if state == Qt.Checked else 'Accepted'}")
             self.auto_save_dataframe()
         except Exception as e:
             print(f"Error handling reject change: {e}")
             import traceback
             traceback.print_exc()
     
-    def on_comment_changed(self, group, set_label, comment):
+    def on_comment_changed(self, group_id, set_label, comment):
         """Handle comment text change"""
         try:
-            self.combined_df.loc[(self.combined_df['group'] == group) & (self.combined_df['nth_set_label'] == set_label), 'comment'] = comment
-            self.log_message(f"Comment changed for {group}, Set {set_label}: {comment}")
+            # Determine which column to use for filtering
+            if 'filepath_without_number' in self.combined_df.columns:
+                mask = (self.combined_df['filepath_without_number'] == group_id) & (self.combined_df['nth_set_label'] == set_label)
+            else:
+                mask = (self.combined_df['group'] == group_id) & (self.combined_df['nth_set_label'] == set_label)
+            
+            self.combined_df.loc[mask, 'comment'] = comment
+            self.log_message(f"Comment changed for {group_id}, Set {set_label}: {comment}")
             self.auto_save_dataframe()
         except Exception as e:
             print(f"Error handling comment change: {e}")
@@ -598,6 +694,55 @@ class FileSelectionGUI(QMainWindow):
                 print(f"Auto-save error: {e}")
         else:
             self.log_message("No save path specified for auto-save")
+    
+    def debug_roi_mask_state(self, group, set_label, roi_type=None):
+        """Debug method to log ROI mask state after analysis"""
+        try:
+            # Find the relevant rows
+            if 'filepath_without_number' in self.combined_df.columns:
+                mask = (self.combined_df['filepath_without_number'] == group) & (self.combined_df['nth_set_label'] == set_label)
+            else:
+                mask = (self.combined_df['group'] == group) & (self.combined_df['nth_set_label'] == set_label)
+            
+            analysis_mask = mask & (self.combined_df['nth_omit_induction'] >= 0)
+            analysis_rows = self.combined_df[analysis_mask]
+            
+            if len(analysis_rows) == 0:
+                self.log_message(f"DEBUG: No analysis rows found for {group}, Set {set_label}")
+                return
+            
+            if roi_type:
+                # Check specific ROI type
+                roi_columns = [f"{roi_type}_roi_mask"]
+                self.log_message(f"DEBUG: Checking {roi_type} ROI masks for {group}, Set {set_label}")
+            else:
+                # Check all ROI types
+                roi_columns = [col for col in self.combined_df.columns if col.endswith('_roi_mask')]
+                self.log_message(f"DEBUG: Checking all ROI masks for {group}, Set {set_label}")
+            
+            for roi_col in roi_columns:
+                if roi_col in self.combined_df.columns:
+                    non_null_count = analysis_rows[roi_col].notna().sum()
+                    total_count = len(analysis_rows)
+                    self.log_message(f"DEBUG: {roi_col}: {non_null_count}/{total_count} rows have masks")
+                    
+                    # Check a sample mask
+                    sample_masks = analysis_rows[analysis_rows[roi_col].notna()]
+                    if len(sample_masks) > 0:
+                        sample_mask = sample_masks.iloc[0][roi_col]
+                        if isinstance(sample_mask, np.ndarray):
+                            mask_pixels = np.sum(sample_mask)
+                            self.log_message(f"DEBUG: Sample {roi_col} shape: {sample_mask.shape}, pixels: {mask_pixels}")
+                        else:
+                            self.log_message(f"DEBUG: Sample {roi_col} type: {type(sample_mask)}")
+                else:
+                    self.log_message(f"DEBUG: Column {roi_col} not found in DataFrame")
+                    
+        except Exception as e:
+            self.log_message(f"ERROR in debug_roi_mask_state: {e}")
+            print(f"Debug error: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 def launch_file_selection_gui(combined_df, df_save_path_2=None, additional_columns=None):

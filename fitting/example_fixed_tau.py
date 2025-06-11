@@ -305,7 +305,7 @@ if __name__ == "__main__2":
 # %%
 import sys
 sys.path.append("..")
-from controlFLIMage.FLIMageFileReader2 import FileReader
+from FLIMageFileReader2 import FileReader
 
 filepath = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20240315\EGFP_004.flim"
 filepath = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20240315\mStayGold_ftractin_004.flim"
@@ -321,6 +321,8 @@ filepaths = [
 ch_1or2 = 2
 photon_threshold = 15
 lifetime_result_dict = {}
+
+fitter = FLIMLifetimeFitter()
 for filepath in filepaths:
     ImageInfo = FileReader()
     ImageInfo.read_imageFile(filepath, True) 
@@ -365,7 +367,8 @@ for filepath in filepaths:
 
     ps_per_unit = (10**12)/sync_rate/len(one_dim_photon_counts)
 
-
+    x = np.arange(len(one_dim_photon_counts))
+    
     result_double_normal = fitter.fit_double_exponential(x, one_dim_photon_counts, ps_per_unit, sync_rate)
     free_2component_fit_tau = result_double_normal["lifetime"]
     lifetime_result_dict[filepath] = free_2component_fit_tau

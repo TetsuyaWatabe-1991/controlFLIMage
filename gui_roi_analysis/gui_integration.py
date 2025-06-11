@@ -15,6 +15,145 @@ from roi_analysis_gui import ROIAnalysisGUI
 
 
 
+def first_processing_for_flim_files(
+    one_of_filepath,
+    z_plus_minus,
+    ch_1or2,
+    pre_length,
+    save_plot_TF = True,
+    save_tif_TF = True,    
+    ) -> pd.DataFrame:
+
+    # Load initial data
+    
+    one_of_file_list = glob.glob(
+        os.path.join(
+            os.path.dirname(one_of_filepath), 
+            "*_highmag_*002.flim"
+            )
+        )
+
+    plot_savefolder = os.path.join(os.path.dirname(one_of_filepath), "plot")
+    tif_savefolder = os.path.join(os.path.dirname(one_of_filepath), "tif")
+    roi_savefolder = os.path.join(os.path.dirname(one_of_filepath), "roi")
+    for each_folder in [plot_savefolder, tif_savefolder, roi_savefolder]:
+        os.makedirs(each_folder, exist_ok=True)
+    
+    combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length)
+    
+    # Process each group
+    for each_filepath_without_number in combined_df['filepath_without_number'].unique():
+        each_filegroup_df = combined_df[combined_df['filepath_without_number'] == each_filepath_without_number]
+        for each_group in each_filegroup_df['group'].unique():
+            each_group_df = each_filegroup_df[each_filegroup_df['group'] == each_group]
+
+            filelist = each_group_df["file_path"].tolist()
+            # Load and align data
+            Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=ch_1or2 - 1)
+            
+            # Process uncaging positions
+            each_group_df = process_uncaging_positions(each_group_df, shifts, Aligned_4d_array)
+            
+            # Update combined_df with corrected uncaging positions
+            for col in ['corrected_uncaging_x', 'corrected_uncaging_y', 'corrected_uncaging_z']:
+                if col in each_group_df.columns:
+                    combined_df.loc[each_group_df.index, col] = each_group_df[col].values
+            
+            # Store individual shift values for each frame
+            valid_df = each_group_df[each_group_df["nth_omit_induction"] != -1].copy()
+            valid_df_sorted = valid_df.sort_values("nth_omit_induction")
+            
+            for i, (idx, row) in enumerate(valid_df_sorted.iterrows()):
+                if i < len(shifts):
+                    shift_z, shift_y, shift_x = shifts[i][0], shifts[i][1], shifts[i][2]
+                    combined_df.loc[idx, 'shift_z'] = shift_z
+                    combined_df.loc[idx, 'shift_y'] = shift_y
+                    combined_df.loc[idx, 'shift_x'] = shift_x
+            
+            # Save full region plots
+            list_of_save_path = save_full_region_plots(each_group_df, Aligned_4d_array, plot_savefolder, 
+                                                       z_plus_minus,
+                                                       return_list_of_save_path=True)
+            
+            getting_length_df = each_group_df[(each_group_df["nth_omit_induction"] != -1) & 
+                                        (each_group_df["nth_set_label"] != -1)]
+            # print(f"length of getting_length_df: {len(getting_length_df)}")
+            # print(f"length of list_of_save_path: {len(list_of_save_path)}")
+            combined_df.loc[getting_length_df.index, "save_full_region_plot_path"] = list_of_save_path
+
+            # Process small regions
+            for each_set_label in each_group_df["nth_set_label"].unique():
+                if each_set_label == -1:
+                    continue
+                    
+                each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
+                
+                small_Tiff_MultiArray, small_Aligned_4d_array, corrected_positions, each_set_df = process_small_region(
+                    each_set_df, Aligned_4d_array
+                )
+
+                # Update combined_df with small region boundaries and small shifts
+                for col in ['small_z_from', 'small_z_to', 'small_x_from', 'small_x_to', 'small_y_from', 'small_y_to']:
+                    if col in each_set_df.columns:
+                        combined_df.loc[each_set_df.index, col] = each_set_df[col].values
+
+                combined_df.loc[each_set_df.index, "small_shift_z"] = each_set_df["small_shift_z"].values
+                combined_df.loc[each_set_df.index, "small_shift_y"] = each_set_df["small_shift_y"].values
+                combined_df.loc[each_set_df.index, "small_shift_x"] = each_set_df["small_shift_x"].values
+
+                
+                list_of_save_path = save_small_region_plots(
+                    small_Aligned_4d_array,
+                    corrected_positions,
+                    each_set_label,
+                    plot_savefolder,
+                    z_plus_minus,
+                    each_set_df,
+                    return_list_of_save_path=True,
+                    save_plot_TF=save_plot_TF
+                )
+                no_uncaging_df = each_set_df[each_set_df["nth_omit_induction"] != -1]
+                count_up = -1
+                for ind, each_row in no_uncaging_df.iterrows():
+                    count_up += 1
+                    combined_df.loc[ind, "relative_nth_omit_induction"] = count_up
+
+                combined_df.loc[no_uncaging_df.index, "save_small_region_plot_path"] = list_of_save_path
+            
+
+                savepath_dict = save_small_region_tiffs(
+                    small_Tiff_MultiArray,
+                    small_Aligned_4d_array,
+                    corrected_positions,
+                    each_group,
+                    each_set_label,
+                    tif_savefolder,
+                    z_plus_minus,
+                    return_save_path=True,
+                    save_tif_TF=save_tif_TF
+                )
+                combined_df.loc[each_set_df.index, "before_align_save_path"] = savepath_dict["save_path_before_align"]
+                combined_df.loc[each_set_df.index, "after_align_save_path"] = savepath_dict["save_path_after_align"]
+
+    if save_tif_TF*save_plot_TF:    
+        for each_group in combined_df['group'].unique():
+            each_group_df = combined_df[combined_df['group'] == each_group]
+            for each_set_label in each_group_df["nth_set_label"].unique():
+                if each_set_label == -1:
+                    continue
+                max_nth_omit_ind_before_unc = each_group_df[each_group_df["phase"] == "pre"]["nth_omit_induction"].max()
+                plot_path = each_group_df[each_group_df["nth_omit_induction"] == max_nth_omit_ind_before_unc]["save_full_region_plot_path"].values[0]
+                img = plt.imread(plot_path)
+                plt.imshow(img)
+                plt.axis("off")
+                plt.show()
+                after_align_tiff_path = each_group_df[each_group_df["nth_omit_induction"] == max_nth_omit_ind_before_unc]["after_align_save_path"].values[0]
+                after_align_tiff = tifffile.imread(after_align_tiff_path)
+                max_proj = after_align_tiff.max(axis=0)
+                plt.imshow(max_proj, cmap="gray")
+                plt.show() 
+    return combined_df
+
 
 def shift_coords_small_to_full_for_each_rois(combined_df, z_plus_minus, 
                 roi_types = ["Spine", "DendriticShaft", "Background"],
@@ -26,8 +165,8 @@ def shift_coords_small_to_full_for_each_rois(combined_df, z_plus_minus,
             combined_df[f'{each_roi_type}_shifted_mask'] = None
         combined_df[f'{each_roi_type}_shifted_mask'] = combined_df[f'{each_roi_type}_shifted_mask'].astype(object)
 
-        for each_group in combined_df["group"].unique():
-            each_group_df = combined_df[combined_df["group"] == each_group]
+        for filepath_without_number in combined_df["filepath_without_number"].unique():
+            each_group_df = combined_df[combined_df["filepath_without_number"] == filepath_without_number]
             for each_set_label in each_group_df["nth_set_label"].unique():
                 if each_set_label == -1:
                     continue
@@ -53,10 +192,25 @@ def shift_coords_small_to_full_for_each_rois(combined_df, z_plus_minus,
 
                     coords = np.argwhere(each_roi_mask)
                     shifted_coords = coords.copy()
-                    shifted_coords[:, 0] = coords[:, 0] + small_y_from - total_shift_y
-                    shifted_coords[:, 1] = coords[:, 1] + small_x_from - total_shift_x
-                    shifted_mask = np.zeros(image_shape, dtype=bool)
-                    shifted_mask[shifted_coords[:, 0], shifted_coords[:, 1]] = True
+                    try:
+                        shifted_coords[:, 0] = coords[:, 0] + small_y_from - total_shift_y
+                        shifted_coords[:, 1] = coords[:, 1] + small_x_from - total_shift_x
+                        shifted_mask = np.zeros(image_shape, dtype=bool)
+                        shifted_mask[shifted_coords[:, 0], shifted_coords[:, 1]] = True
+                    except:
+                        print(f"error at {filepath_without_number} {each_set_label} {nth_omit_induction}")
+                        print(f"small_y_from: {small_y_from}")
+                        print(f"small_x_from: {small_x_from}")
+                        print(f"total_shift_y: {total_shift_y}")
+                        print(f"total_shift_x: {total_shift_x}")
+                        print(f"shifted_coords[:, 0].max(): {shifted_coords[:, 0].max()}")
+                        print(f"shifted_coords[:, 0].min(): {shifted_coords[:, 0].min()}")
+                        print(f"shifted_coords[:, 1].max(): {shifted_coords[:, 1].max()}")
+                        print(f"shifted_coords[:, 1].min(): {shifted_coords[:, 1].min()}")
+                        print("No shift was applied")
+                        shifted_coords = coords.copy()
+                        shifted_mask = np.zeros(image_shape, dtype=bool)
+                        shifted_mask[shifted_coords[:, 0], shifted_coords[:, 1]] = True
                     combined_df.at[current_index, f"{each_roi_type}_shifted_mask"] = shifted_mask.copy()
 
     return combined_df
@@ -159,8 +313,10 @@ def save_full_region_plots(
         corrected_uncaging_x = each_set_df["corrected_uncaging_x"].values[0]
         corrected_uncaging_y = each_set_df["corrected_uncaging_y"].values[0]
         
-        z_from = int(max(0, corrected_uncaging_z - z_plus_minus))
-        z_to = int(min(Aligned_4d_array.shape[1], corrected_uncaging_z + z_plus_minus + 1))
+        z_from = min(Aligned_4d_array.shape[1]-1,
+                     int(max(0, corrected_uncaging_z - z_plus_minus)))
+        z_to = max(z_from+1,
+                   int(min(Aligned_4d_array.shape[1], corrected_uncaging_z + z_plus_minus + 1)))
 
         for _, each_row in each_set_df.iterrows():
             nth_omit_induction = each_row["nth_omit_induction"]
@@ -207,8 +363,10 @@ def process_small_region(
     corrected_uncaging_y = each_set_df["corrected_uncaging_y"].values[0]
     
     # Calculate region boundaries
-    small_z_from = int(max(0, corrected_uncaging_z - small_z_plus_minus))
-    small_z_to = int(min(Aligned_4d_array.shape[1], corrected_uncaging_z + small_z_plus_minus + 1))
+    small_z_from = min(Aligned_4d_array.shape[1]-1,
+                       int(max(0, corrected_uncaging_z - small_z_plus_minus)))
+    small_z_to = max(small_z_from+1,
+                     int(min(Aligned_4d_array.shape[1], corrected_uncaging_z + small_z_plus_minus + 1)))
     small_x_from = int(max(0, corrected_uncaging_x - small_region_size_half))
     small_x_to = int(min(Aligned_4d_array.shape[2], corrected_uncaging_x + small_region_size_half + 1))
     small_y_from = int(max(0, corrected_uncaging_y - small_region_size_half))
@@ -260,6 +418,7 @@ def save_small_region_plots(
     z_plus_minus: int = 1,
     each_set_df: pd.DataFrame = None,
     return_list_of_save_path: bool = False,
+    save_plot_TF: bool = True,
     ) -> Optional[List[str]]:
     """Save plots for the small region.
     
@@ -272,34 +431,40 @@ def save_small_region_plots(
     """
     os.makedirs(plot_savefolder, exist_ok=True)
     
-    z_from = int(max(0, corrected_positions["z"] - z_plus_minus))
-    z_to = int(min(small_Aligned_4d_array.shape[1], corrected_positions["z"] + z_plus_minus + 1))
+    z_from = min(small_Aligned_4d_array.shape[1]-1,
+                 int(max(0, corrected_positions["z"] - z_plus_minus)))
+    z_to = max(z_from+1,
+               int(min(small_Aligned_4d_array.shape[1], corrected_positions["z"] + z_plus_minus + 1)))
     
     list_of_save_path = []
     group_name = each_set_df["group"].values[0]
     for nth in range(small_Aligned_4d_array.shape[0]):
-        Zproj = small_Aligned_4d_array[nth, z_from:z_to, :, :].max(axis=0)
-        
-        try:
-            relative_nth = nth + each_set_df[each_set_df["nth_omit_induction"]>0]["nth_omit_induction"].values .min()
-            pre_post_phase = each_set_df[each_set_df["nth_omit_induction"] == relative_nth]["phase"].values[0]
-        except:
-            pre_post_phase = " "
-            print("could not read pre_post_phase")
-
-        plt.imshow(Zproj, cmap="gray")
-        plt.title(f"each_set_label: {each_set_label}   {pre_post_phase}\nnth_omit_induction: {nth + corrected_positions['min_nth']}")
-        plt.scatter(corrected_positions["x"], corrected_positions["y"], color="red", s=100)
         savepath_name = f"small_region_{group_name}_{each_set_label}_{nth + corrected_positions['min_nth']}.png"
         save_path = os.path.join(plot_savefolder, savepath_name)
-        plt.savefig(
-            save_path,
-            dpi=150,
-            bbox_inches="tight"
-        )
-        plt.close()
-        plt.clf()
         list_of_save_path.append(save_path)
+
+        if save_plot_TF:
+            Zproj = small_Aligned_4d_array[nth, z_from:z_to, :, :].max(axis=0)
+            
+            try:
+                relative_nth = nth + each_set_df[each_set_df["nth_omit_induction"]>0]["nth_omit_induction"].values .min()
+                pre_post_phase = each_set_df[each_set_df["nth_omit_induction"] == relative_nth]["phase"].values[0]
+            except:
+                pre_post_phase = " "
+                print("could not read pre_post_phase")
+
+            plt.imshow(Zproj, cmap="gray")
+            plt.title(f"each_set_label: {each_set_label}   {pre_post_phase}\nnth_omit_induction: {nth + corrected_positions['min_nth']}")
+            plt.scatter(corrected_positions["x"], corrected_positions["y"], color="red", s=100)
+
+            plt.savefig(
+                save_path,
+                dpi=150,
+                bbox_inches="tight"
+            )
+            plt.close()
+            plt.clf()
+            
     if return_list_of_save_path:
         return list_of_save_path
     else:
@@ -314,6 +479,7 @@ def save_small_region_tiffs(
     tif_savefolder: str,
     z_plus_minus: int = 1,
     return_save_path: bool = False,
+    save_tif_TF: bool = True,
     ) -> Optional[Dict[str, str]]:
     """Save TIFF files for the small region before and after alignment.
     
@@ -327,23 +493,28 @@ def save_small_region_tiffs(
         z_plus_minus: Number of z-slices to include above and below the center
     """
     os.makedirs(tif_savefolder, exist_ok=True)
-    
-    z_from = int(max(0, corrected_positions["z"] - z_plus_minus))
-    z_to = int(min(small_Aligned_4d_array.shape[1], corrected_positions["z"] + z_plus_minus + 1))
-    
-    zproj_before_align = small_Tiff_MultiArray[:, z_from:z_to, :, :].max(axis=1)
-    zproj_after_align = small_Aligned_4d_array[:, z_from:z_to, :, :].max(axis=1)
-    
+
     save_path_before_align = os.path.join(tif_savefolder, f"{each_group}_{each_set_label}_before_align.tif")
     save_path_after_align = os.path.join(tif_savefolder, f"{each_group}_{each_set_label}_after_align.tif")
-    tifffile.imwrite(
-        save_path_before_align,
-        zproj_before_align
-    )
-    tifffile.imwrite(
-        save_path_after_align,
-        zproj_after_align
-    )
+
+    if save_tif_TF:
+        
+        z_from = min(small_Aligned_4d_array.shape[1]-1,
+                    int(max(0, corrected_positions["z"] - z_plus_minus)))
+        z_to = max(z_from+1,
+                int(min(small_Aligned_4d_array.shape[1], corrected_positions["z"] + z_plus_minus + 1)))
+        
+        zproj_before_align = small_Tiff_MultiArray[:, z_from:z_to, :, :].max(axis=1)
+        zproj_after_align = small_Aligned_4d_array[:, z_from:z_to, :, :].max(axis=1)
+        
+        tifffile.imwrite(
+            save_path_before_align,
+            zproj_before_align
+        )
+        tifffile.imwrite(
+            save_path_after_align,
+            zproj_after_align
+        )
     if return_save_path:
         return {"save_path_before_align": save_path_before_align, 
                 "save_path_after_align": save_path_after_align}
@@ -418,7 +589,7 @@ def temp_add_align_info(
                 
             each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
             
-            small_Tiff_MultiArray, small_Aligned_4d_array, corrected_positions, each_set_df = process_small_region(
+            small_Tiff_MultiArray, small_Aligned_4d_array, corrected_positions = process_small_region(
                 each_set_df, Aligned_4d_array
             )
 
@@ -488,7 +659,7 @@ def launch_roi_analysis_gui(combined_df, tiff_data_path, each_group, each_set_la
     Args:
         combined_df: The combined dataframe containing analysis data
         tiff_data_path: Path to the after_align TIFF file
-        each_group: Group identifier
+        each_group: Group identifier (could be 'group' or 'filepath_without_number' value)
         each_set_label: Set label identifier
         header: Header string to use for column names and GUI display
     """
@@ -524,10 +695,50 @@ def launch_roi_analysis_gui(combined_df, tiff_data_path, each_group, each_set_la
         print(f"Adjusted max projection shape: {max_proj_image.shape}")
     
     # Filter dataframe for the specific group and set
+    # Try filtering by 'group' first, then fall back to 'filepath_without_number'
     filtered_df = combined_df[
         (combined_df['group'] == each_group) & 
         (combined_df['nth_set_label'] == each_set_label)
     ].copy()
+    
+    # If no data found with 'group', try with 'filepath_without_number'
+    if len(filtered_df) == 0:
+        print(f"No data found using 'group'={each_group}. Trying 'filepath_without_number'...")
+        if 'filepath_without_number' in combined_df.columns:
+            # First find the filepath_without_number that corresponds to this group
+            filepath_without_number_candidates = combined_df[
+                combined_df['group'] == each_group
+            ]['filepath_without_number'].unique()
+            
+            if len(filepath_without_number_candidates) > 0:
+                for filepath_without_number in filepath_without_number_candidates:
+                    temp_filtered_df = combined_df[
+                        (combined_df['filepath_without_number'] == filepath_without_number) & 
+                        (combined_df['nth_set_label'] == each_set_label)
+                    ].copy()
+                    if len(temp_filtered_df) > 0:
+                        filtered_df = temp_filtered_df
+                        print(f"Found data using 'filepath_without_number'={filepath_without_number}")
+                        break
+            
+            # If still no data, try direct match with filepath_without_number
+            if len(filtered_df) == 0:
+                filtered_df = combined_df[
+                    (combined_df['filepath_without_number'] == each_group) & 
+                    (combined_df['nth_set_label'] == each_set_label)
+                ].copy()
+                if len(filtered_df) > 0:
+                    print(f"Found data using direct 'filepath_without_number' match")
+    
+    if len(filtered_df) == 0:
+        print(f"Error: No data found for group={each_group}, set_label={each_set_label}")
+        print(f"Available groups in 'group' column: {combined_df['group'].unique()}")
+        if 'filepath_without_number' in combined_df.columns:
+            print(f"Available groups in 'filepath_without_number' column: {combined_df['filepath_without_number'].unique()}")
+        print(f"Available set_labels: {combined_df['nth_set_label'].unique()}")
+        return None
+    
+    print(f"Successfully filtered data: {len(filtered_df)} rows found")
     
     # Get uncaging position information from the filtered dataframe
     uncaging_info = {}
@@ -583,6 +794,9 @@ def launch_roi_analysis_gui(combined_df, tiff_data_path, each_group, each_set_la
     
     # Create GUI window with additional information and header
     window = ROIAnalysisGUI(filtered_df, after_align_tiff_data, max_proj_image, uncaging_info, file_info, header=header)
+    
+    # Store the filtered dataframe in the GUI instance for verification during saving
+    window.filtered_df = filtered_df
     
     # Set window flags to ensure proper cleanup
     from PyQt5.QtCore import Qt
@@ -707,22 +921,94 @@ def save_roi_data_to_combined_df(gui_instance, combined_df, each_group, each_set
     Args:
         gui_instance: Instance of ROIAnalysisGUI
         combined_df: The combined dataframe to update
-        each_group: Group identifier
+        each_group: Group identifier (could be 'group' or 'filepath_without_number' value)
         each_set_label: Set label identifier
         header: Header string to use for column names and GUI display
     """
     
     print(f"Saving {header} ROI data for group {each_group}, set {each_set_label}")
     
-    # Get the filtered dataframe indices
-    mask = (combined_df['group'] == each_group) & (combined_df['nth_set_label'] == each_set_label)
-    indices = combined_df[mask].index
+    # Get the exact same filtered dataframe that was used in the GUI
+    # This ensures we only update the rows that were actually analyzed
     
-    if len(indices) == 0:
-        print(f"Warning: No matching indices found for group {each_group}, set {each_set_label}")
+    # Try filtering by 'group' first, then fall back to 'filepath_without_number'
+    base_mask = (combined_df['group'] == each_group) & (combined_df['nth_set_label'] == each_set_label)
+    filtered_df = combined_df[base_mask]
+    
+    # If no data found with 'group', try with 'filepath_without_number'
+    if len(filtered_df) == 0:
+        print(f"No data found using 'group'={each_group}. Trying 'filepath_without_number'...")
+        if 'filepath_without_number' in combined_df.columns:
+            # First find the filepath_without_number that corresponds to this group
+            filepath_without_number_candidates = combined_df[
+                combined_df['group'] == each_group
+            ]['filepath_without_number'].unique()
+            
+            if len(filepath_without_number_candidates) > 0:
+                for filepath_without_number in filepath_without_number_candidates:
+                    temp_base_mask = (combined_df['filepath_without_number'] == filepath_without_number) & (combined_df['nth_set_label'] == each_set_label)
+                    temp_filtered_df = combined_df[temp_base_mask]
+                    if len(temp_filtered_df) > 0:
+                        base_mask = temp_base_mask
+                        filtered_df = temp_filtered_df
+                        print(f"Found data using 'filepath_without_number'={filepath_without_number}")
+                        break
+            
+            # If still no data, try direct match with filepath_without_number
+            if len(filtered_df) == 0:
+                base_mask = (combined_df['filepath_without_number'] == each_group) & (combined_df['nth_set_label'] == each_set_label)
+                filtered_df = combined_df[base_mask]
+                if len(filtered_df) > 0:
+                    print(f"Found data using direct 'filepath_without_number' match")
+    
+    # Filter to only include rows that were actually analyzed (nth_omit_induction >= 0)
+    analysis_mask = base_mask & (combined_df['nth_omit_induction'] >= 0)
+    analysis_filtered_df = combined_df[analysis_mask]
+    
+    if len(analysis_filtered_df) == 0:
+        print("No analysis data found for this group/set combination")
+        print(f"Available groups in 'group' column: {combined_df['group'].unique()}")
+        if 'filepath_without_number' in combined_df.columns:
+            print(f"Available groups in 'filepath_without_number' column: {combined_df['filepath_without_number'].unique()}")
+        print(f"Available set_labels: {combined_df['nth_set_label'].unique()}")
+        return
+    
+    print(f"Found {len(filtered_df)} total rows, {len(analysis_filtered_df)} analysis rows for this group/set")
+    
+    # IMPORTANT: Filter to only include rows that were actually used in the GUI
+    # The GUI only analyzes rows with nth_omit_induction >= 0
+    analysis_mask = base_mask & (combined_df['nth_omit_induction'] >= 0)
+    analysis_filtered_df = combined_df[analysis_mask]
+    
+    print(f"Base filter found {len(filtered_df)} total rows")
+    print(f"Analysis filter found {len(analysis_filtered_df)} rows with nth_omit_induction >= 0")
+    
+    # Debug: Print the indices that will be updated
+    print(f"Indices that will be updated: {list(analysis_filtered_df.index)}")
+    if 'nth_omit_induction' in analysis_filtered_df.columns:
+        nth_values = analysis_filtered_df['nth_omit_induction'].tolist()
+        print(f"nth_omit_induction values: {nth_values}")
+    
+    # Verify that we found the exact same data that was used in the GUI
+    if len(analysis_filtered_df) == 0:
+        print(f"Warning: No matching analysis data found for group {each_group}, set {each_set_label}")
+        print(f"Available groups in 'group' column: {combined_df['group'].unique()}")
+        if 'filepath_without_number' in combined_df.columns:
+            print(f"Available groups in 'filepath_without_number' column: {combined_df['filepath_without_number'].unique()}")
+        print(f"Available set_labels: {combined_df['nth_set_label'].unique()}")
         return combined_df
     
-    print(f"Found {len(indices)} rows to update")
+    # Verify the filtered data matches what was used in GUI
+    gui_df_length = len(gui_instance.filtered_df) if hasattr(gui_instance, 'filtered_df') else 0
+    if gui_df_length > 0:
+        gui_analysis_length = len(gui_instance.filtered_df[gui_instance.filtered_df['nth_omit_induction'] >= 0])
+        if len(analysis_filtered_df) != gui_analysis_length:
+            print(f"Warning: Analysis data length mismatch. GUI used {gui_analysis_length} rows, but found {len(analysis_filtered_df)} rows for saving.")
+    
+    print(f"Found {len(analysis_filtered_df)} analysis rows to update")
+    
+    # Get only the indices from the analysis-filtered data
+    indices = analysis_filtered_df.index
     
     # Column names with header prefix
     roi_shape_col = f"{header}_roi_shape"
@@ -752,6 +1038,7 @@ def save_roi_data_to_combined_df(gui_instance, combined_df, each_group, each_set
     # Ensure roi_mask column exists and is object type for storing numpy arrays
     if roi_mask_col not in combined_df.columns:
         combined_df[roi_mask_col] = None
+    # Ensure the column is object type and can store numpy arrays
     combined_df[roi_mask_col] = combined_df[roi_mask_col].astype(object)
     
     # Ensure other new columns exist
@@ -760,9 +1047,8 @@ def save_roi_data_to_combined_df(gui_instance, combined_df, each_group, each_set
         if col not in combined_df.columns:
             combined_df[col] = None
     
-    # Save frame-specific ROI data
-    set_df = combined_df[mask].copy()
-    set_df_sorted = set_df[set_df['nth_omit_induction'] >= 0].sort_values('nth_omit_induction')
+    # Save frame-specific ROI data - use the same mask we used for filtering
+    set_df_sorted = analysis_filtered_df.sort_values('nth_omit_induction')
     
     # Check if GUI instance has frame-specific ROI parameters
     has_frame_specific_params = hasattr(gui_instance, 'frame_roi_parameters') and gui_instance.frame_roi_parameters
@@ -771,7 +1057,13 @@ def save_roi_data_to_combined_df(gui_instance, combined_df, each_group, each_set
     if has_frame_specific_params:
         print(f"Available frame ROI parameters: {list(gui_instance.frame_roi_parameters.keys())}")
     
-    for frame_idx, df_idx in enumerate(set_df_sorted.index):
+    # Verify we have the expected number of frames
+    expected_frames = len(gui_instance.intensity_data['mean'])
+    actual_frames = len(set_df_sorted)
+    if expected_frames != actual_frames:
+        print(f"Warning: Frame count mismatch. GUI has {expected_frames} frames, but filtered data has {actual_frames} frames.")
+    
+    for frame_idx, (df_idx, row) in enumerate(set_df_sorted.iterrows()):
         if frame_idx < len(gui_instance.intensity_data['mean']):
             # Save intensity data
             combined_df.loc[df_idx, intensity_mean_col] = gui_instance.intensity_data['mean'][frame_idx]
@@ -793,8 +1085,34 @@ def save_roi_data_to_combined_df(gui_instance, combined_df, each_group, each_set
                 frame_roi_params, gui_instance.roi_shape, image_shape
             )
             
-            # Save ROI mask directly as numpy array using .at for safety
-            combined_df.at[df_idx, roi_mask_col] = roi_mask
+            # Ensure roi_mask is a single numpy array (not a list or nested structure)
+            if not isinstance(roi_mask, np.ndarray):
+                print(f"Warning: roi_mask is not a numpy array: {type(roi_mask)}")
+                roi_mask = np.array(roi_mask, dtype=bool)
+            
+            # Save ROI mask using integer-based indexing to avoid pandas array interpretation issues
+            try:
+                # Get the integer position of this row and column
+                row_pos = combined_df.index.get_loc(df_idx)
+                col_pos = combined_df.columns.get_loc(roi_mask_col)
+                # Use iat for direct integer-based assignment
+                combined_df.iat[row_pos, col_pos] = roi_mask
+                print(f"Successfully saved ROI mask for frame {frame_idx} using iat method")
+            except (ValueError, KeyError) as e:
+                print(f"Warning: Error with iat method: {e}. Trying alternative approach...")
+                try:
+                    # Alternative: Create a temporary dataframe and use update
+                    temp_series = pd.Series([roi_mask], index=[df_idx], dtype=object)
+                    combined_df[roi_mask_col].update(temp_series)
+                    print(f"Successfully saved ROI mask for frame {frame_idx} using update method")
+                except Exception as e2:
+                    print(f"Warning: Error with update method: {e2}. Using direct dictionary assignment...")
+                    # Last resort: direct dictionary-style assignment
+                    combined_df[roi_mask_col] = combined_df[roi_mask_col].astype(object)
+                    values = combined_df[roi_mask_col].values
+                    idx_pos = combined_df.index.get_loc(df_idx)
+                    values[idx_pos] = roi_mask
+            
             combined_df.loc[df_idx, frame_roi_parameters_col] = str(frame_roi_params)
             
             # Calculate and save ROI area
@@ -890,7 +1208,7 @@ def verify_roi_data_in_combined_df(combined_df, each_group, each_set_label, head
     
     Args:
         combined_df: The combined dataframe to check
-        each_group: Group identifier
+        each_group: Group identifier (could be 'group' or 'filepath_without_number' value)
         each_set_label: Set label identifier
         header: Header string to use for column names and GUI display
     """
@@ -898,14 +1216,48 @@ def verify_roi_data_in_combined_df(combined_df, each_group, each_set_label, head
     print(f"\n=== VERIFYING {header} ROI DATA FOR GROUP {each_group}, SET {each_set_label} ===")
     
     # Get the filtered dataframe
-    mask = (combined_df['group'] == each_group) & (combined_df['nth_set_label'] == each_set_label)
-    filtered_df = combined_df[mask]
+    # Try filtering by 'group' first, then fall back to 'filepath_without_number'
+    base_mask = (combined_df['group'] == each_group) & (combined_df['nth_set_label'] == each_set_label)
+    filtered_df = combined_df[base_mask]
+    
+    # If no data found with 'group', try with 'filepath_without_number'
+    if len(filtered_df) == 0:
+        print(f"No data found using 'group'={each_group}. Trying 'filepath_without_number'...")
+        if 'filepath_without_number' in combined_df.columns:
+            # First find the filepath_without_number that corresponds to this group
+            filepath_without_number_candidates = combined_df[
+                combined_df['group'] == each_group
+            ]['filepath_without_number'].unique()
+            
+            if len(filepath_without_number_candidates) > 0:
+                for filepath_without_number in filepath_without_number_candidates:
+                    temp_mask = (combined_df['filepath_without_number'] == filepath_without_number) & (combined_df['nth_set_label'] == each_set_label)
+                    temp_filtered_df = combined_df[temp_mask]
+                    if len(temp_filtered_df) > 0:
+                        filtered_df = temp_filtered_df
+                        print(f"Found data using 'filepath_without_number'={filepath_without_number}")
+                        break
+            
+            # If still no data, try direct match with filepath_without_number
+            if len(filtered_df) == 0:
+                mask = (combined_df['filepath_without_number'] == each_group) & (combined_df['nth_set_label'] == each_set_label)
+                filtered_df = combined_df[mask]
+                if len(filtered_df) > 0:
+                    print(f"Found data using direct 'filepath_without_number' match")
     
     if len(filtered_df) == 0:
         print("No data found for this group/set combination")
+        print(f"Available groups in 'group' column: {combined_df['group'].unique()}")
+        if 'filepath_without_number' in combined_df.columns:
+            print(f"Available groups in 'filepath_without_number' column: {combined_df['filepath_without_number'].unique()}")
+        print(f"Available set_labels: {combined_df['nth_set_label'].unique()}")
         return
     
     print(f"Found {len(filtered_df)} rows for this group/set")
+    
+    # Apply analysis filter (only rows with nth_omit_induction >= 0)
+    analysis_filtered_df = filtered_df[filtered_df['nth_omit_induction'] >= 0]
+    print(f"Found {len(analysis_filtered_df)} analysis rows (nth_omit_induction >= 0)")
     
     # Column names with header prefix
     roi_shape_col = f"{header}_roi_shape"
@@ -931,13 +1283,13 @@ def verify_roi_data_in_combined_df(combined_df, each_group, each_set_label, head
     if missing_cols:
         print(f"Missing ROI columns: {missing_cols}")
     
-    # Check mask data specifically
+    # Check mask data specifically - only check analysis rows
     if roi_mask_col in combined_df.columns:
         valid_masks = 0
         mask_identical = True
         first_mask = None
         
-        for idx, row in filtered_df.iterrows():
+        for idx, row in analysis_filtered_df.iterrows():
             mask_data = row[roi_mask_col]
             if mask_data is not None and isinstance(mask_data, np.ndarray):
                 valid_masks += 1
@@ -960,21 +1312,21 @@ def verify_roi_data_in_combined_df(combined_df, each_group, each_set_label, head
                 
                 print(f"  Frame {rel_nth}: ROI area={roi_area} pixels, mean={mean_str}, timestamp={timestamp}")
         
-        print(f"Valid ROI masks: {valid_masks}/{len(filtered_df)}")
+        print(f"Valid ROI masks: {valid_masks}/{len(analysis_filtered_df)}")
         print(f"Masks identical across frames: {mask_identical}")
         
         if valid_masks > 0 and first_mask is not None:
             print(f"ROI mask shape: {first_mask.shape}")
             print(f"ROI mask area (first frame): {np.sum(first_mask)} pixels")
     
-    # Check timestamp data
+    # Check timestamp data - only check analysis rows
     if roi_analysis_timestamp_col in combined_df.columns:
-        timestamps = filtered_df[roi_analysis_timestamp_col].dropna().unique()
+        timestamps = analysis_filtered_df[roi_analysis_timestamp_col].dropna().unique()
         print(f"Analysis timestamps: {timestamps}")
     
-    # Check if frame-specific parameters were used
+    # Check if frame-specific parameters were used - only check analysis rows
     if frame_roi_parameters_col in combined_df.columns:
-        unique_params = filtered_df[frame_roi_parameters_col].dropna().unique()
+        unique_params = analysis_filtered_df[frame_roi_parameters_col].dropna().unique()
         print(f"Unique frame ROI parameters: {len(unique_params)}")
         if len(unique_params) > 1:
             print("Frame-specific ROI parameters detected!")

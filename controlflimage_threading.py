@@ -256,16 +256,25 @@ class Control_flimage():
         self.flim.sendCommand(f"State.Acq.FOV_default = [{self.FOV_default[0]}, {self.FOV_default[1]}]\n")
 
     def config_ini(self,ini_path):
-        config = configparser.ConfigParser()
-        self.config=config
-        config.read(ini_path)
-        self.directionMotorX = int(config['Direction']['MotorX'])
-        self.directionMotorY = int(config['Direction']['MotorY'])
-        self.directionMotorZ = int(config['Direction']['MotorZ'])
-        self.directionGalvoX = int(config['Direction']['GalvoX'])
-        self.directionGalvoY = int(config['Direction']['GalvoY'])        
-        print("\n\nDirection setting was modified at ",config['ModifiedDate']['Date'],"\n\n")
-    
+        if ini_path == 'all_1':
+            self.directionMotorX = 1
+            self.directionMotorY = 1
+            self.directionMotorZ = 1
+            self.directionGalvoX = 1
+            self.directionGalvoY = 1
+            print("all of the direction is 1")
+        else:
+            assert os.path.exists(ini_path), f"ini_path {ini_path} does not exist"
+            config = configparser.ConfigParser()
+            self.config=config
+            config.read(ini_path)
+            self.directionMotorX = int(config['Direction']['MotorX'])
+            self.directionMotorY = int(config['Direction']['MotorY'])
+            self.directionMotorZ = int(config['Direction']['MotorZ'])
+            self.directionGalvoX = int(config['Direction']['GalvoX'])
+            self.directionGalvoY = int(config['Direction']['GalvoY'])        
+            print("\n\nDirection setting was modified at ",config['ModifiedDate']['Date'],"\n\n")
+
     def get_filelist(self):
         res = self.flim.sendCommand('GetFullFileName')
         one_file = res[res.find(",")+2:]

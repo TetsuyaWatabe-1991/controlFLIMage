@@ -13,6 +13,7 @@ from skimage.registration import phase_cross_correlation
 from scipy.ndimage import fourier_shift
 from scipy.signal import medfilt
 from datetime import datetime
+from skimage.transform import resize
 
 def get_flimfile_list(one_file_path):
     filelist=glob.glob(one_file_path[:-8]+'[0-9][0-9][0-9].flim')
@@ -118,6 +119,63 @@ def align_two_flimfile(flim_1, flim_2, ch, return_pixel = False):
         return [z_relative, y_relative, x_relative], Aligned_4d_array, shifts_zyx_pixel
     else:
         return [z_relative, y_relative, x_relative], Aligned_4d_array
+
+
+def align_two_flimfile_different_resolution(flim_1, flim_2, ch, return_pixel = False, debug = False):    
+    Tiff_MultiArray_1, iminfo_1, _ = flim_files_to_nparray([flim_1],ch=ch)
+    Tiff_MultiArray_2, iminfo_2, _ = flim_files_to_nparray([flim_2],ch=ch)
+    threeD_array_1 = Tiff_MultiArray_1[0]
+    threeD_array_2 = Tiff_MultiArray_2[0]
+    assert threeD_array_1.shape[0] == threeD_array_2.shape[0]
+    lower_x_dim = min(threeD_array_1.shape[2],threeD_array_2.shape[2])
+    lower_y_dim = min(threeD_array_1.shape[1],threeD_array_2.shape[1])
+    
+    resized_array1 = resize(threeD_array_1, (11, lower_y_dim, lower_x_dim), anti_aliasing=False)
+    resized_array2 = resize(threeD_array_2, (11, lower_y_dim, lower_x_dim), anti_aliasing=False)
+
+
+    Tiff_MultiArray = np.array([resized_array1,resized_array2])
+    shifts_zyx_pixel, Aligned_4d_array = Align_4d_array(Tiff_MultiArray)
+    # print(shifts_zyx_pixel)
+    x_um_1, y_um_1, z_um_1 = get_xyz_pixel_um(iminfo_1)
+    x_um_2, y_um_2, z_um_2 = get_xyz_pixel_um(iminfo_2)
+    x_um = max(x_um_1, x_um_2)
+    y_um = max(y_um_1, y_um_2)
+    z_um = max(z_um_1, z_um_2)
+    
+    x_relative = x_um*shifts_zyx_pixel[-1][2]
+    y_relative = y_um*shifts_zyx_pixel[-1][1]
+    z_relative = z_um*shifts_zyx_pixel[-1][0]
+    
+    if debug == True:
+        print("x_um_1, y_um_1, z_um_1", x_um_1, y_um_1, z_um_1)
+        print("x_um_2, y_um_2, z_um_2", x_um_2, y_um_2, z_um_2)
+        print("x_um, y_um, z_um", x_um, y_um, z_um)
+        print("lower_x_dim, lower_y_dim", lower_x_dim, lower_y_dim)
+        print("threeD_array_1.shape, threeD_array_2.shape", threeD_array_1.shape, threeD_array_2.shape)
+        vmax = threeD_array_1.max()
+        plt.figure(figsize = (10,10))
+        plt.subplot(2,2,1)
+        plt.imshow(threeD_array_1[:,:,:].max(axis = 0), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal")
+        plt.title("threeD_array_1  " + os.path.basename(flim_1))
+        plt.subplot(2,2,2)
+        plt.imshow(threeD_array_2[:,:,:].max(axis = 0), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal")
+        plt.title("threeD_array_2  " + os.path.basename(flim_2))
+        
+        plt.subplot(2,2,3)
+        plt.imshow(threeD_array_1[:,:,:].max(axis = 1), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal")
+        plt.title("threeD_array_1  " + os.path.basename(flim_1))
+        plt.subplot(2,2,4)
+        plt.imshow(threeD_array_2[:,:,:].max(axis = 1), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal")
+        plt.title("threeD_array_2  " + os.path.basename(flim_2))
+        plt.show()
+
+
+    if return_pixel == True:
+        return [z_relative, y_relative, x_relative], Aligned_4d_array, shifts_zyx_pixel
+    else:
+        return [z_relative, y_relative, x_relative], Aligned_4d_array
+
 
 
 def flim_files_to_nparray(filelist,ch=0,normalize_by_averageNum=True):
@@ -340,204 +398,19 @@ def single_plane_align_with3dstack(ZYX_Stack_array,YX_SinglePlane_array):
     Aligned_TYX_array=np.array([ZYX_Stack_array[Z_plane,:,:],aligned_array_Z_plane])
     return Z_plane,single_shift, Aligned_TYX_array
 
+#%%
+
+if __name__ == "__main__":
+    flim_1 = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250610\lowmag_002.flim"
+    flim_2 = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250610\lowmag_001.flim"
+    ch_1or2 = 2
+
+    for i in range(1,4):
+        flim_1 = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250610\lowmag_001.flim"
+        flim_2 = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250610\lowmag_00" + str(i) + ".flim"
+        ch_1or2 = 2
+        xyz_relative, Aligned_4d_array, shifts_zyx_pixel = align_two_flimfile_different_resolution(flim_1, flim_2, ch_1or2 - 1, return_pixel = True, debug = True)
+        print(xyz_relative)
 
 
-
-if False:
-    ch = 0
-    StackFilePath = r"G:\ImagingData\Tetsuya\20241122\24well\highmag_6overnightGFP200ms55p\tpem\B3_00_2_1__highmag_2_003.flim"
-    SinglePlaneFilePath = r"G:\ImagingData\Tetsuya\20241122\24well\highmag_6overnightGFP200ms55p\tpem\B3_00_2_1__highmag_2_004.flim"
-    
-    Stack_file_list=[StackFilePath]
-    SinglePlaneList=[SinglePlaneFilePath]
-    ZYX_Stack_array, _ , _ = flim_files_to_nparray(Stack_file_list,ch=ch)
-    YX_SinglePlane_array, _ , _ = flim_files_to_nparray(SinglePlaneList,ch=ch)
-    Z_plane,single_shift, Aligned_TXY_array = single_plane_align_with3dstack(ZYX_Stack_array[0,:,:,:],YX_SinglePlane_array[0,0,:,:])
-
-
-# Z_plane,single_shift, Aligned_TXY_array = single_plane_align_with3dstack_flimfile2(StackFilePath,SinglePlaneFilePath,ch=1)
-
-if False:
-# if __name__=='__main__':
-    ch=0
-    cmap='gray'
-    vmin=0
-    vmax_auto=True
-    vmax_coefficient=0.8
-    
-    # one_file_path=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20221230\Rab10CY_Ca0,3_Neuron1_dendrite2_001.flim"
-    one_file_path=r"G:\ImagingData\Tetsuya\20241108\test_dend15_001.flim"
-    saveFolder, EachImgsaveFolder = make_save_folders(one_file_path)
-    
-    iminfo = FileReader()
-    iminfo.read_imageFile(one_file_path, True) 
-    
-    filelist=get_flimfile_list(one_file_path)
-    Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(filelist,ch=ch,normalize_by_averageNum=True)
-    
-    ShowZ=int(Tiff_MultiArray.shape[1]/2)
-    if vmax_auto==True:
-        vmax=Tiff_MultiArray.max()*vmax_coefficient    
-    
-    shifts, Aligned_4d_array=Align_4d_array(Tiff_MultiArray)
-    plot_alignment_shifts(shifts,iminfo, saveFolder=saveFolder,savefigure=True,
-                          relative_sec_list=relative_sec_list)
-    
-    
-    """
-    
-    # below code is for plotting aligned image        
-    
-    """
-    
-    
-    plot_aligned_image_test = True
-
-    if plot_aligned_image_test==True:
-        z_start, z_to, y_start, y_to, x_start, x_to=CenterPosGet(Tiff_MultiArray,ratio=0.5)
-        
-        FindBrightBase=Tiff_MultiArray[0,z_start:z_to,y_start:y_to,x_start:x_to]
-        max_index_original=np.unravel_index(FindBrightBase.argmax(), FindBrightBase.shape)
-        ShowZ=max_index_original[0]+z_start
-        
-        for i in range(Aligned_4d_array.shape[0]):
-            plt.figure()
-        
-            #subplot(r,c) provide the no. of rows and columns
-            f, axarr = plt.subplots(1,2) 
-            
-            # use the created array to output your multiple images. In this case I have stacked 4 images vertically
-            axarr[0].imshow(Tiff_MultiArray[i,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-            axarr[0].text(Tiff_MultiArray.shape[3],-10,str(i))
-            axarr[0].text(0,-10,str("original"))
-            
-            axarr[1].imshow(Aligned_4d_array[i,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-            axarr[1].text(0,-10,str("aligned"))
-            
-            # plt.imshow(Tiff_MultiArray[i,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-            savepath=os.path.join(EachImgsaveFolder,f"{str(i).zfill(3)}.png")
-            plt.savefig(savepath,dpi=150,transparent=True,bbox_inches='tight')
-            plt.show()
-        
-        
-        # Print the first position of the maximum value in the array
-        # max_index_original=np.unravel_index(Tiff_MultiArray.argmax(), Tiff_MultiArray.shape)
-        # From this code above, the brightest point might exist near edge. 
-        # To avoid that,  I made codes below
-        
-        
-
-        Slice_x=max_index_original[1]+y_start
-        Slice_y=max_index_original[2]+x_start
-        ShowZ=max_index_original[0]+z_start
-        # Slice_y=60
-        # Slice_x=155
-        # Slice_x=64
-        # Slice_y=40
-        
-        plt.imshow(Tiff_MultiArray[0,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.plot([0,Tiff_MultiArray.shape[3]-1],[Slice_x,Slice_x],'r-')
-        savepath=os.path.join(saveFolder,"XZimage_showingSliceX.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        plt.imshow(Tiff_MultiArray[:,ShowZ,Slice_x,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("x");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"XZimage_original.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        plt.imshow(Aligned_4d_array[:,ShowZ,Slice_x,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("x");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"XZimage_aligned.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        
-        
-        plt.imshow(Tiff_MultiArray[0,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.plot([Slice_y,Slice_y],[0,Tiff_MultiArray.shape[2]-1],'r-')
-        savepath=os.path.join(saveFolder,"YZimage_showingSliceX.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        plt.imshow(Tiff_MultiArray[:,ShowZ,:,Slice_y],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("y");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"YZimage_original.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        plt.imshow(Aligned_4d_array[:,ShowZ,:,Slice_y],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("y");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"YZimage_aligned.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        plt.imshow(Tiff_MultiArray[0,ShowZ,:,:],cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.plot([Slice_y+1,Slice_y-1,Slice_y-1,Slice_y+1,Slice_y+1],         
-                  [Slice_x+1,Slice_x+1,Slice_x-1,Slice_x-1,Slice_x+1],'r-')
-        savepath=os.path.join(saveFolder,"TZimage_showingPoint.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        plt.imshow(Tiff_MultiArray[:,:,Slice_x,Slice_y],
-                    cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("z");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"TZimage_original.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-        
-        
-        plt.imshow(Aligned_4d_array[:,:,Slice_x,Slice_y],
-                    cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.xlabel("z");plt.ylabel('t')
-        savepath=os.path.join(saveFolder,"TZimage_aligned.png")
-        plt.savefig(savepath,dpi=300,transparent=True,bbox_inches='tight')
-        plt.show()
-    
-    
-    
-# if __name__ == "__main__":
-#     one_file_path = r"G:\ImagingData\Tetsuya\20241108\test_dend15_001.flim"
-#     filelist = get_flimfile_list(one_file_path)
-#     normalize_by_averageNum = True
-#     ch = 0
-#     FourDimList=[]
-#     timestamp_list, relative_sec_list, uncaging_relative_sec_list = [],[],[]
-#     First=True
-#     for file_path in filelist:
-#         iminfo = FileReader()
-#         print(file_path)
-#         iminfo.read_imageFile(file_path, True) 
-#         # Get intensity only data
-#         imagearray=np.array(iminfo.image)
-        
-#         nAveFrame = iminfo.State.Acq.nAveFrame
-#         if normalize_by_averageNum==False:
-#             DivBy = 1
-#         else:
-#             DivBy = nAveFrame
-            
-#         if First:
-#             First=False
-#             imageshape=imagearray.shape
-
-
-#         if imagearray.shape == imageshape:
-#             intensityarray=(12*np.sum(imagearray,axis=-1))/DivBy
-#             FourDimList.append(intensityarray)
-#             timestamp_list.append(datetime.strptime(iminfo.acqTime[0],'%Y-%m-%dT%H:%M:%S.%f'))
-#             relative_sec_list.append((timestamp_list[-1] - timestamp_list[0]).seconds)
-#         else:
-#             print(imagearray.shape)
-#             if (imagearray.shape[0] > 29):
-#                 print(file_path,'<- uncaging')
-#                 uncaging_array = ((12*np.sum(imagearray,axis=-1))/DivBy)[:,0,ch,:,:]
-#                 print(iminfo.acqTime)
-#                 for each_acqtime in iminfo.acqTime:
-#                     uncaging_relative_sec_list.append(
-#                         (datetime.strptime(each_acqtime,'%Y-%m-%dT%H:%M:%S.%f') 
-#                          - timestamp_list[0]).seconds)
-#             else:
-#                 print(file_path,'<- skipped read')
-#     print("ch",ch)
-#     Tiff_MultiArray=np.array(FourDimList,dtype=np.uint16)[:,:,0,ch,:,:]
-    
+# %%

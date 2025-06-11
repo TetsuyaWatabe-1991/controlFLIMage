@@ -577,26 +577,27 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import shutil
     from controlflimage_threading import Control_flimage
-    FLIMageCont = Control_flimage()
-    FLIMageCont.flim.sendCommand(f"SetUncagingLocation, 50, 50")
-    file_path = r"G:\ImagingData\Tetsuya\20241204\test_uncaging_015.flim"
-    temp_path = r"G:\ImagingData\Tetsuya\20241204\temp.flim"
+    # FLIMageCont = Control_flimage()
+    # FLIMageCont.flim.sendCommand(f"SetUncagingLocation, 50, 50")
+    # file_path = r"G:\ImagingData\Tetsuya\20241204\test_uncaging_015.flim"
+    file_path = r"Z:\Users\Tony\jREXGECO\good\power7per\250528_JREXGECO_S1_CA3_c_power7002a.flim"
     
-    for i in range(40):
-        try:
-            shutil.copyfile(file_path, temp_path)
-            iminfo = FileReader()
-            iminfo.read_imageFile(temp_path, True)     
-            six_dim = np.array(iminfo.image)
-            print(np.array(iminfo.image).shape)
-            plt.imshow(six_dim[-1].sum(axis = 0).sum(axis = 0).sum(axis = -1))
-            plt.show()
-            unc_xy = 50 + -20 * (i%2)
-            FLIMageCont.flim.sendCommand(f"SetUncagingLocation, {unc_xy}, {unc_xy}")
-        except:
-            print("read error")
-        sleep(2)
-        
+    # for i in range(40):
+    #     try:
+    #         shutil.copyfile(file_path, temp_path)
+    #         iminfo = FileReader()
+    #         iminfo.read_imageFile(temp_path, True)     
+    #         six_dim = np.array(iminfo.image)
+    #         print(np.array(iminfo.image).shape)
+    #         plt.imshow(six_dim[-1].sum(axis = 0).sum(axis = 0).sum(axis = -1))
+    #         plt.show()
+    #         unc_xy = 50 + -20 * (i%2)
+    #         FLIMageCont.flim.sendCommand(f"SetUncagingLocation, {unc_xy}, {unc_xy}")
+    #     except:
+    #         print("read error")
+    #     sleep(2)
+    
+    iminfo = FileReader()
     iminfo.read_imageFile(file_path, True)     
     six_dim = np.array(iminfo.image)
     print(np.array(iminfo.image).shape)
