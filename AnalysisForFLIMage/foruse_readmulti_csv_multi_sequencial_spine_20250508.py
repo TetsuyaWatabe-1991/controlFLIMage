@@ -24,7 +24,7 @@ one_of_filepath = r"G:\ImagingData\Tetsuya\20250506\onHarp\Analysis\copy\E4_room
 one_of_filepath = r"G:\ImagingData\Tetsuya\20250506\onHarp\Analysis\auto_ltp_copy\E4_roomair_lowmag_1__highmag_1_align_TimeCourse.csv"
 # one_of_filepath = r"G:\ImagingData\Tetsuya\20250331\B6_cut0319_FlxGC6sTom_0322\highmag_RFP50ms100p\tpem2\Analysis\copy\lowmag2__highmag_1_concat_TimeCourse.csv"
 one_of_filepath = r"G:\ImagingData\Tetsuya\20250508\Analysis\copy\LTP2_15um_align_TimeCourse.csv"
-
+one_of_filepath = r"G:\ImagingData\Tetsuya\20250415\B6_cut0326_FlxGC6s_tdTomato\highmag_Trans5ms\tpem\Analysis\copy\C1_00_1_1__highmag_1__TimeCourse.csv"
 
 csvlist = glob.glob(one_of_filepath[:one_of_filepath.rfind("\\")]+"\\*_TimeCourse.csv")
 one_of_filepath = csvlist[0]

@@ -208,7 +208,8 @@ class Control_flimage():
         print("START")
         self.flim = FLIM_Com()
         self.flim.start()
-        self.flim.print_responses = False
+        self.print_responses = False
+        self.flim.print_responses = self.print_responses
         self.error_dict = {}
         self.max_error_num = 20
         self.XYsize_ini_path = r"XYsize.ini"
@@ -490,6 +491,7 @@ class Control_flimage():
         close_remote_control()
         self.flim = FLIM_Com()
         self.flim.start()
+        self.flim.print_responses = self.print_responses
         self.flim.messageReceived += FLIM_message_received
         if self.flim.Connected:
             print("\n  Reconnected.  Good Connection now.\n")

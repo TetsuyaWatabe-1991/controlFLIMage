@@ -13,15 +13,16 @@ import matplotlib.pyplot as plt
 # csvpath = r"G:\ImagingData\Tetsuya\20250423\B6GC6sTom0331\tpem\plot\result_2.csv"
 
 csvpath = r"G:\ImagingData\Tetsuya\20250508\plot\result_titration_Copy.csv"
+csvpath = r"Z:\Users\WatabeT\20250424\plot\quantification\result_2.csv"
 df = pd.read_csv(csvpath)
 
-spine_F_F0_max = 15
-shaft_F_F0_max = 15
+spine_F_F0_max = 30
+shaft_F_F0_max = 20
 
 spine_ylim_max = spine_F_F0_max * 1.1
 shaft_ylim_max = shaft_F_F0_max * 1.1
 
-xlim = [0,40]
+xlim = [0,110]
 
 df.loc[df[df[' spine_F_F0']>spine_F_F0_max].index, ' spine_F_F0'] = spine_F_F0_max
 df.loc[df[df[' dend_F_F0']>shaft_F_F0_max].index, ' dend_F_F0'] = shaft_F_F0_max

@@ -18,9 +18,6 @@ from sklearn.metrics import r2_score
 import numpy as np
 from controlflimage_threading import Control_flimage
 
-
-
-
 if False:
     import pyvisa
     rm = pyvisa.ResourceManager()

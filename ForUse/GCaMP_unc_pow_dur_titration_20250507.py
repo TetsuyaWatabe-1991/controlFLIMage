@@ -28,8 +28,8 @@ if "FLIMageCont" not in globals():
 
 
 #### Laser linear regression
-slope = 0.210
-intercept = 0.1145
+slope = 0.186
+intercept = 0.0466
 
 SettingPath = r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\uncaging_2times.txt"
 FLIMageCont.flim.sendCommand(f'LoadSetting, {SettingPath}')
@@ -43,7 +43,7 @@ laser_mW_ms = [
     [3.3, 6],
     [4.0, 6],
     [5.0, 6],
-    [6.5, 6],
+    #[6.5, 6],
     ]
 
 unc_pow_dur = []
@@ -51,7 +51,10 @@ for each_mw_ms in laser_mW_ms:
     
     mW_in_Thorlabs = each_mw_ms[0]/from_Thorlab_to_coherent_factor
     pow_from_mw = int((mW_in_Thorlabs - intercept)/slope)
-    unc_pow_dur.append([pow_from_mw,each_mw_ms[1]])
+    if pow_from_mw <= 100:    
+        unc_pow_dur.append([pow_from_mw,each_mw_ms[1]])
+    else:
+        print(f"pow_from_mw = {pow_from_mw} is over 100")
 
 print(unc_pow_dur)
 
@@ -157,6 +160,7 @@ import winsound
 for i in range(1):
     winsound.PlaySound("SystemExit", winsound.SND_ALIAS)
 
+print("end")
 
 # # First=True
 
