@@ -16,6 +16,55 @@ from skimage.draw import disk, polygon
 from scipy.ndimage import median_filter
 from FLIMageFileReader2 import FileReader
 from multidim_tiff_viewer import read_xyz_single
+import pandas as pd
+
+def plot_drift_from_drift_txt(drift_txt_path, show = True, savefig = False, savepath = ""):
+    if False:
+        drift_txt_path = r"G:\ImagingData\Tetsuya\20250611\test2\lowmag1_001_highmag_001_drift.txt"
+    df = pd.read_csv(drift_txt_path, sep = ",")
+
+    plt.figure(figsize=(4, 3))
+    # Change order to plot z last so it's on top
+    label_list=["drift_x_um","drift_y_um","drift_z_um"]  # Changed order
+    col_dict={"drift_x_um":"g","drift_y_um":"k","drift_z_um":"m"}
+    marker_dict = {"drift_x_um":"$x$", "drift_y_um":"$y$", "drift_z_um":"$z$"} 
+    size_dict = {"drift_x_um":50, "drift_y_um":50, "drift_z_um":50}  # Increased sizes, z is largest
+    filenum_list = range(len(df))
+    zyx_drift_dict = {}
+    for xyz in label_list:
+        if xyz not in df.columns:
+            if " "+xyz in df.columns:
+                zyx_drift_dict[xyz] = df[" "+xyz]
+            else:
+                print(f"Error: {xyz} not found in {drift_txt_path}")
+                return None
+        else:
+            zyx_drift_dict[xyz] = df[xyz]
+    for xyz in label_list:
+        if zyx_drift_dict[xyz].dtype != "float64":
+            print(f"Error: {xyz} is not a float64 in {drift_txt_path}")
+            return None
+
+    for xyz in label_list:
+        plt.plot(filenum_list, zyx_drift_dict[xyz], c=col_dict[xyz], ls="-", label=xyz)
+    # Plot scatter points in reverse order (z last so it's on top)
+    for xyz in reversed(label_list):
+        plt.scatter(filenum_list, zyx_drift_dict[xyz], 
+                    c=col_dict[xyz], 
+                    marker=marker_dict[xyz],
+                    s=size_dict[xyz],
+                    alpha=0.8)  # slightly less transparent
+    plt.xlabel("order of acquisition")
+    plt.ylabel("\u03BCm")
+    
+    if savefig:
+        if savepath == "":
+            savepath = os.path.join(os.path.dirname(drift_txt_path), "drift_plot.png")
+        plt.savefig(savepath,dpi=300,bbox_inches='tight')        
+    if show==True:
+        plt.show()        
+    plt.close();plt.clf();        
+
 
 def color_fue(savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLIMage\ForUse",
               vmin =1, vmax=10, cmap='inferno', label_text = "F/F0",fontsize = 48,
@@ -273,6 +322,6 @@ if __name__ == "__main__":
     slope = 0.210
     intercept = 0.1145
     # from_Thorlab_to_coherent_factor = 1/3
-    plot_GCaMP_F_F0(each_file = each_file)
-    # plot_GCaMP_F_F0(each_file = each_file,
-    #                 slope = slope, intercept = intercept)
+    # plot_GCaMP_F_F0(each_file = each_file)
+    # # plot_GCaMP_F_F0(each_file = each_file,
+    # #                 slope = slope, intercept = intercept)

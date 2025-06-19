@@ -87,9 +87,10 @@ class FileReader:
                     * ('PhotonsFileName' not in eq[0])
                     * ('Program' not in eq[1])
                     ):
-
-                    exec('self.' + eq[0] + ' = ' + eq[1])
-
+                    try:
+                        exec('self.' + eq[0] + ' = ' + eq[1])
+                    except:
+                        print(f"Error in decode_header: {eq}")
     
     def decode_header(self, header, new = True):
         infos = header.decode('ASCII').split('\r\n')

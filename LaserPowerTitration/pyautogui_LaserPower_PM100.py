@@ -72,7 +72,7 @@ class LaserSettingAuto():
             except:
                 input("please activate FLIMage window and press any key to start")
         
-            
+        self.FLIMageCont.flim.sendCommand("SetZoom, 101")
         self.Laser1_tab = [self.power_btn[0] - 0, self.power_btn[1] - 20]
         self.Laser2_tab = [self.power_btn[0] + 45, self.power_btn[1] - 20]
         self.Focus = [self.power_btn[0] +2, self.power_btn[1] + 190]            

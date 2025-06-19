@@ -72,6 +72,11 @@ class LaserGUIController:
         self.FLIMageCont = Control_flimage(flim_ini_path)
         self.FLIMageCont.flim.print_responses = False
         self._locate_gui_elements()
+        self.set_zoom()
+        
+    def set_zoom(self):
+        self.FLIMageCont.flim.sendCommand("SetZoom, 101")
+
 
     def _locate_gui_elements(self):
         while True:
@@ -255,7 +260,7 @@ def main():
     """
     power_png = r"Z:\Data Temp\Tetsuya\Power.png"
     flim_ini_path = r"C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
-    savefolder = r"Z:\Yasuda_lab\Data Temp\Tetsuya\Data\laserpower"
+    savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_Imaging\powermeter"
     percent_list_1 = [0, 10, 20, 30, 50, 70]
     percent_list_2 = [0, 10, 20, 30, 50, 70]
     run_measurements(power_png, flim_ini_path, savefolder, percent_list_1, percent_list_2)

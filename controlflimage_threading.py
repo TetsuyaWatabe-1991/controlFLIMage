@@ -233,9 +233,13 @@ class Control_flimage():
         self.Num_zyx_drift = {}
         self.showWindow = False
         self.syncrate = 0
-        self.bool_show_drift_after_align = True
+        self.bool_show_drift_after_align = False
         self.x_um = 0 #For detecting not assigned value
-        
+        self.RepeatNum=1
+        self.interval_sec=120
+        self.ch=0
+        self.expected_grab_duration_sec = 2
+
         FOVres = self.get_val_sendCommand('State.Acq.FOV_default')
         self.FOV_default= [float(val) for val in FOVres.strip('][').split(', ')] 
         self.XMaxVoltage = self.get_val_sendCommand('State.Acq.XMaxVoltage')
@@ -357,7 +361,7 @@ class Control_flimage():
         else: #leave 
             x_str=str(x)
             y_str=str(y)
-        
+        print("drift correction by motor")
         print(f"print SetMotorPosition,{x_str},{y_str},{z_str}")
         self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
 
@@ -656,7 +660,7 @@ class Control_flimage():
         if self.flim.Connected==False:
             self.reconnect()
     
-    def wait_while_grabbing(self,sleep_every_sec=2):
+    def wait_while_grabbing(self,sleep_every_sec=1):
         sleep(self.expected_grab_duration_sec)
         error_count = 0
         for i in range(int(self.interval_sec/sleep_every_sec)):
@@ -671,7 +675,9 @@ class Control_flimage():
                     self.reconnect()
                     break
             sleep(sleep_every_sec)
-            
+            print(" - ", end="")
+        print("\n *** END wait_while_grabbing *** \n")
+
     def send_uncaging_pos(self):
         self.flim.sendCommand(f"SetUncagingLocation, {self.uncaging_x}, {self.uncaging_y}")
     
@@ -1309,7 +1315,8 @@ class Control_flimage():
         
         
     def start_repeat(self, 
-                     spine_inipath = False):
+                     spine_inipath = False,
+                     plot_drift = True):
         self.start=datetime.now()
         
         self.folder = self.get_val_sendCommand("State.Files.pathName")
@@ -1334,7 +1341,8 @@ class Control_flimage():
             if len(self.flimlist)>1:
                 self.align_two_flimfile()
                 self.flim_connect_check()
-                self.plot_drift(show=True)
+                if plot_drift == True:
+                    self.plot_drift(show=True)
 
                 if self.drift_control==True:
                     # if NthAc < self.RepeatNum-1:
@@ -1405,7 +1413,18 @@ if __name__ == "__main__":
         FLIMageCont.flim.sendCommand(f'LoadSetting, {Zstack_ini}')
         FLIMageCont.flim.sendCommand(f'SetDIOPanel, 1, 1')
 
+    def get_realtime_value(FLIMageCont):
+        res = FLIMageCont.flim.sendCommand("GetRealtimeValue")
+        realtime_value = res.split(", ")[-1]
+        if realtime_value.isdigit():
+            return int(realtime_value)
+        else:
+            print("realtime_value is not a digit")
+            return None
 
+    for i in range(1000):
+        print(get_realtime_value(FLIMageCont))
+        sleep(0.1)
 
     # FLIMageCont.directionMotorZ=-1 #sometimes, it changes. Why?
     

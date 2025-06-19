@@ -16,7 +16,19 @@ from datetime import datetime
 from skimage.transform import resize
 
 def get_flimfile_list(one_file_path):
-    filelist=glob.glob(one_file_path[:-8]+'[0-9][0-9][0-9].flim')
+    print(f"DEBUG: get_flimfile_list called with: {one_file_path}")
+    print(f"DEBUG: one_file_path[:-8]: {one_file_path[:-8]}")
+    pattern = one_file_path[:-8]+'[0-9][0-9][0-9].flim'
+    print(f"DEBUG: glob pattern: {pattern}")
+    filelist=glob.glob(pattern)
+    print(f"DEBUG: glob.glob result: {filelist}")
+    print(f"DEBUG: filelist type: {type(filelist)}")
+    
+    # Ensure we always return a list
+    if not isinstance(filelist, list):
+        print(f"WARNING: glob.glob returned {type(filelist)}, converting to list")
+        filelist = list(filelist) if hasattr(filelist, '__iter__') else []
+    
     # filelist=filelist[:-1]
     return filelist
 
@@ -129,6 +141,7 @@ def align_two_flimfile_different_resolution(flim_1, flim_2, ch, return_pixel = F
     assert threeD_array_1.shape[0] == threeD_array_2.shape[0]
     lower_x_dim = min(threeD_array_1.shape[2],threeD_array_2.shape[2])
     lower_y_dim = min(threeD_array_1.shape[1],threeD_array_2.shape[1])
+    lower_z_dim = min(threeD_array_1.shape[0],threeD_array_2.shape[0])
     
     resized_array1 = resize(threeD_array_1, (11, lower_y_dim, lower_x_dim), anti_aliasing=False)
     resized_array2 = resize(threeD_array_2, (11, lower_y_dim, lower_x_dim), anti_aliasing=False)
@@ -154,19 +167,27 @@ def align_two_flimfile_different_resolution(flim_1, flim_2, ch, return_pixel = F
         print("lower_x_dim, lower_y_dim", lower_x_dim, lower_y_dim)
         print("threeD_array_1.shape, threeD_array_2.shape", threeD_array_1.shape, threeD_array_2.shape)
         vmax = threeD_array_1.max()
+        print("ch", ch)
+        print("Tiff_MultiArray_1.shape", Tiff_MultiArray_1.shape)
+        print("Tiff_MultiArray_2.shape", Tiff_MultiArray_2.shape)
+        print("vmax", vmax)
         plt.figure(figsize = (10,10))
         plt.subplot(2,2,1)
-        plt.imshow(threeD_array_1[:,:,:].max(axis = 0), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal")
+        plt.imshow(threeD_array_1[:,:,:].max(axis = 0), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal",
+                   extent=(0, x_um*lower_x_dim, y_um*lower_y_dim, 0))
         plt.title("threeD_array_1  " + os.path.basename(flim_1))
         plt.subplot(2,2,2)
-        plt.imshow(threeD_array_2[:,:,:].max(axis = 0), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal")
+        plt.imshow(threeD_array_2[:,:,:].max(axis = 0), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal",
+                   extent=(0, x_um*lower_x_dim, y_um*lower_y_dim, 0))
         plt.title("threeD_array_2  " + os.path.basename(flim_2))
         
         plt.subplot(2,2,3)
-        plt.imshow(threeD_array_1[:,:,:].max(axis = 1), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal")
+        plt.imshow(threeD_array_1[:,:,:].max(axis = 1), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal",
+                   extent=(0, x_um*lower_x_dim, z_um*lower_z_dim, 0))
         plt.title("threeD_array_1  " + os.path.basename(flim_1))
         plt.subplot(2,2,4)
-        plt.imshow(threeD_array_2[:,:,:].max(axis = 1), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal")
+        plt.imshow(threeD_array_2[:,:,:].max(axis = 1), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal",
+                   extent=(0, x_um*lower_x_dim, z_um*lower_z_dim, 0))
         plt.title("threeD_array_2  " + os.path.basename(flim_2))
         plt.show()
 

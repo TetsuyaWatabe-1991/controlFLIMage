@@ -22,6 +22,7 @@ def first_processing_for_flim_files(
     pre_length,
     save_plot_TF = True,
     save_tif_TF = True,    
+    ignore_words = ["for_align"]
     ) -> pd.DataFrame:
 
     # Load initial data
@@ -32,6 +33,7 @@ def first_processing_for_flim_files(
             "*_highmag_*002.flim"
             )
         )
+    one_of_file_list = [each_file for each_file in one_of_file_list if not any(ignore_word in each_file for ignore_word in ignore_words)]
 
     plot_savefolder = os.path.join(os.path.dirname(one_of_filepath), "plot")
     tif_savefolder = os.path.join(os.path.dirname(one_of_filepath), "tif")

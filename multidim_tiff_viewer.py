@@ -429,7 +429,195 @@ def z_stack_multi_z_click(stack_array, pre_assigned_pix_zyx_list=[], show_text =
         
     return pix_zyx_list
 
+def z_stack_multi_z_click_with_delete(stack_array, pre_assigned_pix_zyx_list=[], show_text = ""):
+    first_text_at_upper = "Click each position and click assign"
+    col_dict = {
+        "clicked_currentZ": "white",
+        "clicked_differentZ": "cyan",
+        "clicked_now": "magenta",
+        "pos_now": "red",
+        }
+    font = ("Courier New", 15)
+    show_size_YX_max = [768, 1024]
+    show_size_YX_min = [512, 512]
+    
+    TiffShape= stack_array.shape
+    if len(TiffShape)==3:
+        NumOfZ = TiffShape[0]
+        Z_change=[sg.Text("Z position", size=(20, 1)),
+                  sg.Slider(orientation ='horizontal', key='Z',
+                            default_value=int(NumOfZ/2), range=(1,NumOfZ),enable_events = True)            
+                  ]
+        yx_shape = TiffShape[1:3]
+        resize_yx_shape = calc_zoom_rate_based_on_maxsize(yx_shape, show_size_YX_max,show_size_YX_min)
+        im_PIL,resize_ratio_yx = tiffarray_to_PIL_8bit(stack_array,vmax = 255, show_size_yx = resize_yx_shape,
+                                                  return_ratio=True,NthSlice=int(NumOfZ/2))
+    else:
+        NumOfZ = 1
+        Z_change=[]
+        resize_yx_shape = calc_zoom_rate_based_on_maxsize(TiffShape, show_size_YX_max,show_size_YX_min)
+        im_PIL,resize_ratio_yx = tiffarray_to_PIL_8bit(stack_array, vmax = 255,  show_size_yx = resize_yx_shape,
+                                                  return_ratio=True,NthSlice=1)
+    
+    print("resize_ratio_yx",resize_ratio_yx)
+    
+    ZYX_pixel_clicked_list = []
+    if type(pre_assigned_pix_zyx_list)==list:
+        print(pre_assigned_pix_zyx_list)
+        for each_zyx in pre_assigned_pix_zyx_list:
+            each_z_resized = each_zyx[0]
+            each_y_resized = resize_yx_shape[0] - each_zyx[1]*resize_ratio_yx[0]
+            each_x_resized = each_zyx[2]*resize_ratio_yx[1]
+            ZYX_pixel_clicked_list.append([each_z_resized,
+                                           each_y_resized,
+                                           each_x_resized])
+    print("ZYX_pixel_clicked_list ",ZYX_pixel_clicked_list)
+    data =  PILimg_to_data(im_PIL)    
+   
+    sg.theme('Dark Blue 3')
 
+    layout = [
+                [
+                    sg.Text(show_text, font='Arial 8', size=(90, 1))
+                    ],
+                [
+                    sg.Text(first_text_at_upper, key='notification', font='Arial 10', 
+                            text_color='black', background_color='white', size=(60, 2))
+                    ],
+                [
+                    sg.Graph(
+                    canvas_size=resize_yx_shape[::-1], 
+                    graph_bottom_left=(0, 0),
+                    graph_top_right=resize_yx_shape[::-1],
+                    key="-GRAPH-",
+                    enable_events=True,background_color='lightblue',
+                    drag_submits=True,motion_events=True,
+                    )
+                    ],
+                [
+                    sg.Text("Intensity", size=(20, 1)),
+                    sg.Slider(orientation ='horizontal', key='Intensity',default_value=stack_array.max(),
+                         range=(1,255),enable_events = True),
+                    ],
+                Z_change,
+                [
+                    sg.Text("Assigned pos", size=(20, 1)),
+                    sg.Slider(orientation ='horizontal', key='pos',default_value=0,
+                         range=(0,20),enable_events = True),
+                    ],
+
+                [
+                    sg.Text(key='-INFO-', size=(30, 1)),
+                    sg.Button('Assign', size=(20, 2)),
+                    sg.Button('Delete', size=(20, 2)),
+                    sg.Button('Reset', size=(20, 2)),
+                    sg.Button('OK', size=(20, 2))
+                    ]
+            ]
+    
+    img_paste_loc = [0,resize_yx_shape[0]]
+    window = sg.Window("Z stack viewer with delete", layout, finalize=True)
+    graph = window["-GRAPH-"]  # type: sg.Graph
+    graph.draw_image(data=data, location = img_paste_loc)
+
+    x=-1
+    y=-1
+    NthSlice = 1
+
+    First = True
+    while True:
+        if First:
+            First = False
+            event, values = window.read(timeout=1)
+            event = "-GRAPH-"
+        else:
+            event, values = window.read()
+        ShowIntensityMax = values['Intensity']
+
+        if len(TiffShape)==3:
+            NthSlice = int(values['Z'])
+
+        if event == sg.WIN_CLOSED:
+            break
+        
+        if event == "pos":
+            if values['pos']<1:
+                continue
+            if len(ZYX_pixel_clicked_list)>=values['pos']:
+                nthpos = int(values['pos']-1)
+                Z = ZYX_pixel_clicked_list[nthpos][0] + 1
+                window['Z'].update(Z)
+                NthSlice = Z
+                window['notification'].update(f"Go to pos id: {int(values['pos'])}")
+            else:
+                window['notification'].update(f"pos id: {int(values['pos'])} is not defined.")
+            
+        if event == "-GRAPH-":
+            x, y = values["-GRAPH-"]
+                
+        if event ==  'Assign':
+            z,y,x = NthSlice - 1, y, x
+            ZYX_pixel_clicked_list.append([z, y, x])
+            x=-1; y=-1
+            
+        if event == 'Delete':
+            if values['pos'] >= 1 and len(ZYX_pixel_clicked_list) >= values['pos']:
+                nthpos = int(values['pos'] - 1)
+                deleted_pos = ZYX_pixel_clicked_list.pop(nthpos)
+                window['notification'].update(f"Deleted position {int(values['pos'])} at Z={deleted_pos[0]+1}, Y={deleted_pos[1]}, X={deleted_pos[2]}")
+                # Reset position slider if it's now out of range
+                if values['pos'] > len(ZYX_pixel_clicked_list):
+                    window['pos'].update(0)
+            else:
+                window['notification'].update("No position selected to delete")
+            
+        if event == "-GRAPH-" or "pos" or 'Update' or 'Z' or "Intensity" or 'Assign' or 'Delete':
+            im_PIL = tiffarray_to_PIL_8bit(stack_array,
+                                           vmax = ShowIntensityMax,  
+                                           show_size_yx = resize_yx_shape,
+                                           return_ratio = False, 
+                                           NthSlice = NthSlice)
+            data = PILimg_to_data(im_PIL)
+            graph.draw_image(data=data, location=img_paste_loc)
+            graph.draw_point((x,y), size=5, color = col_dict["clicked_now"])
+                
+            halfsize = min(resize_yx_shape)//8
+            for nth, EachZYX in enumerate(ZYX_pixel_clicked_list):
+                if EachZYX[0] == NthSlice -1:
+                    color = col_dict["clicked_currentZ"]
+                    if nth == int(values['pos']-1):
+                        color = col_dict["pos_now"]
+                    graph.DrawRectangle(
+                        (EachZYX[2]-halfsize, EachZYX[1]-halfsize), 
+                        (EachZYX[2]+halfsize, EachZYX[1]+halfsize), 
+                        line_color=color)
+                    text_x = max(EachZYX[2] - halfsize*0.90, resize_yx_shape[1]*0.007)
+                    text_y = min(EachZYX[1] + halfsize*0.80, resize_yx_shape[0]*0.990)
+                    graph.DrawText(str(nth+1), (text_x, text_y),
+                                    font=font, color = color)
+                    
+                else:
+                    color = col_dict["clicked_differentZ"]
+                    graph.DrawText(str(nth+1), (EachZYX[2],EachZYX[1]),
+                                    font=font, color = color)
+
+        if event ==  'Reset':
+            ZYX_pixel_clicked_list = []
+            graph.draw_image(data=data, location=img_paste_loc)
+            
+        if event ==  'OK':
+            window.close()
+            pix_zyx_list = []
+            for each_zyx in ZYX_pixel_clicked_list:
+                each_z_pix = each_zyx[0]
+                each_y_pix = round((resize_yx_shape[0]-each_zyx[1])/resize_ratio_yx[0])
+                each_x_pix = round(each_zyx[2]/resize_ratio_yx[1])
+                pix_zyx_list.append([each_z_pix,
+                                     each_y_pix,
+                                     each_x_pix])
+            break
+        
+    return pix_zyx_list
 
 def threeD_array_click(stack_array,Text="Click",SampleImg=None,
                        ShowPoint=False,ShowPoint_YX=[0,0],
@@ -537,7 +725,7 @@ def threeD_array_click(stack_array,Text="Click",SampleImg=None,
 
         if event ==  'OK':
             if x==-1:
-                window["-INFO-"].update(value="Please click",text_color='red', background_color='white')
+                window["-INFO-"].update(value="Please click")
                 continue
             else:
                 z,y,x=NthSlice-1, y, x
@@ -615,73 +803,45 @@ def multiple_uncaging_click(stack_array,Text="Click",SampleImg=None,ShowPoint=Fa
         col_list=['cyan','red']
         y_2 = 512 - ShowPoint_YX[0]*resize_ratio_yx[0]
         x_2 = ShowPoint_YX[1]*resize_ratio_yx[1]
-        graph.draw_point((x_2,y_2), size=5, color = col_list[1])
-        
-    x=-1;y=-1;fixedSlice=-1;
-
-    NthSlice = 1
-    fixZ = False
-    
+        graph.draw_point((x_2,y_2), size=5, color = col_list[1]) 
+   
     while True:
         event, values = window.read()
         ShowIntensityMax = values['Intensity']
-
-        if len(TiffShape)==3:
-            if fixZ == False:
-                NthSlice = int(values['Z'])
-            else:
-                NthSlice = fixedSlice          
-
+        NthCh = int(values['Ch'])
+        
+        if NthCh == 1:
+            tiffpath = transparent_tiffpath
+        else:
+            tiffpath = fluorescent_tiffpath
+        
         if event == sg.WIN_CLOSED:
             break
 
         if event == "-GRAPH-":
             x, y = values["-GRAPH-"]
-            im_PIL = tiffarray_to_PIL(stack_array,Percent=ShowIntensityMax,NthSlice=NthSlice)
+            im_PIL = tiff16bit_to_PIL(tiffpath,Percent=ShowIntensityMax,show_size_xy=show_size_xy)
             data =  PILimg_to_data(im_PIL)
             graph.erase()
-            graph.draw_image(data=data, location=(0,512))
+            graph.draw_image(data=data, location=(0,show_size_xy[1]))
             graph.draw_point((x,y), size=5, color = col_list[0])
 
-            if len(ShowPointsYXlist)>0:
-                for EachYX in ShowPointsYXlist:
-                    graph.draw_point((EachYX[1],EachYX[0]), size=5, color = col_list[1])
-
-        if event ==  'Update' or 'Z' or "Intensity":
-            im_PIL = tiffarray_to_PIL(stack_array,Percent=ShowIntensityMax,NthSlice=NthSlice)
+        if event ==  'Update' or "Intensity" or "Ch":
+            im_PIL = tiff16bit_to_PIL(tiffpath,Percent=ShowIntensityMax,show_size_xy=show_size_xy)
             data =  PILimg_to_data(im_PIL)
-            graph.draw_image(data=data, location=(0,512))
+            graph.draw_image(data=data, location=(0,show_size_xy[1]))
             graph.draw_point((x,y), size=5, color = col_list[0])
-            if len(ShowPointsYXlist)>0:
-                for EachYX in ShowPointsYXlist:
-                    graph.draw_point((EachYX[1],EachYX[0]), size=5, color = col_list[1])
 
-        if event ==  'Assign':
-            z,y,x=NthSlice-1, y, x
-            ShowPointsYXlist.append([y,x])
-            fixZ = True
-            fixedSlice = NthSlice
-            
-            
-        if event ==  'Reset':
-            ShowPointsYXlist = []
-            fixZ = False
-            
         if event ==  'OK':
             if x==-1:
-                window["-INFO-"].update(value="Please click",text_color='red', background_color='white')
+                window["-INFO-"].update(value="Please click")
                 continue
             else:
-                z = fixedSlice-1
+                y,x = y, x
                 window.close()
-                xlist, ylist = [], []
-                for EachYX in ShowPointsYXlist:
-                    xlist.append(EachYX[1]/resize_ratio_yx[1])
-                    ylist.append((512-EachYX[0])/resize_ratio_yx[0])
-
-                return z,ylist,xlist
+                return ShowPointsYXlist
                 break
-    
+
 
 
 def multiple_uncaging_click_savetext(flimpath, ch1or2=1):

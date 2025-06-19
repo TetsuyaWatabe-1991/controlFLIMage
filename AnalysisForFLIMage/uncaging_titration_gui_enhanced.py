@@ -253,7 +253,10 @@ def create_default_rois(image_shape: Tuple[int, int]) -> Tuple[np.ndarray, np.nd
     
     return shaft_points, spine_points
 
-def analyze_uncaging_titration(filelist: List[str], pow_slope: float, pow_intcpt: float, quality_threshold: float = 0.3):
+def analyze_uncaging_titration(filelist: List[str], pow_slope: float, 
+                               pow_intcpt: float, quality_threshold: float = 0.3,
+                               ignore_defined_roi: bool = False
+                               ):
     """
     Analyze uncaging titration data with enhanced GUI features.
     
@@ -520,12 +523,12 @@ def analyze_uncaging_titration(filelist: List[str], pow_slope: float, pow_intcpt
 
 if __name__ == "__main__":
     # Configuration parameters
-    pow_slope = 0.198
-    pow_intcpt = 0.154
+    pow_slope = 0.158
+    pow_intcpt = 0.139
     quality_threshold = 0.1  # Adjust based on your image quality requirements
     
     # File list - modify this path as needed
-    filelist = glob.glob(r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250606\*um_*.flim")
+    filelist = glob.glob(r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250612\NoMg_dend*um_*.flim")
     
     # Alternative example paths (uncomment as needed):
     # filelist = glob.glob(r"G:\ImagingData\Tetsuya\20250506\E4_roomair_*.flim")
