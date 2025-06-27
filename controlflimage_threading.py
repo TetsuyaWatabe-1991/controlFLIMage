@@ -404,8 +404,8 @@ class Control_flimage():
 
     def go_to_absolute_pos_motor_checkstate(self,dest_x,dest_y,dest_z, 
                                             sq_err_thre = 10, 
-                                            first_wait_sec = 4, 
-                                            iter_wait_sec = 2):
+                                            first_wait_sec = 2, 
+                                            iter_wait_sec = 1):
         x,y,z=self.get_position()
         x_str=str(dest_x)
         y_str=str(dest_y)
@@ -416,12 +416,12 @@ class Control_flimage():
         sleep(first_wait_sec)
         
         dest_xyz = np.array([dest_x, dest_y, dest_z])
-        for i in range(10):
+        for i in range(50):
             # currentpos2 = self.get_val_sendCommand("State.Motor.motorPosition")
             # currentpos_num2 = np.array(currentpos2[1:-1].split(","), dtype=float)
             currentpos_num2=np.array(self.get_position())
             
-            
+           
             diff2 =  currentpos_num2 - dest_xyz
             sum_sq_err2 = (diff2*diff2).sum()
             

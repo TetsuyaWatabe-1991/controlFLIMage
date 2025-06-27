@@ -485,7 +485,7 @@ def get_and_save_candidate_pos(flim_path, **kwargs):
 if __name__ == "__main__":
     # flim_path = r"G:\ImagingData\Tetsuya\20250612\test_lowmag\lowmag1_001_20250602_256_zoom2_GFP.flim"
     flim_path_list = [
-        r"G:\ImagingData\Tetsuya\20250618\auto1\lowmag1_001.flim"
+        r"G:\ImagingData\Tetsuya\20250619\auto1\lowmag1_001.flim"
         ]
     threshold_area_um2 = 10
     spacing_um = 30

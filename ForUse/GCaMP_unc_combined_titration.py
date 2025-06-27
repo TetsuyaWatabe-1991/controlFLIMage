@@ -1,10 +1,11 @@
 # %%
 
 import sys
+import os
 sys.path.append("../")
+sys.path.append(os.path.dirname(__file__))
 import glob
 import json
-import os
 from time import sleep
 from datetime import datetime
 import tkinter as tk
@@ -44,7 +45,7 @@ PLOT_TYPE_MULTIPLE = 'multiple'  # Plot all images in one figure
 PLOT_TYPE_SINGLE = 'single'      # Plot each image individually
 
 # Wait times
-WAIT_BETWEEN_SETTINGS_SEC = 13
+WAIT_BETWEEN_SETTINGS_SEC = 30
 WAIT_BETWEEN_ACQUISITIONS_SEC = 30
 
 def get_manual_power_calibration():
@@ -252,9 +253,9 @@ if __name__ == "__main__":
     # Laser power titration settings (mW, ms)
     LASER_MW_MS = [
         # [0.1, 6],
-        # [0.2, 6],
-        # [0.4, 6],
-        # [2.4, 6],
+        [1.6, 6],
+        [2.0, 6],
+        [2.4, 6],
         [2.8, 6],
         # [3.3, 6],
         # [4.0, 6],
@@ -273,8 +274,8 @@ if __name__ == "__main__":
     # Multiple setting paths for different experiments
     SETTINGPATH_LIST = [
         r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\uncaging_2times_no_ave.txt",
-        r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\twopulses.txt",
-        r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\fivepulses.txt",
+        # r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\twopulses.txt",
+        # r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\fivepulses.txt",
         # r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\LTP_by_fivepulses50Hz.txt"
     ]
     for each_setting_path in SETTINGPATH_LIST:

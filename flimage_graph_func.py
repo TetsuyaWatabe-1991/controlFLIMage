@@ -4,7 +4,7 @@ Created on Fri May  9 16:09:00 2025
 
 @author: yasudalab
 """
-
+import json
 import sys
 sys.path.append(r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLIMage")
 import os
@@ -17,6 +17,7 @@ from scipy.ndimage import median_filter
 from FLIMageFileReader2 import FileReader
 from multidim_tiff_viewer import read_xyz_single
 import pandas as pd
+plt.rcParams['image.interpolation'] = 'none'
 
 def plot_drift_from_drift_txt(drift_txt_path, show = True, savefig = False, savepath = ""):
     if False:
@@ -151,7 +152,7 @@ def color_fue(savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLI
 def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0, 
                     from_Thorlab_to_coherent_factor = 1/3,
                     vmin = 1, vmax = 10, cmap='inferno', 
-                    acceptable_image_shape_0th_list = [4,33,34]):
+                    acceptable_image_shape_0th_list = [4,32, 33,34]):
     uncaging_iminfo = FileReader()
     uncaging_iminfo.read_imageFile(each_file, True) 
     
@@ -167,8 +168,15 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
     center_y = imagearray.shape[-2] * uncaging_x_y_0to1[1]
     center_x = imagearray.shape[-3] * uncaging_x_y_0to1[0]
        
-    GCpre = imagearray[0,0,0,:,:,:].sum(axis = -1)
-    GCunc = imagearray[3,0,0,:,:,:].sum(axis = -1)
+    
+    if imagearray.shape[0] in [4, 33, 34]:
+        GCpre = imagearray[0,0,0,:,:,:].sum(axis=-1)
+        GCunc = imagearray[3,0,0,:,:,:].sum(axis=-1)
+    elif imagearray.shape[0] in [32]:
+        GCpre = imagearray[8*0 + 1 : 8*1, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+        GCunc = imagearray[8*3 + 1 : 8*4, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+    assert len(GCpre.shape) == 2 #Image should be 2D
+
  
     GC_pre_med = median_filter(GCpre, size=3)
     GC_unc_med = median_filter(GCunc, size=3)
@@ -193,9 +201,9 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
     savefolder = os.path.join(folder,"plot")
     os.makedirs(savefolder, exist_ok=True)
     basename = os.path.basename(each_file)                
-    savepath = os.path.join(savefolder, basename[:-5] + ".png")
+    savepath = os.path.join(savefolder, basename[:-5] + "_F_F0.png")
     plt.savefig(savepath, dpi=150, bbox_inches = "tight")
-    
+    print("F_F0_savepath ", savepath)
     plt.show()
     
     color_fue(savefolder = savefolder,
@@ -222,7 +230,9 @@ def calc_spine_dend_GCaMP(
     from_ini = True,
     circle_radius = 3,  # Set as needed
     rect_length = 10,  # along the line
-    rect_height = 2   # perpendicular to the line
+    rect_height = 2,   # perpendicular to the line
+    save_img = False,
+    save_suffix = "",
     ):
     
     if from_ini:
@@ -236,6 +246,9 @@ def calc_spine_dend_GCaMP(
     spine_x -= drift_x_pix
     spine_y -= drift_y_pix
     dend_intercept -=  -dend_slope * drift_x_pix + drift_y_pix
+    # spine_x += drift_x_pix
+    # spine_y += drift_y_pix
+    # dend_intercept +=  -dend_slope * drift_x_pix + drift_y_pix
     
     y_c, x_c = calc_point_on_line_close_to_xy(x = spine_x, y = spine_y, 
                                    slope = dend_slope, 
@@ -247,8 +260,15 @@ def calc_spine_dend_GCaMP(
     uncaging_iminfo.read_imageFile(each_file, True) 
     
     imagearray=np.array(uncaging_iminfo.image)
-    GCpre = imagearray[0,0,0,:,:,:].sum(axis = -1)
-    GCunc = imagearray[3,0,0,:,:,:].sum(axis = -1)
+    
+    if imagearray.shape[0] in [4, 33, 34]:
+        GCpre = imagearray[0,0,0,:,:,:].sum(axis=-1)
+        GCunc = imagearray[3,0,0,:,:,:].sum(axis=-1)
+    elif imagearray.shape[0] in [32]:
+        GCpre = imagearray[8*0 + 1 : 8*1, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+        GCunc = imagearray[8*3 + 1 : 8*4, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+    assert len(GCpre.shape) == 2 #Image should be 2D
+
     GC_pre_med = median_filter(GCpre, size=3)
     GC_unc_med = median_filter(GCunc, size=3)
     
@@ -279,9 +299,11 @@ def calc_spine_dend_GCaMP(
     shaft_mean_pre = GC_pre_med[rr_rect, cc_rect].mean()
     shaft_mean_unc = GC_unc_med[rr_rect, cc_rect].mean()
     
-    
+    spineF_F0 = spine_mean_unc/spine_mean_pre
+    shaftF_F0 = shaft_mean_unc/shaft_mean_pre
+
     # Plot
-    plt.figure(figsize=(4, 4))
+    
     vmax=np.percentile(GCunc,99.9)
     GCunc8bit=(GCunc/vmax * 255).astype(np.uint8)
     GCunc8bit[GCunc>vmax] = 255
@@ -303,13 +325,13 @@ def calc_spine_dend_GCaMP(
     savefolder = os.path.join(folder,"plot")
     os.makedirs(savefolder, exist_ok=True)
     basename = os.path.basename(each_file)                
-    savepath = os.path.join(savefolder, basename[:-5] + ".png")
-    plt.savefig(savepath, dpi=150, bbox_inches = "tight")
-    
+    savepath = os.path.join(savefolder, basename[:-5] + "_ROI" + save_suffix + ".png")
+    if save_img:
+        plt.savefig(savepath, dpi=150, bbox_inches = "tight")
+    print("ROI_savepath ", savepath)
     plt.show()
     
-    spineF_F0 = spine_mean_unc/spine_mean_pre
-    shaftF_F0 = shaft_mean_unc/shaft_mean_pre
+
     print("spine",round(spine_mean_pre,1), round(spine_mean_unc,1), " F_F0",round(spineF_F0,1))
     print("shaft",round(shaft_mean_pre,1), round(shaft_mean_unc,1), " F_F0",round(shaftF_F0,1))
 
@@ -318,10 +340,34 @@ def calc_spine_dend_GCaMP(
     
 if __name__ == "__main__":
     
-    each_file   =  r"G:\ImagingData\Tetsuya\20250508\titration_dend1_31um_006.flim"
-    slope = 0.210
-    intercept = 0.1145
-    # from_Thorlab_to_coherent_factor = 1/3
-    # plot_GCaMP_F_F0(each_file = each_file)
-    # # plot_GCaMP_F_F0(each_file = each_file,
-    # #                 slope = slope, intercept = intercept)
+    x_axis = "power"
+    
+    json_path = r"G:\ImagingData\Tetsuya\20250620\auto2\plot\lowmag2__highmag_1_009_F_F0_vs_power.json"
+    with open(json_path, "r") as f:
+        result_dict = json.load(f)
+    print(result_dict)
+    spine_list = []
+    shaft_list = []
+    power_list = []
+    for each_file in result_dict:
+        spineF_F0 = result_dict[each_file]["spineF_F0"]
+        shaftF_F0 = result_dict[each_file]["shaftF_F0"]
+        power = result_dict[each_file][x_axis]
+        spine_list.append(spineF_F0)
+        shaft_list.append(shaftF_F0)
+        power_list.append(power)
+
+    plt.figure(figsize=(4, 4))
+    plt.plot(power_list, spine_list, "ko", label="spine")
+    plt.plot(power_list, shaft_list, "kx", label="shaft")
+    plt.legend()
+    plt.xlabel(x_axis)
+    plt.ylabel("F/F0")
+    plt.show()
+
+    
+    
+    
+    
+    
+    

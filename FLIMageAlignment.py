@@ -133,7 +133,7 @@ def align_two_flimfile(flim_1, flim_2, ch, return_pixel = False):
         return [z_relative, y_relative, x_relative], Aligned_4d_array
 
 
-def align_two_flimfile_different_resolution(flim_1, flim_2, ch, return_pixel = False, debug = False):    
+def align_two_flimfile_different_resolution(flim_1, flim_2, ch, return_pixel = False, debug = False, save_img = False):    
     Tiff_MultiArray_1, iminfo_1, _ = flim_files_to_nparray([flim_1],ch=ch)
     Tiff_MultiArray_2, iminfo_2, _ = flim_files_to_nparray([flim_2],ch=ch)
     threeD_array_1 = Tiff_MultiArray_1[0]
@@ -160,7 +160,7 @@ def align_two_flimfile_different_resolution(flim_1, flim_2, ch, return_pixel = F
     y_relative = y_um*shifts_zyx_pixel[-1][1]
     z_relative = z_um*shifts_zyx_pixel[-1][0]
     
-    if debug == True:
+    if debug == True or save_img == True:
         print("x_um_1, y_um_1, z_um_1", x_um_1, y_um_1, z_um_1)
         print("x_um_2, y_um_2, z_um_2", x_um_2, y_um_2, z_um_2)
         print("x_um, y_um, z_um", x_um, y_um, z_um)
@@ -173,22 +173,28 @@ def align_two_flimfile_different_resolution(flim_1, flim_2, ch, return_pixel = F
         print("vmax", vmax)
         plt.figure(figsize = (10,10))
         plt.subplot(2,2,1)
-        plt.imshow(threeD_array_1[:,:,:].max(axis = 0), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal",
+        plt.imshow(threeD_array_1[:,:,:].max(axis = 0), cmap = "gray", interpolation="none", vmax = vmax, aspect = "equal",
                    extent=(0, x_um*lower_x_dim, y_um*lower_y_dim, 0))
-        plt.title("threeD_array_1  " + os.path.basename(flim_1))
+        plt.title(os.path.basename(flim_1))
         plt.subplot(2,2,2)
-        plt.imshow(threeD_array_2[:,:,:].max(axis = 0), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal",
+        plt.imshow(threeD_array_2[:,:,:].max(axis = 0), cmap = "gray", interpolation="none", vmax = vmax, aspect = "equal",
                    extent=(0, x_um*lower_x_dim, y_um*lower_y_dim, 0))
-        plt.title("threeD_array_2  " + os.path.basename(flim_2))
+        plt.title(os.path.basename(flim_2))
         
         plt.subplot(2,2,3)
-        plt.imshow(threeD_array_1[:,:,:].max(axis = 1), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal",
+        plt.imshow(threeD_array_1[:,:,:].max(axis = 1), cmap = "gray", interpolation="none", vmax = vmax, aspect = "equal",
                    extent=(0, x_um*lower_x_dim, z_um*lower_z_dim, 0))
-        plt.title("threeD_array_1  " + os.path.basename(flim_1))
+        plt.title(os.path.basename(flim_1))
         plt.subplot(2,2,4)
-        plt.imshow(threeD_array_2[:,:,:].max(axis = 1), cmap = "gray", interpolation="nearest", vmax = vmax, aspect = "equal",
+        plt.imshow(threeD_array_2[:,:,:].max(axis = 1), cmap = "gray", interpolation="none", vmax = vmax, aspect = "equal",
                    extent=(0, x_um*lower_x_dim, z_um*lower_z_dim, 0))
-        plt.title("threeD_array_2  " + os.path.basename(flim_2))
+        plt.title(os.path.basename(flim_2))
+        if save_img == True:
+            dir_name = os.path.join(os.path.dirname(flim_2), "Alignment")
+            os.makedirs(dir_name, exist_ok=True)
+            save_basename = os.path.basename(flim_2)[:-5]
+            plt.savefig(os.path.join(dir_name, save_basename + "_for_align.png"), dpi = 72, bbox_inches = 'tight')
+            print(f"Saved alignment image to {os.path.join(dir_name, save_basename + '_for_align.png')}")
         plt.show()
 
 

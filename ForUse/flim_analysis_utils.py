@@ -1,3 +1,5 @@
+import sys
+sys.path.append("..")
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -100,6 +102,118 @@ def process_flim_image(each_file, power_slope, power_intercept,
         'pow_mw_round': pow_mw_round,
         'pulseWidth': pulseWidth
     }
+
+
+
+
+
+def process_flim_image_no_check(each_file, averaged_bool, power_slope, power_intercept, 
+                                from_Thorlab_to_coherent_factor=1/3):
+
+    uncaging_iminfo = FileReader()
+    uncaging_iminfo.read_imageFile(each_file, True) 
+    
+    imagearray = np.array(uncaging_iminfo.image)
+    
+    # Extract image data
+    uncaging_x_y_0to1 = uncaging_iminfo.statedict["State.Uncaging.Position"]
+    uncaging_pow = uncaging_iminfo.statedict["State.Uncaging.Power"]
+    pulseWidth = uncaging_iminfo.statedict["State.Uncaging.pulseWidth"]
+    
+    center_y = imagearray.shape[-2] * uncaging_x_y_0to1[1]
+    center_x = imagearray.shape[-3] * uncaging_x_y_0to1[0]
+
+    if averaged_bool:
+        GCpre = imagearray[0,0,0,:,:,:].sum(axis=-1)
+        GCunc = imagearray[3,0,0,:,:,:].sum(axis=-1)
+        Tdpre = imagearray[0,0,1,:,:,:].sum(axis=-1)
+    else:
+        GCpre = imagearray[8*0 + 1 : 8*1, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+        GCunc = imagearray[8*3 + 1 : 8*4, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+        Tdpre = imagearray[8*0 + 1 : 8*1, 0,1,:,:,:].sum(axis=-1).sum(axis=0)
+    assert len(GCpre.shape) == 2 #Image should be 2D
+
+    # Apply median filter
+    GC_pre_med = median_filter(GCpre, size=3)
+    GC_unc_med = median_filter(GCunc, size=3)
+    
+    # Calculate F/F0
+    GCF_F0 = (GC_unc_med/GC_pre_med)
+    GCF_F0[GC_pre_med == 0] = 0
+
+    # Calculate power in mW
+    pow_mw = power_slope * uncaging_pow + power_intercept
+    pow_mw_coherent = pow_mw * from_Thorlab_to_coherent_factor
+    pow_mw_round = round(pow_mw_coherent, 1)
+    
+    return {
+        'imagearray': imagearray,
+        'statedict': uncaging_iminfo.statedict,
+        'GCF_F0': GCF_F0,
+        'Tdpre': Tdpre,
+        'center_x': center_x,
+        'center_y': center_y,
+        'pow_mw_round': pow_mw_round,
+        'pulseWidth': pulseWidth
+    }
+
+
+def plot_single_tdTom_and_GCaMP(data, F_F0_vmin=1, F_F0_vmax=10, save_path=None):
+    each_fig_size = 2
+    n_imgs = 1
+    fig = plt.figure(figsize=(each_fig_size*(n_imgs+2), each_fig_size))
+    gs = gridspec.GridSpec(1, n_imgs+2, width_ratios=[0.9] + [1]*n_imgs + [0.08], wspace=0.05)
+
+    ax = fig.add_subplot(gs[0, 0])
+    plt.imshow(data['Tdpre'], cmap='gray')
+    plt.plot(data['center_x'], data['center_y'], 'c+', markersize=5)
+    plt.title('tdTomato')
+    plt.axis('off')
+
+    ax = fig.add_subplot(gs[0, 1])
+    im = ax.imshow(data['GCF_F0'], cmap="inferno", vmin=F_F0_vmin, vmax=F_F0_vmax)
+    ax.plot(data['center_x'], data['center_y'], 'c+', markersize=5)
+    ax.set_title(f"{data['pow_mw_round']} mW, {data['pulseWidth']} ms")
+    ax.axis('off')
+    
+    # Add colorbar with vmin/vmax numbers only (following other plot types)
+    ax_cbar = fig.add_subplot(gs[0, -1])
+    norm = Normalize(vmin=F_F0_vmin, vmax=F_F0_vmax)
+    sm = ScalarMappable(norm=norm, cmap='inferno')
+    cbar = plt.colorbar(sm, cax=ax_cbar, orientation='vertical')
+    cbar.ax.set_yticks([])
+    cbar.ax.tick_params(size=0)
+    for spine in cbar.ax.spines.values():
+        spine.set_visible(False)
+    fontsize = 12
+    cbar.ax.text(0.5, 1.02, str(F_F0_vmax), ha='center', va='bottom', fontsize=fontsize, transform=cbar.ax.transAxes)
+    cbar.ax.text(0.5, -0.02, str(F_F0_vmin), ha='center', va='top', fontsize=fontsize, transform=cbar.ax.transAxes)
+    cbar.ax.text(1.3, 0.5, 'F/F0', ha='left', va='center', fontsize=fontsize, rotation=90, transform=cbar.ax.transAxes)
+    
+
+    # Color bar at the far right
+    ax_cbar = fig.add_subplot(gs[0, -1])
+    norm = Normalize(vmin=F_F0_vmin, vmax=F_F0_vmax)
+    sm = ScalarMappable(norm=norm, cmap='inferno')
+    cbar = plt.colorbar(sm, cax=ax_cbar, orientation='vertical')
+    cbar.ax.set_yticks([])
+    cbar.ax.tick_params(size=0)
+    for spine in cbar.ax.spines.values():
+        spine.set_visible(False)
+    fontsize = 12
+    cbar.ax.text(0.5, 1.02, str(F_F0_vmax), ha='center', va='bottom', fontsize=fontsize, transform=cbar.ax.transAxes)
+    cbar.ax.text(0.5, -0.02, str(F_F0_vmin), ha='center', va='top', fontsize=fontsize, transform=cbar.ax.transAxes)
+    cbar.ax.text(1.3, 0.5, 'F/F0', ha='left', va='center', fontsize=fontsize, rotation=90, transform=cbar.ax.transAxes)
+
+
+
+
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    
+    plt.show()
 
 def plot_single_image(data, F_F0_vmin=1, F_F0_vmax=10, save_path=None):
     """
@@ -227,3 +341,19 @@ def process_and_plot_flim_images(filelist, power_slope, power_intercept,
             plot_multiple_images(result_img_dict, F_F0_vmin, F_F0_vmax, savepath)
     
     return result_img_dict 
+
+
+if __name__ == "__main__":
+    from GCaMP_unc_combined_titration import load_power_calibration
+    
+    filepath = r"G:\ImagingData\Tetsuya\20250623\LTP_dend3_Mg100uM_20um_025.flim"
+    
+    power_slope, power_intercept = load_power_calibration()
+
+    data = process_flim_image_no_check(filepath, 
+                                       averaged_bool=False, 
+                                       power_slope=power_slope, 
+                                       power_intercept=power_intercept)
+    plot_single_tdTom_and_GCaMP(data, 
+                                save_path = filepath[:-5] + "_tdTom_and_GCaMP.png", 
+                                F_F0_vmin=0, F_F0_vmax=10)

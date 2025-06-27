@@ -29,9 +29,9 @@ class Multiarea_from_lowmag():
         self.lowmag_iminfo = FileReader()
         self.lowmag_iminfo.read_imageFile(self.lowmag_path, True)
         self.lowmag_magnification = self.lowmag_iminfo.statedict['State.Acq.zoom']
-        latestpath = self.latest_path()
-        self.lowmag_iminfo = FileReader()
-        self.lowmag_iminfo.read_imageFile(latestpath, True)
+        # latestpath = self.latest_path()
+        # self.lowmag_iminfo = FileReader()
+        # self.lowmag_iminfo.read_imageFile(latestpath, True)
         
         self.high_mag_setting_path = high_mag_setting_path
         self.high_mag_relpos_dict = {}
@@ -48,13 +48,24 @@ class Multiarea_from_lowmag():
         additionZ_um = sliceStep*(nSlices - 1)/2
         corrected_lowmag_xyz_um = copy.copy(bottom_lowmag_xyz_um)
         corrected_lowmag_xyz_um[2] += additionZ_um
+        self.bottom_lowmag_xyz_um = copy.copy(bottom_lowmag_xyz_um)
         
         self.corrected_lowmag_xyz_um = copy.copy(corrected_lowmag_xyz_um)
         self.ch = ch_1or2 -1
         self.Spine_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Spine_example.png"
         self.Dendrite_example=r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Dendrite_example.png"
         self.cuboid_ZYX=[2,20,20]
-        
+
+        assert type(self.high_mag_setting_path) == str
+
+        if os.path.exists(self.high_mag_setting_path):
+            self.high_mag_setting_path = self.high_mag_setting_path
+        else:
+            self.first_highmag_flim = self.get_first_high_mag_flim()
+            if self.first_highmag_flim != "":
+                self.high_mag_setting_path = self.first_highmag_flim
+                print(f"Using {self.first_highmag_flim} as high mag setting path")
+
     
     def read_rel_pos_um_csv(self):
         self.rel_pos_df = pd.read_csv(self.rel_pos_um_csv_path)
@@ -100,6 +111,14 @@ class Multiarea_from_lowmag():
                                   self.lowmag_basename + str(low_maxcount).zfill(3) + ".flim")
         return latestpath
 
+    def get_first_high_mag_flim(self):
+        highmag_flimlist = glob.glob(os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"],
+                                              f"{self.lowmag_basename}_highmag_[0-9]_"+"[0-9][0-9][0-9].flim"))
+        if len(highmag_flimlist) == 0:
+            return ""
+        else:
+            return highmag_flimlist[0]
+
     def count_flimfiles(self) -> int:
         low_flimlist = glob.glob(os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"],
                                               self.lowmag_basename+"[0-9][0-9][0-9].flim"))
@@ -108,14 +127,15 @@ class Multiarea_from_lowmag():
                                              self.lowmag_basename + str(self.low_counter).zfill(3) + ".flim")
         return self.low_counter
 
-    def count_high_mag_flimfiles(self, pos_id) -> int:
+    def count_high_mag_flimfiles(self, pos_id, return_first_flim = False) -> int:
         highmag_flimlist = glob.glob(os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"],
                                               f"{self.lowmag_basename}_highmag_{pos_id}_"+"[0-9][0-9][0-9].flim"))
         counter = self.get_max_plus_one_flimfiles(highmag_flimlist)    
         return counter
         # self.high_max_plus1_flim = os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"], 
                                               # f"{self.lowmag_basename}_highmag_{pos_id}_" + str(self.low_counter).zfill(3) + ".flim")
-        
+
+
     def send_lowmag_acq_info(self, FLIMageCont):
         FLIMageCont.flim.sendCommand(f'LoadSetting, {self.lowmag_path}')
         FLIMageCont.flim.sendCommand(f'State.Acq.power = {self.lowmag_iminfo.statedict["State.Acq.power"]}')
@@ -133,9 +153,6 @@ class Multiarea_from_lowmag():
         FLIMageCont.flim.sendCommand(f'State.Acq.zoom = {self.high_mag_zoom}')      
         counter = self.count_high_mag_flimfiles(pos_id = pos_id)
         FLIMageCont.flim.sendCommand(f'State.Files.fileCounter = {counter}')
-        # FLIMageCont.relative_zyx_um = [(-1)*self.high_mag_relpos_dict[pos_id]["z_um"],
-        #                                self.high_mag_relpos_dict[pos_id]["y_um"],
-        #                                self.high_mag_relpos_dict[pos_id]["x_um"]]
         FLIMageCont.relative_zyx_um = [(-1)*self.high_mag_relpos_dict[pos_id]["z_um"],
                                        (-1)*self.high_mag_relpos_dict[pos_id]["y_um"],
                                        (-1)*self.high_mag_relpos_dict[pos_id]["x_um"]]

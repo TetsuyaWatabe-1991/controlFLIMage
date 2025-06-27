@@ -186,10 +186,12 @@ def plot_and_save_results(pow_result_920, pow_result_720, savefolder):
     slope = model.coef_[0]
     intercept = model.intercept_
     y_laser1_pred = model.predict(x_laser1)
-    r_squared = r2_score(y_laser1, y_laser1_pred)
-    eq_text = f"y = {slope:.3f}x + {intercept:.4f}"
+    r_squared_laser1 = r2_score(y_laser1, y_laser1_pred)
+    eq_text_laser1 = f"y = {slope:.3f}x + {intercept:.4f}"
     ax0.scatter(x_laser1, y_laser1, color='blue', label="Data")
     ax0.plot(x_laser1, y_laser1_pred, color='red', label="Linear regression")
+    ax0.text(0.1, 0.95, eq_text_laser1, ha='left', va="top", transform=ax0.transAxes)
+    ax0.text(0.1, 0.85, f"r^2 = {r_squared_laser1:.3f}", ha='left', va="top", transform=ax0.transAxes)    
     ax0.set_xlabel('Power (%)')
     ax0.set_ylabel('Laser power (mW)')
     ax0.set_title('Laser1 920 nm')
@@ -202,12 +204,12 @@ def plot_and_save_results(pow_result_920, pow_result_720, savefolder):
     slope = model.coef_[0]
     intercept = model.intercept_
     y_laser2_pred = model.predict(x_laser2)
-    r_squared = r2_score(y_laser2, y_laser2_pred)
-    eq_text = f"y = {slope:.3f}x + {intercept:.4f}"
+    r_squared_laser2 = r2_score(y_laser2, y_laser2_pred)
+    eq_text_laser2 = f"y = {slope:.3f}x + {intercept:.4f}"
     ax1.scatter(x_laser2, y_laser2, color='blue', label="Data")
     ax1.plot(x_laser2, y_laser2_pred, color='red', label="Linear regression")
-    ax1.text(0.1, 0.95, eq_text, ha='left', va="top", transform=ax1.transAxes)
-    ax1.text(0.1, 0.85, f"r^2 = {r_squared:.3f}", ha='left', va="top", transform=ax1.transAxes)
+    ax1.text(0.1, 0.95, eq_text_laser2, ha='left', va="top", transform=ax1.transAxes)
+    ax1.text(0.1, 0.85, f"r^2 = {r_squared_laser2:.3f}", ha='left', va="top", transform=ax1.transAxes)
     ax1.set_xlabel('Power (%)')
     ax1.set_ylabel('Laser power (mW)')
     ax1.set_title('Laser2 720 nm')
