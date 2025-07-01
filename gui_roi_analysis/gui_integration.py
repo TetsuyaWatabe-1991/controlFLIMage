@@ -43,6 +43,35 @@ def first_processing_for_flim_files(
     
     combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length)
     
+    # Add data validation check
+    print(f"\n=== DATA VALIDATION FOR {os.path.basename(one_of_filepath)} ===")
+    print(f"Total files found: {len(one_of_file_list)}")
+    print(f"Combined dataframe shape: {combined_df.shape}")
+    
+    # Check for potential issues
+    if 'nth' in combined_df.columns:
+        nth_values = combined_df['nth'].unique()
+        print(f"Unique nth values: {sorted(nth_values)}")
+        
+        # Check for negative or very large nth values
+        negative_nth = combined_df[combined_df['nth'] < 0]
+        if len(negative_nth) > 0:
+            print(f"WARNING: Found {len(negative_nth)} rows with negative nth values")
+            print(f"Negative nth values: {negative_nth['nth'].unique()}")
+    
+    if 'phase' in combined_df.columns:
+        phase_counts = combined_df['phase'].value_counts()
+        print(f"Phase distribution: {phase_counts.to_dict()}")
+        
+        # Check if uncaging data exists
+        unc_data = combined_df[combined_df['phase'] == 'unc']
+        if len(unc_data) == 0:
+            print("WARNING: No uncaging data found in this dataset")
+        else:
+            print(f"Found {len(unc_data)} uncaging rows")
+    
+    print("=== END DATA VALIDATION ===\n")
+    
     # Process each group
     for each_filepath_without_number in combined_df['filepath_without_number'].unique():
         each_filegroup_df = combined_df[combined_df['filepath_without_number'] == each_filepath_without_number]
@@ -52,6 +81,9 @@ def first_processing_for_flim_files(
             filelist = each_group_df["file_path"].tolist()
             # Load and align data
             Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=ch_1or2 - 1)
+            
+            # Add alignment data validation
+            print(f"Group {each_group}: Aligned array shape: {Aligned_4d_array.shape}, Shifts shape: {shifts.shape}")
             
             # Process uncaging positions
             each_group_df = process_uncaging_positions(each_group_df, shifts, Aligned_4d_array)
@@ -273,23 +305,61 @@ def process_uncaging_positions(
     for each_set_label in each_group_df["nth_set_label"].unique():
         if each_set_label == -1:
             continue
-            
+                
         each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
         each_set_unc_row = each_set_df[each_set_df["phase"] == "unc"]
+        if len(each_set_unc_row) == 0:
+            print(f"No uncaging data found for group {each_group_df['group'].iloc[0]}, set {each_set_label}")
+            continue
         assert len(each_set_unc_row) == 1
         
-        # Calculate z shifts
-        z_shift_last_pre = shifts[each_set_unc_row.loc[:, "nth"] - 1, 0][0]
+        # Get the nth value for uncaging row
+        unc_nth = each_set_unc_row.loc[:, "nth"].values[0]
+        
+        # Validate nth value against shifts array bounds
+        if unc_nth < 0 or unc_nth >= len(shifts):
+            print(f"ERROR: Invalid nth value {unc_nth} for shifts array of length {len(shifts)}")
+            print(f"Group: {each_group_df['group'].iloc[0]}, Set: {each_set_label}")
+            print(f"each_set_unc_row: {each_set_unc_row}")
+            print(f"shifts shape: {shifts.shape}")
+            print(f"Available nth values in each_set_df: {each_set_df['nth'].unique()}")
+            continue
+        
+        # Calculate z shifts with bounds checking
+        if unc_nth - 1 >= 0 and unc_nth - 1 < len(shifts):
+            z_shift_last_pre = shifts[unc_nth - 1, 0]
+        else:
+            print(f"WARNING: Cannot access shifts[{unc_nth - 1}] for z shift calculation")
+            print(f"Using 0 as default z shift")
+            z_shift_last_pre = 0
+            
         z_shift_last_pre_rounded = round(z_shift_last_pre, 0)
         z_relative_to_last_pre = each_set_unc_row.loc[:, "z_relative_step_nth"].values[0]
         z_nth_relative_to_first = round(z_relative_to_last_pre - z_shift_last_pre_rounded)
         
-        # Update positions
+        # Update positions with bounds checking
+        # print("each_set_df", each_set_df)
+        # print("each_set_unc_row", each_set_unc_row)
+        # print("len(each_set_unc_row)", len(each_set_unc_row))
+        # print("shifts", shifts)
+        # print("len(shifts)", len(shifts))
+        # print("unc_nth", unc_nth)
+        # print("z_nth_relative_to_first", z_nth_relative_to_first)
+
+        # Get shift values with bounds checking
+        if unc_nth < len(shifts):
+            shift_x = shifts[unc_nth, 2]
+            shift_y = shifts[unc_nth, 1]
+        else:
+            print(f"WARNING: nth value {unc_nth} exceeds shifts array bounds")
+            shift_x = 0
+            shift_y = 0
+
         each_group_df.loc[each_set_df.index, "corrected_uncaging_x"] = (
-            each_set_unc_row.loc[:, "center_x"] + shifts[each_set_unc_row.loc[:, "nth"], 2]
+            each_set_unc_row.loc[:, "center_x"] + shift_x
         ).values[0]
         each_group_df.loc[each_set_df.index, "corrected_uncaging_y"] = (
-            each_set_unc_row.loc[:, "center_y"] + shifts[each_set_unc_row.loc[:, "nth"], 1]
+            each_set_unc_row.loc[:, "center_y"] + shift_y
         ).values[0]
         each_group_df.loc[each_set_df.index, "corrected_uncaging_z"] = z_nth_relative_to_first
     
@@ -1635,6 +1705,349 @@ Key Point: ROI masks are now stored as numpy arrays directly in the DataFrame!
 No more complex encoding/decoding - just direct access!
     """)
 
+#%%
 if __name__ == "__main__":
-    integrate_gui_with_existing_analysis()
-    example_roi_usage() 
+    # integrate_gui_with_existing_analysis()
+    # example_roi_usage() 
+
+    one_of_filepath = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250626\lowmag5__highmag_1_063.flim"
+    z_plus_minus = 1
+    ch_1or2 = 2
+    pre_length = 2
+    save_plot_TF = True
+    save_tif_TF = True
+    ignore_words = ["for_align"]
+
+    one_of_file_list = glob.glob(
+    os.path.join(
+        os.path.dirname(one_of_filepath), 
+        "lowmag5*_highmag_*002.flim"
+        )
+    )
+    one_of_file_list = [each_file for each_file in one_of_file_list if not any(ignore_word in each_file for ignore_word in ignore_words)]
+
+    plot_savefolder = os.path.join(os.path.dirname(one_of_filepath), "plot")
+    tif_savefolder = os.path.join(os.path.dirname(one_of_filepath), "tif")
+    roi_savefolder = os.path.join(os.path.dirname(one_of_filepath), "roi")
+    for each_folder in [plot_savefolder, tif_savefolder, roi_savefolder]:
+        os.makedirs(each_folder, exist_ok=True)
+    
+    combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length)
+    
+    assert False
+
+
+    # Process each group
+    for each_filepath_without_number in combined_df['filepath_without_number'].unique():
+        each_filegroup_df = combined_df[combined_df['filepath_without_number'] == each_filepath_without_number]
+        for each_group in each_filegroup_df['group'].unique():
+            each_group_df = each_filegroup_df[each_filegroup_df['group'] == each_group]
+            if not each_group_df["phase"].isin(["unc"]).any():
+                print(f"No uncaging data found for group {each_group}")
+                continue
+
+            filelist = each_group_df["file_path"].tolist()
+            # Load and align data
+            Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=ch_1or2 - 1)
+            
+            # Process uncaging positions
+            print(each_group_df["phase"])
+            each_group_df = process_uncaging_positions(each_group_df, shifts, Aligned_4d_array)
+            
+            # Update combined_df with corrected uncaging positions
+            for col in ['corrected_uncaging_x', 'corrected_uncaging_y', 'corrected_uncaging_z']:
+                if col in each_group_df.columns:
+                    combined_df.loc[each_group_df.index, col] = each_group_df[col].values
+            
+            # Store individual shift values for each frame
+            valid_df = each_group_df[each_group_df["nth_omit_induction"] != -1].copy()
+            valid_df_sorted = valid_df.sort_values("nth_omit_induction")
+            
+            for i, (idx, row) in enumerate(valid_df_sorted.iterrows()):
+                if i < len(shifts):
+                    shift_z, shift_y, shift_x = shifts[i][0], shifts[i][1], shifts[i][2]
+                    combined_df.loc[idx, 'shift_z'] = shift_z
+                    combined_df.loc[idx, 'shift_y'] = shift_y
+                    combined_df.loc[idx, 'shift_x'] = shift_x
+            
+            # Save full region plots
+            list_of_save_path = save_full_region_plots(each_group_df, Aligned_4d_array, plot_savefolder, 
+                                                       z_plus_minus,
+                                                       return_list_of_save_path=True)
+            
+            getting_length_df = each_group_df[(each_group_df["nth_omit_induction"] != -1) & 
+                                        (each_group_df["nth_set_label"] != -1)]
+            # print(f"length of getting_length_df: {len(getting_length_df)}")
+            # print(f"length of list_of_save_path: {len(list_of_save_path)}")
+            combined_df.loc[getting_length_df.index, "save_full_region_plot_path"] = list_of_save_path
+
+            # Process small regions
+            for each_set_label in each_group_df["nth_set_label"].unique():
+                if each_set_label == -1:
+                    continue
+                    
+                each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
+                
+                small_Tiff_MultiArray, small_Aligned_4d_array, corrected_positions, each_set_df = process_small_region(
+                    each_set_df, Aligned_4d_array
+                )
+
+                # Update combined_df with small region boundaries and small shifts
+                for col in ['small_z_from', 'small_z_to', 'small_x_from', 'small_x_to', 'small_y_from', 'small_y_to']:
+                    if col in each_set_df.columns:
+                        combined_df.loc[each_set_df.index, col] = each_set_df[col].values
+
+                combined_df.loc[each_set_df.index, "small_shift_z"] = each_set_df["small_shift_z"].values
+                combined_df.loc[each_set_df.index, "small_shift_y"] = each_set_df["small_shift_y"].values
+                combined_df.loc[each_set_df.index, "small_shift_x"] = each_set_df["small_shift_x"].values
+
+                
+                list_of_save_path = save_small_region_plots(
+                    small_Aligned_4d_array,
+                    corrected_positions,
+                    each_set_label,
+                    plot_savefolder,
+                    z_plus_minus,
+                    each_set_df,
+                    return_list_of_save_path=True,
+                    save_plot_TF=save_plot_TF
+                )
+                no_uncaging_df = each_set_df[each_set_df["nth_omit_induction"] != -1]
+                count_up = -1
+                for ind, each_row in no_uncaging_df.iterrows():
+                    count_up += 1
+                    combined_df.loc[ind, "relative_nth_omit_induction"] = count_up
+
+                combined_df.loc[no_uncaging_df.index, "save_small_region_plot_path"] = list_of_save_path
+            
+
+                savepath_dict = save_small_region_tiffs(
+                    small_Tiff_MultiArray,
+                    small_Aligned_4d_array,
+                    corrected_positions,
+                    each_group,
+                    each_set_label,
+                    tif_savefolder,
+                    z_plus_minus,
+                    return_save_path=True,
+                    save_tif_TF=save_tif_TF
+                )
+                combined_df.loc[each_set_df.index, "before_align_save_path"] = savepath_dict["save_path_before_align"]
+                combined_df.loc[each_set_df.index, "after_align_save_path"] = savepath_dict["save_path_after_align"]
+
+    if save_tif_TF*save_plot_TF:    
+        for each_group in combined_df['group'].unique():
+            each_group_df = combined_df[combined_df['group'] == each_group]
+            for each_set_label in each_group_df["nth_set_label"].unique():
+                if each_set_label == -1:
+                    continue
+                max_nth_omit_ind_before_unc = each_group_df[each_group_df["phase"] == "pre"]["nth_omit_induction"].max()
+                plot_path = each_group_df[each_group_df["nth_omit_induction"] == max_nth_omit_ind_before_unc]["save_full_region_plot_path"].values[0]
+                img = plt.imread(plot_path)
+                plt.imshow(img)
+                plt.axis("off")
+                plt.show()
+                after_align_tiff_path = each_group_df[each_group_df["nth_omit_induction"] == max_nth_omit_ind_before_unc]["after_align_save_path"].values[0]
+                after_align_tiff = tifffile.imread(after_align_tiff_path)
+                max_proj = after_align_tiff.max(axis=0)
+                plt.imshow(max_proj, cmap="gray")
+                plt.show() 
+# %%
+
+def validate_flim_data_integrity(one_of_filepath, pre_length=2):
+    """Validate FLIM data integrity before processing.
+    
+    Args:
+        one_of_filepath: Path to one of the FLIM files
+        pre_length: Pre-length parameter for data loading
+    
+    Returns:
+        dict: Validation results and potential issues
+    """
+    import glob
+    from AnalysisForFLIMage.get_annotation_unc_multiple import get_uncaging_pos_multiple
+    
+    # Find all related files
+    one_of_file_list = glob.glob(
+        os.path.join(
+            os.path.dirname(one_of_filepath), 
+            "*_highmag_*002.flim"
+            )
+        )
+    
+    print(f"=== FLIM DATA INTEGRITY VALIDATION ===")
+    print(f"Base file: {os.path.basename(one_of_filepath)}")
+    print(f"Directory: {os.path.dirname(one_of_filepath)}")
+    print(f"Total files found: {len(one_of_file_list)}")
+    
+    if len(one_of_file_list) == 0:
+        return {
+            'status': 'ERROR',
+            'message': 'No FLIM files found',
+            'files': []
+        }
+    
+    # Load combined dataframe
+    try:
+        combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length)
+        print(f"Combined dataframe shape: {combined_df.shape}")
+    except Exception as e:
+        return {
+            'status': 'ERROR',
+            'message': f'Failed to load combined dataframe: {str(e)}',
+            'files': one_of_file_list
+        }
+    
+    # Check for required columns
+    required_columns = ['nth', 'phase', 'group', 'nth_set_label', 'nth_omit_induction']
+    missing_columns = [col for col in required_columns if col not in combined_df.columns]
+    
+    if missing_columns:
+        return {
+            'status': 'ERROR',
+            'message': f'Missing required columns: {missing_columns}',
+            'files': one_of_file_list,
+            'available_columns': list(combined_df.columns)
+        }
+    
+    # Check nth values
+    nth_issues = []
+    if 'nth' in combined_df.columns:
+        nth_values = combined_df['nth'].unique()
+        negative_nth = combined_df[combined_df['nth'] < 0]
+        if len(negative_nth) > 0:
+            nth_issues.append(f"Found {len(negative_nth)} rows with negative nth values: {negative_nth['nth'].unique()}")
+    
+    # Check phase distribution
+    phase_issues = []
+    if 'phase' in combined_df.columns:
+        phase_counts = combined_df['phase'].value_counts()
+        unc_data = combined_df[combined_df['phase'] == 'unc']
+        if len(unc_data) == 0:
+            phase_issues.append("No uncaging data found")
+        else:
+            print(f"Found {len(unc_data)} uncaging rows")
+    
+    # Check group and set structure
+    structure_issues = []
+    if 'group' in combined_df.columns and 'nth_set_label' in combined_df.columns:
+        groups = combined_df['group'].unique()
+        for group in groups:
+            group_df = combined_df[combined_df['group'] == group]
+            sets = group_df['nth_set_label'].unique()
+            for set_label in sets:
+                if set_label == -1:
+                    continue
+                set_df = group_df[group_df['nth_set_label'] == set_label]
+                unc_in_set = set_df[set_df['phase'] == 'unc']
+                if len(unc_in_set) == 0:
+                    structure_issues.append(f"Group {group}, Set {set_label}: No uncaging data")
+                elif len(unc_in_set) > 1:
+                    structure_issues.append(f"Group {group}, Set {set_label}: Multiple uncaging rows ({len(unc_in_set)})")
+    
+    # Compile results
+    issues = nth_issues + phase_issues + structure_issues
+    
+    if issues:
+        result = {
+            'status': 'WARNING',
+            'message': 'Data integrity issues found',
+            'files': one_of_file_list,
+            'issues': issues,
+            'dataframe_shape': combined_df.shape,
+            'nth_range': f"{combined_df['nth'].min()} to {combined_df['nth'].max()}" if 'nth' in combined_df.columns else 'N/A'
+        }
+    else:
+        result = {
+            'status': 'OK',
+            'message': 'Data integrity validation passed',
+            'files': one_of_file_list,
+            'dataframe_shape': combined_df.shape,
+            'nth_range': f"{combined_df['nth'].min()} to {combined_df['nth'].max()}" if 'nth' in combined_df.columns else 'N/A'
+        }
+    
+    print(f"Validation status: {result['status']}")
+    print(f"Message: {result['message']}")
+    if 'issues' in result:
+        print("Issues found:")
+        for issue in result['issues']:
+            print(f"  - {issue}")
+    
+    print("=== END VALIDATION ===\n")
+    return result
+
+def debug_index_error(filepath, group_name, set_label):
+    """Debug specific IndexError for a given file, group, and set.
+    
+    Args:
+        filepath: Path to the FLIM file
+        group_name: Group name to debug
+        set_label: Set label to debug
+    """
+    print(f"=== DEBUGGING INDEX ERROR ===")
+    print(f"File: {filepath}")
+    print(f"Group: {group_name}")
+    print(f"Set: {set_label}")
+    
+    # Load data
+    validation_result = validate_flim_data_integrity(filepath)
+    if validation_result['status'] == 'ERROR':
+        print(f"Validation failed: {validation_result['message']}")
+        return
+    
+    # Load combined dataframe
+    import glob
+    from AnalysisForFLIMage.get_annotation_unc_multiple import get_uncaging_pos_multiple
+    
+    one_of_file_list = glob.glob(
+        os.path.join(
+            os.path.dirname(filepath), 
+            "*_highmag_*002.flim"
+            )
+        )
+    combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=2)
+    
+    # Find the specific group and set
+    group_df = combined_df[combined_df['group'] == group_name]
+    if len(group_df) == 0:
+        print(f"Group {group_name} not found")
+        print(f"Available groups: {combined_df['group'].unique()}")
+        return
+    
+    set_df = group_df[group_df['nth_set_label'] == set_label]
+    if len(set_df) == 0:
+        print(f"Set {set_label} not found in group {group_name}")
+        print(f"Available sets in group {group_name}: {group_df['nth_set_label'].unique()}")
+        return
+    
+    # Check uncaging data
+    unc_data = set_df[set_df['phase'] == 'unc']
+    print(f"Uncaging data in set: {len(unc_data)} rows")
+    
+    if len(unc_data) > 0:
+        print("Uncaging row details:")
+        for idx, row in unc_data.iterrows():
+            print(f"  Row {idx}: nth={row.get('nth', 'N/A')}, center_x={row.get('center_x', 'N/A')}, center_y={row.get('center_y', 'N/A')}")
+    
+    # Load alignment data
+    filelist = group_df["file_path"].tolist()
+    try:
+        Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=1)  # ch=1 for ch_1or2=2
+        print(f"Alignment data loaded successfully")
+        print(f"  Aligned array shape: {Aligned_4d_array.shape}")
+        print(f"  Shifts shape: {shifts.shape}")
+        
+        # Check if nth values are within bounds
+        if len(unc_data) > 0:
+            for idx, row in unc_data.iterrows():
+                nth_value = row.get('nth', None)
+                if nth_value is not None:
+                    if nth_value < 0 or nth_value >= len(shifts):
+                        print(f"  ERROR: nth value {nth_value} is out of bounds for shifts array (length: {len(shifts)})")
+                    else:
+                        print(f"  OK: nth value {nth_value} is within bounds")
+                        
+    except Exception as e:
+        print(f"Failed to load alignment data: {e}")
+    
+    print("=== END DEBUG ===\n")

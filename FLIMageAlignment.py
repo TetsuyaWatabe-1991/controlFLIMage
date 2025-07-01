@@ -16,13 +16,13 @@ from datetime import datetime
 from skimage.transform import resize
 
 def get_flimfile_list(one_file_path):
-    print(f"DEBUG: get_flimfile_list called with: {one_file_path}")
-    print(f"DEBUG: one_file_path[:-8]: {one_file_path[:-8]}")
+    # print(f"DEBUG: get_flimfile_list called with: {one_file_path}")
+    # print(f"DEBUG: one_file_path[:-8]: {one_file_path[:-8]}")
     pattern = one_file_path[:-8]+'[0-9][0-9][0-9].flim'
-    print(f"DEBUG: glob pattern: {pattern}")
+    # print(f"DEBUG: glob pattern: {pattern}")
     filelist=glob.glob(pattern)
-    print(f"DEBUG: glob.glob result: {filelist}")
-    print(f"DEBUG: filelist type: {type(filelist)}")
+    # print(f"DEBUG: glob.glob result: {filelist}")
+    # print(f"DEBUG: filelist type: {type(filelist)}")
     
     # Ensure we always return a list
     if not isinstance(filelist, list):

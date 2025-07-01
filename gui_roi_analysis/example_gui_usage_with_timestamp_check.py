@@ -17,7 +17,7 @@ from fitting.flim_lifetime_fitting import FLIMLifetimeFitter
 from FLIMageFileReader2 import FileReader
 from simple_dialog import ask_yes_no_gui, ask_save_path_gui, ask_open_path_gui, ask_save_folder_gui
 from plot_functions import draw_boundaries
-from send_notification import send_slack_notification
+from utility.send_notification import send_slack_url_default
 # %%
 # Simple INI-based timestamp checking functions
 
@@ -114,7 +114,7 @@ def print_simple_summary(total_groups, regenerated_groups, skipped_groups, plot_
 # Setup parameters    
 ch_1or2 = 2
 
-z_plus_minus = 1
+z_plus_minus = 2
 pre_length = 2
 lifetime_measure_ch_1or2_list = [1,2]
 photon_threshold = 15
@@ -125,16 +125,16 @@ fixed_tau_bool = False
 fixed_tau1 = 2.6
 fixed_tau2 = 1.1
 
+# one_of_filepath_list = [
+#     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250531\4lines_2_auto\lowmag1__highmag_1_002.flim",
+#     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250531\2lines_1\lowmag1__highmag_1_002.flim",
+#     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250601\2lines3_auto\lowmag1__highmag_1_002.flim",
+#     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250601\4lines_3_auto\lowmag1__highmag_1_002.flim",
+#     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\lowmag1__highmag_1_002.flim",
+#     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\4lines_neuron4\lowmag1__highmag_1_002.flim",        
+# ]
 one_of_filepath_list = [
-    r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250531\4lines_2_auto\lowmag1__highmag_1_002.flim",
-    r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250531\2lines_1\lowmag1__highmag_1_002.flim",
-    r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250601\2lines3_auto\lowmag1__highmag_1_002.flim",
-    r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250601\4lines_3_auto\lowmag1__highmag_1_002.flim",
-    r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\lowmag1__highmag_1_002.flim",
-    r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\4lines_neuron4\lowmag1__highmag_1_002.flim",        
-]
-one_of_filepath_list = [
-    r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250527\2ndlowmag\lowmag1__highmag_1_002.flim",
+    r"C:\Users\WatabeT\Desktop\20250626_Copy\lowmag5__highmag_1_063.flim",
 ]
 
 # データ準備ステップの確認
@@ -152,15 +152,15 @@ else:
                 z_plus_minus,
                 ch_1or2,
                 pre_length = pre_length,
-                save_plot_TF = False,
-                save_tif_TF = False,
+                save_plot_TF = True,
+                save_tif_TF = True,
                 )
             combined_df = pd.concat([combined_df, temp_df], ignore_index=True)
-
+        send_slack_url_default(message = "finished data preparation step.")
         print("define save path for combined_df")
         df_save_path_1 = ask_save_path_gui()
         combined_df.to_pickle(df_save_path_1)
-        send_slack_notification(message = "finished reading files. dataframe was saved.")
+        
     else:
         print("canceled")
         assert False
@@ -306,7 +306,7 @@ if ask_yes_no_gui("Do you want to save small image and ROI mask plots?"):
         save_plot_timestamp_to_ini(each_filepath, "small")
     
     print_simple_summary(total_groups, regenerated_groups, skipped_groups, "small")
-    send_slack_notification(message = "finished saving small image and ROI mask plots with INI timestamp checking.")
+    send_slack_url_default(message = "finished saving small image and ROI mask plots with INI timestamp checking.")
 
 # %%
 # Shift the ROI masks to the full size image
@@ -460,7 +460,7 @@ if ask_yes_no_gui("Do you want to save fullsize image and ROI mask plots?"):
 
     print_simple_summary(total_groups, regenerated_groups, skipped_groups, "fullsize")
     print("All processing completed successfully!")
-    send_slack_notification(message = "finished saving fullsize image and ROI mask plots with INI timestamp checking.")
+    send_slack_url_default(message = "finished saving fullsize image and ROI mask plots with INI timestamp checking.")
 
 combined_df.to_pickle(df_save_path_2)
 
@@ -514,7 +514,7 @@ if ask_yes_no_gui("Do you want to analyze GCaMP?"):
                 combined_df.at[uncaging_df_index, f"{each_fluor_ch_1or2}_DendriticShaft_subBG"] = dendritic_shaft_subBG
                 combined_df.at[uncaging_df_index, f"{each_fluor_ch_1or2}_Spine_F_F0"] = spine_F_F0
                 combined_df.at[uncaging_df_index, f"{each_fluor_ch_1or2}_DendriticShaft_F_F0"] = dendritic_shaft_F_F0
-    send_slack_notification(message = "finished analyzing GCaMP.")
+    send_slack_url_default(message = "finished analyzing GCaMP.")
 
 # %%
 # calculate norm_intensity, normalized time

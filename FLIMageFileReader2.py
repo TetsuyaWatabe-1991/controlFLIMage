@@ -86,6 +86,7 @@ class FileReader:
                     * ('Acquired_Time' not in eq[0])  #):
                     * ('PhotonsFileName' not in eq[0])
                     * ('Program' not in eq[1])
+                    * ('photonBinary' not in eq[0])
                     ):
                     try:
                         exec('self.' + eq[0] + ' = ' + eq[1])

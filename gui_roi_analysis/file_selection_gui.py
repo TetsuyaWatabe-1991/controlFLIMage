@@ -224,10 +224,24 @@ class FileSelectionGUI(QMainWindow):
                     # Get the most recent date
                     latest_date = dates.iloc[-1]
                     if pd.notna(latest_date):
-                        if isinstance(latest_date, str):
-                            date_str = latest_date
-                        else:
-                            date_str = str(latest_date)
+                        try:
+                            # Try to parse as datetime and format to short format
+                            if isinstance(latest_date, str):
+                                # Try to parse string datetime
+                                parsed_date = pd.to_datetime(latest_date)
+                            else:
+                                # Already a datetime object
+                                parsed_date = pd.to_datetime(latest_date)
+                            
+                            # Format as MM-DD HH:MM (year and seconds removed)
+                            date_str = parsed_date.strftime("%m-%d %H:%M")
+                            
+                        except (ValueError, TypeError):
+                            # Fallback to original string if parsing fails
+                            if isinstance(latest_date, str):
+                                date_str = latest_date
+                            else:
+                                date_str = str(latest_date)
             
             return has_roi, date_str
             
@@ -278,9 +292,12 @@ class FileSelectionGUI(QMainWindow):
             headers.extend(available_additional_columns)
             
             headers.extend([
-                "Spine ROI", "Spine Date",
-                "DendriticShaft ROI", "DendriticShaft Date", 
-                "Background ROI", "Background Date",
+                # "Spine ROI", "Spine Date",
+                # "DendriticShaft ROI", "DendriticShaft Date", 
+                # "Background ROI", "Background Date",
+                "Spine", "date",
+                "Shaft", "date", 
+                "BG", "date",
                 "All ROIs", "Individual ROIs"
             ])
             
@@ -421,7 +438,7 @@ class FileSelectionGUI(QMainWindow):
                     
                     # TIFF path with tooltip showing full path (immutable)
                     # Show the display group name for better readability
-                    tiff_display_name = f"{display_group}_set{set_label}_{os.path.basename(str(tiff_path))}" if tiff_path else f"{display_group}_set{set_label}_NoTIFF"
+                    tiff_display_name = f"{os.path.basename(str(tiff_path))}" if tiff_path else f"NoTIFF_{display_group}_set{set_label}"
                     tiff_item = QTableWidgetItem(tiff_display_name)
                     tiff_item.setToolTip(str(tiff_path))
                     tiff_item.setFlags(tiff_item.flags() & ~Qt.ItemIsEditable)  # Make immutable
@@ -473,10 +490,27 @@ class FileSelectionGUI(QMainWindow):
                     # Add additional columns if they exist
                     for add_col in available_additional_columns:
                         add_value = group_set_df[add_col].iloc[0] if len(group_set_df) > 0 and add_col in group_set_df.columns else ""
-                        add_item = QTableWidgetItem(str(add_value) if pd.notna(add_value) else "")
+                        
+                        # Format datetime values to YY/MM/DD HH:MM format
+                        if pd.notna(add_value):
+                            try:
+                                # Check if the column is datetime type (not string)
+                                if pd.api.types.is_datetime64_any_dtype(group_set_df[add_col]):
+                                    # Convert to datetime and format
+                                    parsed_date = pd.to_datetime(add_value)
+                                    formatted_value = parsed_date.strftime("%y/%m/%d %H:%M")  # YY/MM/DD HH:MM format
+                                else:
+                                    # For non-datetime columns, use original value
+                                    formatted_value = str(add_value)
+                            except (ValueError, TypeError):
+                                formatted_value = str(add_value)
+                        else:
+                            formatted_value = ""
+                        
+                        add_item = QTableWidgetItem(formatted_value)
                         add_item.setTextAlignment(Qt.AlignCenter)
                         add_item.setFlags(add_item.flags() & ~Qt.ItemIsEditable)  # Make immutable by default
-                        add_item.setToolTip(f"{add_col}: {add_value}")  # Add tooltip showing column name and value
+                        add_item.setToolTip(f"{add_col}: {add_value}")  # Add tooltip showing column name and original value
                         self.table.setItem(row_idx, col_idx, add_item)
                         col_idx += 1
                     
@@ -508,6 +542,12 @@ class FileSelectionGUI(QMainWindow):
                         self.table.setItem(row_idx, col_idx, date_item)
                         col_idx += 1
                     
+                    #for debug, print tiff_path 20250627
+                    print("tiff_path", tiff_path)
+                    print("os.path.exists(tiff_path)", os.path.exists(tiff_path))
+                    print("bool(tiff_path and os.path.exists(tiff_path))", bool(tiff_path and os.path.exists(tiff_path)))
+                    #till here
+
                     # All ROIs button
                     all_button = QPushButton("Launch All")
                     all_button.setEnabled(bool(tiff_path and os.path.exists(tiff_path)))

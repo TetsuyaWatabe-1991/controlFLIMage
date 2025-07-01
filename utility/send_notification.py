@@ -1,7 +1,7 @@
 # send notification to slack
 import requests
 
-def read_slack_webhook_url(filepath = "slack_webhook_url.txt"):
+def read_slack_webhook_url(filepath = r"C:\Users\WatabeT\Documents\Git\controlFLIMage\utility\slack_webhook_url.txt"):
     with open(filepath, "r") as file:
         webhook_url = file.read()
     return webhook_url
@@ -14,6 +14,12 @@ def send_slack_notification(webhook_url, message = "done"):
     else:
         print("sent slack notification")
 
+def send_slack_url_default(message='done'):
+    webhook_url = read_slack_webhook_url()
+    send_slack_notification(
+        webhook_url = webhook_url,
+        message = message
+    )
 
 def upload_image_to_slack(token, channel, filepath, message):
     with open(filepath, "rb") as file_content:
