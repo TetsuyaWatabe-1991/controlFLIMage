@@ -183,7 +183,7 @@ def plot_uncaging_point_dend_slope_with_original(
 
 def sleep_countdown(total_sec: int):
     for i in range(total_sec):
-        print(total_sec - i, "sec  ", end = "")
+        print(total_sec - i,  end = " ")
         #Below makes thre responce to Ctrl + C quicker
         for j in range(10):
             sleep(0.1) 
@@ -214,7 +214,7 @@ class Control_flimage():
         self.max_error_num = 20
         self.XYsize_ini_path = r"XYsize.ini"
         # self.flimage_exe = r"C:\Users\yasudalab\Documents\GIT\flimage1_3\bin\Debug\FLIMage.exe"
-        self.flimage_exe = r"C:\Program Files\FLIMage\FLIMage 4.0.8\FLIMage.exe"
+        self.flimage_exe = r"C:\Users\yasudalab\Documents\GIT\flimage1_3\bin\Release\FLIMage.exe"
         
         if self.flim.Connected:
             print("Good Connection")
