@@ -33,6 +33,7 @@ def get_uncaging_pos_multiple(one_of_file_list,
 
             uncaging_TF = False
             titration_TF = False
+            unknown_TF = False
             if iminfo.n_images == first_n_images:
                 uncaging_TF = False
             elif iminfo.n_images in titration_frame_num:
@@ -42,6 +43,7 @@ def get_uncaging_pos_multiple(one_of_file_list,
                 print(file_path,'<- uncaging')
                 uncaging_TF = True        
             else:
+                unknown_TF = True
                 print(file_path,'<- unknown')
                 
             y_pix = iminfo.statedict["State.Acq.linesPerFrame"]
@@ -62,6 +64,9 @@ def get_uncaging_pos_multiple(one_of_file_list,
                 previous_z_position = each_group_df[each_group_df["nth"] == nth -1]["z_position"].iloc[0]
                 previous_stepZ = each_group_df[each_group_df["nth"] == nth -1]["stepZ"].iloc[0]
                 z_relative_step_nth = int((z_position - previous_z_position) / previous_stepZ)
+            elif unknown_TF:
+                print(file_path,'<- unknown')
+                df_nth_omit_induction = -1
             else:
                 nth_omit_induction +=1
                 df_nth_omit_induction = nth_omit_induction
@@ -74,6 +79,7 @@ def get_uncaging_pos_multiple(one_of_file_list,
                 "file_path": file_path,
                 "uncaging_frame": uncaging_TF,
                 "titration_frame": titration_TF,
+                "unknown_frame": unknown_TF,
                 "center_x": x_pix * uncaging_x_y_0to1[0],
                 "center_y": y_pix * uncaging_x_y_0to1[1],
                 "stepZ": [iminfo.statedict["State.Acq.sliceStep"]],
@@ -88,6 +94,7 @@ def get_uncaging_pos_multiple(one_of_file_list,
 
         uncaging_nth_list = each_group_df[each_group_df["uncaging_frame"]]["nth"].tolist()
         titration_nth_list = each_group_df[each_group_df["titration_frame"]]["nth"].tolist()
+        unknown_nth_list = each_group_df[each_group_df["unknown_frame"]]["nth"].tolist()
 
         
         all_nth = sorted(uncaging_nth_list + titration_nth_list)
@@ -110,6 +117,8 @@ def get_uncaging_pos_multiple(one_of_file_list,
                         if nth < unc_idx:
                             phase = "pre"
                         # elif nth == unc_idx:
+                        elif nth in unknown_nth_list:
+                            phase = "None"
                         elif nth in titration_nth_list:
                             phase = "titration"
                         elif nth in uncaging_nth_list:
