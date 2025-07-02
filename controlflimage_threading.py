@@ -12,7 +12,8 @@ from time import sleep
 from datetime import datetime
 from FLIMageAlignment import flim_files_to_nparray,Align_4d_array,Align_3d_array,get_xyz_pixel_um,single_plane_align_with3dstack_flimfile, get_flimfile_list
 from FLIM_pipeClient import FLIM_Com,FLIM_message_received
-from find_close_remotecontrol import close_remote_control, window_exists
+from find_close_remotecontrol import close_remote_control, window_exists_startswith
+from find_yes_overwrite_warning import close_overwrite_warning
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from multidim_tiff_viewer import threeD_array_click, read_xyz_single
@@ -215,6 +216,7 @@ class Control_flimage():
         self.XYsize_ini_path = r"XYsize.ini"
         # self.flimage_exe = r"C:\Users\yasudalab\Documents\GIT\flimage1_3\bin\Debug\FLIMage.exe"
         self.flimage_exe = r"C:\Users\yasudalab\Documents\GIT\flimage1_3\bin\Release\FLIMage.exe"
+        self.error_log_path = os.path.join(os.path.dirname(ini_path), "error_log.log")
         
         if self.flim.Connected:
             print("Good Connection")
@@ -350,8 +352,18 @@ class Control_flimage():
                 return x,y,z
             except:
                 ("ERROR 105, Trouble in getting current position")
-                pass
-    
+                self.reconnect()
+                print("reconnect done, sleep 10 sec")
+                sleep(10)
+        try:
+            CurrentPos=self.flim.sendCommand('GetCurrentPosition') 
+            a,x_str,y_str,z_str=CurrentPos.split(',')
+            x,y,z=float(x_str),float(y_str),float(z_str)
+            return x,y,z
+        except:
+            print("ERROR 106, Trouble in getting current position")
+            return None,None,None
+                    
     def go_to_relative_pos_motor(self):
         x,y,z=self.get_position()
         z_str=str(z - self.directionMotorZ * self.relative_zyx_um[0])
@@ -367,7 +379,8 @@ class Control_flimage():
 
 
     def go_to_relative_pos_motor_checkstate(self, sq_err_thre = 10, 
-                                            first_wait_sec = 4, iter_wait_sec = 2):
+                                            first_wait_sec = 0.25, 
+                                            iter_wait_sec = 0.25):
         x,y,z=self.get_position()
         dest_x = x - self.directionMotorX * self.relative_zyx_um[2]
         dest_y = y - self.directionMotorY * self.relative_zyx_um[1]
@@ -381,12 +394,15 @@ class Control_flimage():
         sleep(first_wait_sec)
         
         dest_xyz = np.array([dest_x, dest_y, dest_z])
+        recurrent_error_count = 0
         for i in range(60):
             try:
                 currentpos2 = self.get_val_sendCommand("State.Motor.motorPosition")
                 currentpos_num2 = np.array(currentpos2[1:-1].split(","), dtype=float)
             except:
-                sleep(1)
+                recurrent_error_count += 1
+                if recurrent_error_count > 10:
+                    self.flim_connect_check()
                 continue
             
             diff2 =  currentpos_num2 - dest_xyz
@@ -476,7 +492,12 @@ class Control_flimage():
         return laser_pulse_rate    
         
     def get_val_sendCommand(self,command):
-        Reply = self.flim.sendCommand(command)
+        try:
+            Reply = self.flim.sendCommand(command)
+        except:
+            self.reconnect()
+            Reply = self.flim.sendCommand(command)
+            
         value = Reply[len(command)+3:]
         try:
             return float(value)
@@ -485,7 +506,12 @@ class Control_flimage():
         
     
     def get_01_sendCommand(self,command):
-        Reply = self.flim.sendCommand(command)
+        try:
+            Reply = self.flim.sendCommand(command)
+        except:
+            self.reconnect()
+            Reply = self.flim.sendCommand(command)
+            
         value = Reply[len(command)+2:]
         return int(value)
     
@@ -493,6 +519,11 @@ class Control_flimage():
     def reconnect(self):
         print("\n - - - Reconnect - - - \n")
         close_remote_control()
+        with open(self.error_log_path, "a") as f:
+            f.write(f"reconnect, {datetime.now()}")
+            for each_command in self.flim.last_commands_queue:
+                f.write(f"\n{each_command}")
+            f.write("\n\n")
         self.flim = FLIM_Com()
         self.flim.start()
         self.flim.print_responses = self.print_responses
@@ -503,21 +534,39 @@ class Control_flimage():
             print("ERROR 101 - - - - - - ")
             print("Is FLIMage open?? ")
             self.nowGrabbing=False
-            if window_exists('FLIMage! Version 4.0.4'):
+            if window_exists_startswith('FLIMage! Version'):
                 Exception("FLIMage is open, but cannot respond.")
             else:
                 self.error_dict[datetime.now()] = "reconect" 
                 print("Let me try to open FLIMage...")
+                with open(self.error_log_path, "a") as f:
+                    f.write(f"open_FLIMage, {datetime.now()}")
                 self.open_FLIMage()
                 self.reconnect()
     
     def open_FLIMage(self):
         if len(self.error_dict) <= self.max_error_num:
             subprocess.Popen(self.flimage_exe)
-            sleep(15)
+            sleep(5)
+            for i in range(10):
+                if window_exists_startswith('FLIMage! Version')*window_exists_startswith('FLIM Analysis'):
+                    print("FLIMage is opened.")
+                    break
+                else:
+                    print("waiting for FLIMage to open...")
+                    sleep(2)
+            print("wait for calibration...")
+            sleep(5)
         else:
             print(self.error_dict)
-            Exception("Too many errors")
+            error_str_for_save = ""
+            for each_error in self.error_dict:
+                error_str_for_save += f"{each_error}: {self.error_dict[each_error]}\n"
+            with open(os.path.join(self.folder, self.NameStem+"_error"+datetime.now().strftime("%Y%m%d_%H%M%S")+".txt"), "w") as f:
+                f.write(error_str_for_save)
+            print("Too many errors. See the error.txt file for details.\n file path: ",os.path.join(self.folder, self.NameStem+"_error"+datetime.now().strftime("%Y%m%d_%H%M%S")+".txt"))
+            Exception("Too many errors. See the error.txt file for details.")
+            assert False
     
     
     def convert_shifts_pix_to_micro(self, shifts_zyx_pixel):
@@ -646,15 +695,30 @@ class Control_flimage():
         # self.convert_shifts_pix_to_micro(self.shifts_zyx_pixel)
         
 
-    def acquisition_include_connect_wait(self):
+    def acquisition_include_connect_wait(self,
+                                         sleep_every_sec=0.25, 
+                                         overwrite_warning_click_yes=False,
+                                         return_failure=False):
         self.flim_connect_check()
         self.flim.sendCommand('StartGrab')
-        self.wait_while_grabbing()
-        
-    def acquisition_include_connect_wait_short(self,sleep_every_sec=0.2):
-        self.flim_connect_check()
-        self.flim.sendCommand('StartGrab')
-        self.wait_while_grabbing(sleep_every_sec=sleep_every_sec)
+        if overwrite_warning_click_yes:
+            print("click yes in overwrite warning")
+            sleep(1)
+            close_overwrite_warning(find_yes=True)  #close overwrite warning
+        success = self.wait_while_grabbing(sleep_every_sec=sleep_every_sec)
+        if success:
+            print("Acquisition successful")
+        else:
+            if return_failure:
+                return False
+            print("Acquisition failed. Reconnecting...")
+            self.flim.sendCommand('SetCenter') #better then nothing.
+            self.acquisition_include_connect_wait(overwrite_warning_click_yes=True)
+            
+
+    def acquisition_include_connect_wait_short(self,sleep_every_sec=0.1):
+        self.acquisition_include_connect_wait(sleep_every_sec=sleep_every_sec,
+                                              overwrite_warning_click_yes=False)
         
     def flim_connect_check(self):
         if self.flim.Connected==False:
@@ -673,10 +737,12 @@ class Control_flimage():
                 error_count+=1
                 if error_count>5:
                     self.reconnect()
-                    break
+                    return False
+                    
             sleep(sleep_every_sec)
             print(" - ", end="")
         print("\n *** END wait_while_grabbing *** \n")
+        return True
 
     def send_uncaging_pos(self):
         self.flim.sendCommand(f"SetUncagingLocation, {self.uncaging_x}, {self.uncaging_y}")
@@ -1070,8 +1136,8 @@ class Control_flimage():
         z_move_um =  - self.z_um * (z -(NumZ - 1)/2)
         print("z_move_um ",z_move_um)
         self.relative_zyx_um = [z_move_um, 0, 0]
-        self.go_to_relative_pos_motor_checkstate(first_wait_sec = 1,
-                                                 iter_wait_sec = 1)
+        self.go_to_relative_pos_motor_checkstate(first_wait_sec = 0.5,
+                                                 iter_wait_sec = 0.25)
 
 
     def go_to_uncaging_plane(self):
@@ -1316,7 +1382,9 @@ class Control_flimage():
         
     def start_repeat(self, 
                      spine_inipath = False,
-                     plot_drift = True):
+                     plot_drift = True,
+                     return_failure = False,
+                     overwrite_warning_click_yes = False):
         self.start=datetime.now()
         
         self.folder = self.get_val_sendCommand("State.Files.pathName")
@@ -1331,11 +1399,18 @@ class Control_flimage():
             print("\n","= "*20,"\n"*2 ,NthAc+1 ," / ",self.RepeatNum,"\n"*2 , "= "*20 )
             each_acquisition_from=datetime.now()      
             self.TxtWind.udpate("Now Grabbing")
-            self.flim_connect_check()
-            
-            self.flim.sendCommand('StartGrab')  
+            # self.flim_connect_check()
+            # self.flim.sendCommand('StartGrab')  
+            # self.wait_while_grabbing()
+            success = self.acquisition_include_connect_wait(return_failure=return_failure,
+                                                            overwrite_warning_click_yes = overwrite_warning_click_yes)
+            if success == False:
+                print("Acquisition failed. Reconnecting...")
+                if return_failure == True:
+                    return False
+                else:
+                    self.flim.sendCommand('SetCenter')
 
-            self.wait_while_grabbing()
             self.flimlist=glob.glob(os.path.join(self.folder,f"{self.NameStem}*.flim"))            
             
             if len(self.flimlist)>1:

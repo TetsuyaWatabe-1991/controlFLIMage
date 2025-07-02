@@ -5,6 +5,7 @@
 *.ipynb
 *.h5
 *.bat
+*.log
 DirectionSetting.ini
 DirectionSetting*.ini
 XYsize.ini

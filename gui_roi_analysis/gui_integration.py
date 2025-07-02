@@ -122,9 +122,17 @@ def first_processing_for_flim_files(
                     
                 each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
                 
-                small_Tiff_MultiArray, small_Aligned_4d_array, corrected_positions, each_set_df = process_small_region(
-                    each_set_df, Aligned_4d_array
-                )
+                try:
+                    small_Tiff_MultiArray, small_Aligned_4d_array, corrected_positions, each_set_df = process_small_region(
+                        each_set_df, Aligned_4d_array
+                    )
+                except Exception as e:
+                    print(f"error at {each_group} {each_set_label}")
+                    print(e)
+                    print(each_set_df)
+                    print(Aligned_4d_array.shape)
+                    print(each_set_df.shape)
+                    assert False
 
                 # Update combined_df with small region boundaries and small shifts
                 for col in ['small_z_from', 'small_z_to', 'small_x_from', 'small_x_to', 'small_y_from', 'small_y_to']:

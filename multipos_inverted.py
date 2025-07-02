@@ -166,32 +166,46 @@ class Multiarea_from_lowmag():
     def update_pos_fromcurrent(self, FLIMageCont):
         self.corrected_lowmag_xyz_um = FLIMageCont.get_position()
     
-    def go_to_lowmag_center_pos(self, FLIMageCont, FastMS2k):
-        dest_x,dest_y,dest_z = self.corrected_lowmag_xyz_um
-        FLIMageCont.flim.sendCommand('MotorDisconnect')
-        # FastMS2k.move_pos_mm(self, 
-        #                      x_mm = dest_x*10**3,
-        #                      y_mm = dest_y*10**3, 
-        #                      z_mm = dest_z*10**3)
-        FastMS2k.move_pos_mm(
-                             x_mm = dest_x/10**3,
-                             y_mm = dest_y/10**3, 
-                             z_mm = dest_z/10**3)
-        #20250212 not sure... but try adding sleep
-        time.sleep(1)
-        FLIMageCont.flim.sendCommand('MotorReopen')
+    # def go_to_lowmag_center_pos(self, FLIMageCont, FastMS2k):
+    #     dest_x,dest_y,dest_z = self.corrected_lowmag_xyz_um
+    #     FLIMageCont.flim.sendCommand('MotorDisconnect')
+    #     # FastMS2k.move_pos_mm(self, 
+    #     #                      x_mm = dest_x*10**3,
+    #     #                      y_mm = dest_y*10**3, 
+    #     #                      z_mm = dest_z*10**3)
+    #     FastMS2k.move_pos_mm(
+    #                          x_mm = dest_x/10**3,
+    #                          y_mm = dest_y/10**3, 
+    #                          z_mm = dest_z/10**3)
+    #     #20250212 not sure... but try adding sleep
+    #     time.sleep(1)
+    #     FLIMageCont.flim.sendCommand('MotorReopen')
         
-    def go_to_relative_pos_after_(self, relative_zyx_um, FLIMageCont, FastMS2k):
+    # def go_to_relative_pos_after_(self, relative_zyx_um, FLIMageCont, FastMS2k):
+    #     x,y,z=FLIMageCont.get_position()        
+    #     dest_x = x - FLIMageCont.directionMotorX * relative_zyx_um[2]
+    #     dest_y = y - FLIMageCont.directionMotorY * relative_zyx_um[1]
+    #     dest_z = z - FLIMageCont.directionMotorZ * relative_zyx_um[0]
+    #     FLIMageCont.flim.sendCommand('MotorDisconnect')
+    #     FastMS2k.move_pos_mm(x_mm = dest_x/10**3,
+    #                          y_mm = dest_y/10**3, 
+    #                          z_mm = dest_z/10**3)
+    #     FLIMageCont.flim.sendCommand('MotorReopen')
+
+    def go_to_lowmag_center_pos(self, FLIMageCont):
+        dest_x,dest_y,dest_z = self.corrected_lowmag_xyz_um        
+        FLIMageCont.go_to_absolute_pos_motor_checkstate(dest_x, dest_y, dest_z)
+        time.sleep(1)
+        
+    def go_to_relative_pos_after_(self, relative_zyx_um, FLIMageCont):
         x,y,z=FLIMageCont.get_position()        
         dest_x = x - FLIMageCont.directionMotorX * relative_zyx_um[2]
         dest_y = y - FLIMageCont.directionMotorY * relative_zyx_um[1]
         dest_z = z - FLIMageCont.directionMotorZ * relative_zyx_um[0]
-        FLIMageCont.flim.sendCommand('MotorDisconnect')
-        FastMS2k.move_pos_mm(x_mm = dest_x/10**3,
-                             y_mm = dest_y/10**3, 
-                             z_mm = dest_z/10**3)
-        FLIMageCont.flim.sendCommand('MotorReopen')
-        
+        FLIMageCont.go_to_absolute_pos_motor_checkstate(dest_x, dest_y, dest_z)
+
+
+
 
 
 if __name__ == "__main__":

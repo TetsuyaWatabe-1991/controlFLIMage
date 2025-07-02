@@ -16,7 +16,14 @@ def window_exists(window_name):
     win32gui.EnumWindows(windowEnumerationHandler, top_windows)
     window_name_list = [each_hwnd_name[1] for each_hwnd_name in top_windows]
     return window_name in window_name_list
-    
+
+def window_exists_startswith(window_name_header):
+    top_windows = []
+    win32gui.EnumWindows(windowEnumerationHandler, top_windows)
+    window_name_list = [each_hwnd_name[1] for each_hwnd_name in top_windows]
+    # if window's name starts with window_name_header, return True
+    return any(window_name.startswith(window_name_header) for window_name in window_name_list)
+
 def close_remote_control():
     top_windows = []
     win32gui.EnumWindows(windowEnumerationHandler, top_windows)
@@ -68,10 +75,10 @@ def close_realtime_plot():
 
     
 if __name__ == '__main__':
-    if False:
-        top_windows = []
-        win32gui.EnumWindows(windowEnumerationHandler, top_windows)
-        
-        for i in top_windows:
-            if i[1]=='Realtime plot':
-                print(i)
+    # if False:
+    top_windows = []
+    win32gui.EnumWindows(windowEnumerationHandler, top_windows)
+    
+    for i in top_windows:
+        if 'FLIM' in i[1]:
+            print(i)

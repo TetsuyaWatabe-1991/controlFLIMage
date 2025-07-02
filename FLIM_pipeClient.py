@@ -24,6 +24,7 @@ import win32file
 import struct
 import threading
 import time
+import datetime
 from win32com.shell import shell, shellcon
 
 class Event:
@@ -63,6 +64,7 @@ class FLIM_Com:
         self.readServerName = 'FLIMageR'
         self.initFile = "COM_method.txt" #This file is to start the server. --- there is no way to connect otherwise...
         initFilePath = r"FLIMage\Init_Files\COM"
+        self.last_commands_queue = []
 
         self.messageReceived = Event()
         self.Connected = False
@@ -117,6 +119,10 @@ class FLIM_Com:
             #print ('Failed: Perhaps server is not active')              
 
     def sendCommand(self, str1):
+        self.last_commands_queue.append(str(datetime.datetime.now())+", "+str1)
+        if len(self.last_commands_queue) > 100:
+            self.last_commands_queue.pop(0)
+        
         if self.Connected:
             try:
                 self.__sendMessage(self.clientW, str1)
