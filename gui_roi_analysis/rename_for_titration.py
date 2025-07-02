@@ -12,11 +12,11 @@ from datetime import datetime
 #%%
 ignore_words = ["for_align"]
 one_of_file_per_dir_list = [
-    r"C:\Users\WatabeT\Desktop\20250626_Copy\lowmag1__highmag_1_002.flim"
+    r"G:\ImagingData\Tetsuya\20250630\auto1 - Copy\lowmag1__highmag_1_002.flim"
 ]
 
 pre_length = 2
-z_stack_frame_num = [11]
+z_stack_frame_num = [7,11]
 uncaging_frame_num = [33,34]
 titration_frame_num = [32]
 combined_df = pd.DataFrame()

@@ -1,12 +1,8 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Jan  3 12:28:44 2023
-
-@author: yasudalab
-"""
+# %%
 # import sys
 # sys.path.append("../")
 from controlflimage_threading import Control_flimage
+from time import sleep
 
 FLIMageCont = Control_flimage()
 FLIMageCont.directionMotorY = FLIMageCont.directionMotorY 
@@ -15,10 +11,17 @@ FLIMageCont.directionMotorY = FLIMageCont.directionMotorY
 #                       LoadSetting=False,drift_control=True,
 #                       ShowUncagingDetection=True,drift_cont_galvo=False,expected_grab_duration_sec=40) 
 
-FLIMageCont.set_param(RepeatNum=800, interval_sec=120, ch_1or2=2,
-                      LoadSetting=False,drift_control=True,
-                      ShowUncagingDetection=True,drift_cont_galvo=False,expected_grab_duration_sec=20)       
-FLIMageCont.start_repeat()
+FLIMageCont.set_param(RepeatNum=800, interval_sec=10, ch_1or2=2,
+                      LoadSetting=False,
+                      
+                      drift_control=False,
+                      #unusual drift control
+                      
+                      ShowUncagingDetection=True,drift_cont_galvo=False,expected_grab_duration_sec=6)       
 
+for i in range(100):
+    FLIMageCont.acquisition_include_connect_wait()
+    sleep(5)
 
+# %%
  
