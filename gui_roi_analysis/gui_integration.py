@@ -42,6 +42,12 @@ def first_processing_for_flim_files(
         os.makedirs(each_folder, exist_ok=True)
 
     combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length)
+    
+    #for debug
+    csv_savepath = os.path.join(os.path.dirname(one_of_filepath), "debug_combined_df.csv")  
+    combined_df.to_csv(csv_savepath, index=False)
+    # print(f"Saved combined_df to {csv_savepath}")
+    # input("Press Enter to continue...")
 
     # Add data validation check
     print(f"\n=== DATA VALIDATION FOR {os.path.basename(one_of_filepath)} ===")
@@ -84,6 +90,7 @@ def first_processing_for_flim_files(
             filelist = each_group_df["file_path"].tolist()
             # Load and align data
             Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=ch_1or2 - 1)
+            print("for debug, load and align data, shifts\n", shifts)
 
             # Add alignment data validation
             print(f"Group {each_group}: Aligned array shape: {Aligned_4d_array.shape}, Shifts shape: {shifts.shape}")
@@ -134,6 +141,7 @@ def first_processing_for_flim_files(
                 small_Tiff_MultiArray, small_Aligned_4d_array, corrected_positions, each_set_df = process_small_region(
                         each_set_df, Aligned_4d_array
                         )
+                print("for debug, corrected_positions\n", corrected_positions)
 
 
                 # Update combined_df with small region boundaries and small shifts
@@ -322,28 +330,32 @@ def process_uncaging_positions(
             continue
         assert len(each_set_unc_row) == 1
 
+        #for debug
+        print("shifts\n", shifts)
+
         # Get the nth value for uncaging row
-        unc_nth = each_set_unc_row.loc[:, "nth"].values[0]
+        # unc_nth = each_set_unc_row["nth"].values[0]
+        # assert type(unc_nth) == int
+        # nth_omit_ind_next_to_unc = each_set_df[each_set_df["nth"] == unc_nth + 1]["nth_omit_induction"]
+        # assert len(nth_omit_ind_next_to_unc) == 1
+        # nth_omit_ind_before_unc = nth_omit_ind_next_to_unc.values[0] - 1
 
-        # Validate nth value against shifts array bounds
-        if unc_nth < 0 or unc_nth >= len(shifts):
-            print(f"ERROR: Invalid nth value {unc_nth} for shifts array of length {len(shifts)}")
-            print(f"Group: {each_group_df['group'].iloc[0]}, Set: {each_set_label}")
-            print(f"each_set_unc_row: {each_set_unc_row}")
-            print(f"shifts shape: {shifts.shape}")
-            print(f"Available nth values in each_set_df: {each_set_df['nth'].unique()}")
-            continue
+        # Get the last pre frame
+        last_pre_frame = each_set_df[each_set_df["phase"] == "pre"].iloc[-1]
 
-        # Calculate z shifts with bounds checking
-        if unc_nth - 1 >= 0 and unc_nth - 1 < len(shifts):
-            z_shift_last_pre = shifts[unc_nth - 1, 0]
-        else:
-            print(f"WARNING: Cannot access shifts[{unc_nth - 1}] for z shift calculation")
-            print(f"Using 0 as default z shift")
-            z_shift_last_pre = 0
+        # z_shift_last_pre = last_pre_frame["z_relative_step_nth"].values[0]
+        # print("each_set_unc_row", each_set_unc_row)
+        # print("last_pre_frame", last_pre_frame)
+
+        nth_omit_induction_last_pre_frame = last_pre_frame["nth_omit_induction"]
+
+
+        # this won't work if titration is not included, so we need to use the last pre frame
+        # z_shift_last_pre = shifts[unc_nth - 1, 0]
+        z_shift_last_pre = shifts[nth_omit_induction_last_pre_frame, 0]
 
         z_shift_last_pre_rounded = round(z_shift_last_pre, 0)
-        z_relative_to_last_pre = each_set_unc_row.loc[:, "z_relative_step_nth"].values[0]
+        z_relative_to_last_pre = each_set_unc_row.iat[0, each_set_unc_row.columns.get_loc("z_relative_step_nth")]
         z_nth_relative_to_first = round(z_relative_to_last_pre - z_shift_last_pre_rounded)
 
         # Update positions with bounds checking
@@ -356,20 +368,14 @@ def process_uncaging_positions(
         # print("z_nth_relative_to_first", z_nth_relative_to_first)
 
         # Get shift values with bounds checking
-        if unc_nth < len(shifts):
-            shift_x = shifts[unc_nth, 2]
-            shift_y = shifts[unc_nth, 1]
-        else:
-            print(f"WARNING: nth value {unc_nth} exceeds shifts array bounds")
-            shift_x = 0
-            shift_y = 0
+        # if unc_nth < len(shifts):
+        # shift_x = shifts[unc_nth, 2]
+        # shift_y = shifts[unc_nth, 1]
+        shift_x = shifts[nth_omit_induction_last_pre_frame, 2]
+        shift_y = shifts[nth_omit_induction_last_pre_frame, 1]
 
-        each_group_df.loc[each_set_df.index, "corrected_uncaging_x"] = (
-            each_set_unc_row.loc[:, "center_x"] + shift_x
-        ).values[0]
-        each_group_df.loc[each_set_df.index, "corrected_uncaging_y"] = (
-            each_set_unc_row.loc[:, "center_y"] + shift_y
-        ).values[0]
+        each_group_df.loc[each_set_df.index, "corrected_uncaging_x"] = each_set_unc_row.iat[0, each_set_unc_row.columns.get_loc("center_x")] + shift_x
+        each_group_df.loc[each_set_df.index, "corrected_uncaging_y"] = each_set_unc_row.iat[0, each_set_unc_row.columns.get_loc("center_y")] + shift_y
         each_group_df.loc[each_set_df.index, "corrected_uncaging_z"] = z_nth_relative_to_first
 
     return each_group_df
@@ -390,9 +396,14 @@ def save_full_region_plots(
             continue
 
         each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
-        corrected_uncaging_z = each_set_df["corrected_uncaging_z"].values[0]
-        corrected_uncaging_x = each_set_df["corrected_uncaging_x"].values[0]
-        corrected_uncaging_y = each_set_df["corrected_uncaging_y"].values[0]
+        try:
+            corrected_uncaging_z = each_set_df["corrected_uncaging_z"].values[0]
+            corrected_uncaging_x = each_set_df["corrected_uncaging_x"].values[0]
+            corrected_uncaging_y = each_set_df["corrected_uncaging_y"].values[0]
+        except:
+            print(f"error at {group_name} {each_set_label}")
+            print(f"each_set_df: {each_set_df}")
+            assert False
 
         z_from = min(Aligned_4d_array.shape[1]-1,
                      int(max(0, corrected_uncaging_z - z_plus_minus)))

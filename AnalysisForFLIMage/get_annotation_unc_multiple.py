@@ -61,8 +61,8 @@ def get_uncaging_pos_multiple(one_of_file_list,
                 df_nth_omit_induction = -1
             elif uncaging_TF:
                 uncaging_x_y_0to1 = iminfo.statedict["State.Uncaging.Position"]
-                previous_z_position = each_group_df[each_group_df["nth"] == nth -1]["z_position"].iloc[0]
-                previous_stepZ = each_group_df[each_group_df["nth"] == nth -1]["stepZ"].iloc[0]
+                previous_z_position = each_group_df[each_group_df["nth_omit_induction"] == nth_omit_induction]["z_position"].iloc[0]
+                previous_stepZ = each_group_df[each_group_df["nth_omit_induction"] == nth_omit_induction]["stepZ"].iloc[0]
                 z_relative_step_nth = int((z_position - previous_z_position) / previous_stepZ)
             elif unknown_TF:
                 print(file_path,'<- unknown')
@@ -140,6 +140,8 @@ def get_uncaging_pos_multiple(one_of_file_list,
             if not each_set_df["phase"].isin(["unc"]).any():
                 print(f"No uncaging data found for group {each_group_df['group'].iloc[0]}, set {each_set_label}")
                 each_group_df.loc[each_set_df.index, "phase"] = "None"
+                each_group_df.loc[each_set_df.index, "nth_omit_induction"] = -1
+                each_group_df.loc[each_set_df.index, "nth_set_label"] = -1
             else:
                 unc_trigger_time = each_set_df.loc[each_set_df["phase"] == "unc", "dt"].iloc[0]
                 relative_time = (each_set_df.loc[:, "dt"] - unc_trigger_time).dt.total_seconds()

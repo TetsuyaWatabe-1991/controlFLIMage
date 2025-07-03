@@ -41,10 +41,8 @@ for group_key, files in grouped.items():
         now = datetime.datetime.now()
         modified_date = datetime.datetime.fromtimestamp(os.path.getmtime(f))
         delta = (now - modified_date).total_seconds()
-        if delta > 20:
-            continue
-        else:
-
+        print(f"delta: {delta}")
+        if delta > 60:
             iminfo = FileReader()
             iminfo.read_imageFile(f, True) 
             # Get intensity only data
@@ -65,7 +63,7 @@ for group_key, files in grouped.items():
             dt = iminfo.statedict["State.Acq.triggerTime"]
             each_dict["dt"] = datetime.datetime.strptime(dt, "%Y-%m-%dT%H:%M:%S.%f")
             each_group_df = pd.concat([each_group_df, pd.DataFrame([each_dict])], ignore_index=True)
-        
+            
     # calculate diff, first value should be 0
     each_group_df["x_diff"] = each_group_df["x"] - each_group_df["x"].iloc[0]
     each_group_df["y_diff"] = each_group_df["y"] - each_group_df["y"].iloc[0]
@@ -80,7 +78,8 @@ result_df["relative_sec"] = relative_sec
 
 result_df.to_csv(folder_path+"result_df.csv", index = False)
 
-
+print("--------------------------------")
+print("saved as ", folder_path+"result_df.csv")
 
 
 
