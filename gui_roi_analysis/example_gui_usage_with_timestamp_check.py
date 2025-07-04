@@ -111,6 +111,10 @@ def print_simple_summary(total_groups, regenerated_groups, skipped_groups, plot_
     print("-" * 40)
 # %%
 
+Do_without_asking = False
+FLIM_analysis_TF = False
+
+skip_plot_if_not_updated = True
 # Setup parameters
 ch_1or2 = 2
 
@@ -138,38 +142,44 @@ one_of_filepath_list = [
 ]
 
 
-if False:
-# if ask_yes_no_gui("Do you already have combined_df_1.pkl?"):
-    df_save_path_1 = ask_open_path_gui()
-    print(f"Loading data from: {df_save_path_1}")
-    combined_df = pd.read_pickle(df_save_path_1)
+# if False:
+if Do_without_asking == False:
+    yn = ask_yes_no_gui("Do you already have combined_df_1.pkl?")
+    if yn:
+        df_save_path_1 = ask_open_path_gui()
+        print(f"Loading data from: {df_save_path_1}")
+        combined_df = pd.read_pickle(df_save_path_1)
 else:
-    # if ask_yes_no_gui("Do you want to run the data preparation step?"):
-    if True:
-        combined_df = pd.DataFrame()
-        for one_of_filepath in one_of_filepath_list:
-            print(f"\n\n\n Processing ... \n\n{one_of_filepath}\n\n\n")
-            temp_df = first_processing_for_flim_files(
-                one_of_filepath,
-                z_plus_minus,
-                ch_1or2,
-                pre_length = pre_length,
-                save_plot_TF = True,
-                save_tif_TF = True,
-                )
-            combined_df = pd.concat([combined_df, temp_df], ignore_index=True)
-        send_slack_url_default(message = "finished data preparation step.")
-        print("define save path for combined_df")
-        df_save_path_1 = ask_save_path_gui()
-        if df_save_path_1[-4:] != ".pkl":
-            df_save_path_1 = df_save_path_1 + ".pkl"
-        combined_df.to_pickle(df_save_path_1)
-        combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
-        print(f"saved combined_df to {df_save_path_1}")
+    df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df_1.pkl")
 
-    else:
-        print("canceled")
-        assert False
+if Do_without_asking == False:
+    yn1 = ask_yes_no_gui("Do you want to run the data preparation step?")
+    if (yn1 == False) and (yn == False):
+        raise Exception("dataframe is not loaded. You do not define it.")
+
+if (Do_without_asking == True) or (yn1 == True):
+    combined_df = pd.DataFrame()
+    for one_of_filepath in one_of_filepath_list:
+        print(f"\n\n\n Processing ... \n\n{one_of_filepath}\n\n\n")
+        temp_df = first_processing_for_flim_files(
+            one_of_filepath,
+            z_plus_minus,
+            ch_1or2,
+            pre_length = pre_length,
+            save_plot_TF = True,
+            save_tif_TF = True,
+            )
+        combined_df = pd.concat([combined_df, temp_df], ignore_index=True)
+    send_slack_url_default(message = "finished data preparation step.")
+    print("define save path for combined_df")
+    df_save_path_1 = ask_save_path_gui()
+    if df_save_path_1[-4:] != ".pkl":
+        df_save_path_1 = df_save_path_1 + ".pkl"
+    combined_df.to_pickle(df_save_path_1)
+    combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
+    print(f"saved combined_df to {df_save_path_1}")
+
+
 
 df_save_path_2 = os.path.join(os.path.dirname(df_save_path_1), "combined_df_2.pkl")
 
@@ -222,11 +232,11 @@ if ask_yes_no_gui("Do you want to save small image and ROI mask plots?"):
 
         # Check if regeneration is needed BEFORE loading any images
         should_regen, reason = should_regenerate_group_plots(each_group_df, "small")
-
-        if not should_regen:
-            print(f"Skipping group: {display_group} - {reason}")
-            skipped_groups += 1
-            continue
+        if skip_plot_if_not_updated:
+            if not should_regen:
+                print(f"Skipping group: {display_group} - {reason}")
+                skipped_groups += 1
+                continue
 
         print(f"Regenerating small plots for Group: {display_group} - {reason}")
         regenerated_groups += 1
@@ -350,10 +360,11 @@ if ask_yes_no_gui("Do you want to save fullsize image and ROI mask plots?"):
         # Check if regeneration is needed BEFORE loading any images
         should_regen, reason = should_regenerate_group_plots(each_group_df, "fullsize")
 
-        if not should_regen:
-            print(f"Skipping fullsize group: {display_group} - {reason}")
-            skipped_groups += 1
-            continue
+        if skip_plot_if_not_updated:
+            if not should_regen:
+                print(f"Skipping fullsize group: {display_group} - {reason}")
+                skipped_groups += 1
+                continue
 
         print(f"Regenerating fullsize plots for Group: {display_group} - {reason}")
         regenerated_groups += 1
@@ -466,7 +477,7 @@ if ask_yes_no_gui("Do you want to save fullsize image and ROI mask plots?"):
 
     print_simple_summary(total_groups, regenerated_groups, skipped_groups, "fullsize")
     print("All processing completed successfully!")
-    send_slack_url_default(message = "finished saving fullsize image and ROI mask plots with INI timestamp checking.")
+    # send_slack_url_default(message = "finished saving fullsize image and ROI mask plots with INI timestamp checking.")
 
 combined_df.to_pickle(df_save_path_2)
 
@@ -495,18 +506,15 @@ if ask_yes_no_gui("Do you want to analyze GCaMP?"):
             if len(uncaging_data) == 0:
                 print(f"No uncaging data found for group {display_group}, set {each_set_label}")
                 raise Exception(f"No uncaging data found for group {display_group}, set {each_set_label}\n something wrong for the data processing before this step.  Check it")
-                
 
             uncaging_path = uncaging_data["file_path"].values[0]
             uncaging_df_index = uncaging_data.index[0]
             print(uncaging_df_index,"/",len(combined_df))
-            
+
             #get index of the nth_omit_induction before uncaging
             each_set_label_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
             uncaging_df_index = each_set_label_df[each_set_label_df["phase"] == "unc"].index[0]
             nth_omit_induction_before_unc = each_set_label_df.loc[:uncaging_df_index, "nth_omit_induction"].idxmax()
-            
-
 
             iminfo = FileReader()
             iminfo.read_imageFile(uncaging_path, True)

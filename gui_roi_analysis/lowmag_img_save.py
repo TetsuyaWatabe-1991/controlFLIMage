@@ -20,14 +20,14 @@ from skimage.segmentation import find_boundaries
 from simple_dialog import ask_save_folder_gui
 
 def plt_zpro_with_roi(
-    mask_containing_df_single, 
+    mask_containing_df_single,
     roi_types, color_dict, vmax, vmin,
     highmag_side_length_um,ch_1or2=1):
 
     flim_filepath = mask_containing_df_single["file_path"]
     corrected_uncaging_z = mask_containing_df_single["corrected_uncaging_z"]
 
-    iminfo = FileReader()        
+    iminfo = FileReader()
     iminfo.read_imageFile(flim_filepath, True)
     six_dim = np.array(iminfo.image)
 
@@ -74,11 +74,15 @@ ch_1or2 = 2
 #     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250601\2lines3_auto\lowmag1__highmag_1_002.flim":"2_lines",
 #     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250601\4lines_3_auto\lowmag1__highmag_1_002.flim":"4_lines",
 #     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\lowmag1__highmag_1_002.flim":"2_lines",
-#     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\4lines_neuron4\lowmag1__highmag_1_002.flim":"4_lines",        
+#     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\4lines_neuron4\lowmag1__highmag_1_002.flim":"4_lines",
 # }
 
 one_of_filepath_dict = {
     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250527\2ndlowmag\lowmag1__highmag_1_002.flim":"GCaMP",
+}
+
+one_of_filepath_dict = {
+    r"C:\Users\WatabeT\Desktop\20250701\auto1\lowmag2__highmag_3_089.flim":"GCaMP",
 }
 
 # combined_df_reject_bad_data_pkl_path = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250531\combined\combined_df_reject_bad_data.pkl"
@@ -89,8 +93,13 @@ one_of_filepath_dict = {
 LTP_point_df_pkl_path = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250527\2ndlowmag\LTP_point_df.pkl"
 # combined_df_reject_bad_data_pkl_path = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250527\2ndlowmag\combined_df_reject_bad_data.pkl"
 combined_df_reject_bad_data_pkl_path = r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250527\2ndlowmag\combined_df_2.pkl"
+
 savefolder = ask_save_folder_gui()
 
+
+
+combined_df_reject_bad_data_pkl_path =r"C:\Users\WatabeT\Desktop\20250701\auto1\combined_df_reject_bad_data.pkl"
+LTP_point_df_pkl_path =r"C:\Users\WatabeT\Desktop\20250701\auto1\LTP_point_df.pkl"
 
 
 combined_df_reject_bad_data_df = pd.read_pickle(combined_df_reject_bad_data_pkl_path)
@@ -103,7 +112,7 @@ if ask_yes_no_gui("Do you have lowmag_df?"):
     lowmag_df_path = ask_open_path_gui(filetypes=[("Pickle files","*.pkl")])
     lowmag_df = pd.read_pickle(lowmag_df_path)
 else:
-    lowmag_df = pd.DataFrame()        
+    lowmag_df = pd.DataFrame()
     save_images = ask_yes_no_gui("Do you want to save lowmag images?")
     for file_path, value in one_of_filepath_dict.items():
         print(file_path)
@@ -123,9 +132,9 @@ else:
         for each_savefolder in [tiff_array_savefolder, z_projection_savefolder, y_projection_savefolder]:
             os.makedirs(each_savefolder, exist_ok=True)
 
-        for one_of_file in lowmag_file_list:      
+        for one_of_file in lowmag_file_list:
             # print(one_of_file)
-            iminfo = FileReader()        
+            iminfo = FileReader()
             # try:
             try:
                 iminfo.read_imageFile(one_of_file, save_images)
@@ -143,7 +152,7 @@ else:
             tiff_array_savepath = os.path.join(tiff_array_savefolder, os.path.basename(one_of_file).replace(".flim", ".tif"))
             z_projection_savepath = os.path.join(z_projection_savefolder, os.path.basename(one_of_file).replace(".flim", ".tif"))
             y_projection_savepath = os.path.join(y_projection_savefolder, os.path.basename(one_of_file).replace(".flim", ".tif"))
-            
+
             if save_images:
                 six_dim = np.array(iminfo.image)
                 each_tiff_array = six_dim[:,0, ch_1or2 - 1,:,:,:].sum(axis=-1)
@@ -152,7 +161,7 @@ else:
                 tifffile.imwrite(z_projection_savepath, each_tiff_array.max(axis=0))
                 tifffile.imwrite(y_projection_savepath, each_tiff_array.max(axis=1))
 
-            
+
             each_df = pd.DataFrame({
                 "highmag_one_of_file_path": [file_path],
                 "lowmag_file_path": [one_of_file],
@@ -162,34 +171,34 @@ else:
                 "lowmag_tiff_y_projection_savepath": [y_projection_savepath],
                 "statedict": [statedict],
                 })
-            
+
             lowmag_df = pd.concat([lowmag_df, each_df], ignore_index=True)
-                
+
     lowmag_df_path = ask_save_path_gui()
     lowmag_df.to_pickle(lowmag_df_path)
 
 # %%
 
 for index, row in combined_df_reject_bad_data_df.iterrows():
-    each_highmag_path = combined_df_reject_bad_data_df.at[index, "file_path"] 
+    each_highmag_path = combined_df_reject_bad_data_df.at[index, "file_path"]
     highmag_acq_dt = combined_df_reject_bad_data_df.at[index, "dt"]
     str_index_highmag = each_highmag_path.rfind("_highmag_")
     lowmag_header = each_highmag_path[:str_index_highmag]
 
     possible_lowmag_df = lowmag_df[lowmag_df["lowmag_file_path"].str.contains(lowmag_header, regex=False)]
-    
+
     #get filepath which acq_dt is just before highmag_acq_dt
     possible_lowmag_df = possible_lowmag_df[possible_lowmag_df["acq_dt"] < highmag_acq_dt]
     earliest_lowmag_file_path = possible_lowmag_df.iloc[0]["lowmag_file_path"]
     if len(possible_lowmag_df) == 0:
         print("no lowmag file found")
         continue
-    
+
     combined_df_reject_bad_data_df.at[index, "lowmag_file_path"] = earliest_lowmag_file_path
     combined_df_reject_bad_data_df.at[index, "lowmag_tiff_array_savepath"] = possible_lowmag_df.iloc[0]["lowmag_tiff_array_savepath"]
     combined_df_reject_bad_data_df.at[index, "lowmag_tiff_z_projection_savepath"] = possible_lowmag_df.iloc[0]["lowmag_tiff_z_projection_savepath"]
     combined_df_reject_bad_data_df.at[index, "lowmag_tiff_y_projection_savepath"] = possible_lowmag_df.iloc[0]["lowmag_tiff_y_projection_savepath"]
-    
+
     each_roi_png_savefolder = earliest_lowmag_file_path[:-5]
     each_roi_png_num_zfill3 = each_highmag_path[str_index_highmag+9:each_highmag_path.rfind("_")].zfill(3)
     lowmag_assigned_roi_png = os.path.join(each_roi_png_savefolder, f"{each_roi_png_num_zfill3}.png")
@@ -198,9 +207,9 @@ for index, row in combined_df_reject_bad_data_df.iterrows():
     combined_df_reject_bad_data_df.at[index, "each_roi_png_savefolder"] = each_roi_png_savefolder
 
 
- 
+
 # sns.lineplot(x='binned_min', y="norm_intensity", W
-#     data=combined_df_reject_bad_data_df, 
+#     data=combined_df_reject_bad_data_df,
 #     errorbar="se", legend=True,
 #     linewidth=5, color="red")
 
@@ -212,14 +221,14 @@ time_min_threshold = 25
 highmag_zoom = 15
 highmag_pixel = 128
 highmag_z_um = 1
-highmag_z_len = 7
-highmag_nAveFrame = 8
+highmag_z_len = 11
+highmag_nAveFrame = 3
 
 unique_id = 0
 for each_label in combined_df_reject_bad_data_df["label"].unique():
 
 # each_label = combined_df_reject_bad_data_df["label"].unique()[0]
-    each_label_df = combined_df_reject_bad_data_df[(combined_df_reject_bad_data_df["label"] == each_label) & 
+    each_label_df = combined_df_reject_bad_data_df[(combined_df_reject_bad_data_df["label"] == each_label) &
                                                     (combined_df_reject_bad_data_df["phase"] != "unc")]
 
     if len(each_label_df) == 0:
@@ -276,11 +285,11 @@ for each_label in combined_df_reject_bad_data_df["label"].unique():
 
 
     # center_x
-    vmax = before_uncaging_zproj.max()
+    vmax = before_uncaging_zproj.max()/3
     vmin = before_uncaging_zproj.min()
-    contrast_factor = 1  #just a magic number
-    lowmag_vmax = vmax * (lowmag_nAveFrame/highmag_nAveFrame) / contrast_factor
-    lowmag_vmin = vmin * (lowmag_nAveFrame/highmag_nAveFrame) / contrast_factor
+    
+    lowmag_vmax = vmax * (lowmag_nAveFrame/highmag_nAveFrame) 
+    lowmag_vmin = vmin * (lowmag_nAveFrame/highmag_nAveFrame) 
 
 
 
@@ -304,7 +313,7 @@ for each_label in combined_df_reject_bad_data_df["label"].unique():
     zpro_array = tifffile.imread(each_label_df['lowmag_tiff_z_projection_savepath'].iloc[0])
     plt.imshow(zpro_array, cmap="gray", vmin = lowmag_vmin, vmax = lowmag_vmax,
             extent=(0, lowmag_side_length_um, lowmag_side_length_um, 0))
-    plt.plot([x_left_um, x_right_um, x_right_um, x_left_um, x_left_um], 
+    plt.plot([x_left_um, x_right_um, x_right_um, x_left_um, x_left_um],
             [y_lower_um, y_lower_um, y_upper_um, y_upper_um, y_lower_um], "r-", markersize=10)
 
     plt.ylabel("Y (um)")
@@ -321,7 +330,7 @@ for each_label in combined_df_reject_bad_data_df["label"].unique():
                 origin="lower",
                 extent=(0, lowmag_side_length_um, ypro_array.shape[0] *lowmag_z_um,0),
                 )
-    plt.plot([x_left_um, x_right_um, x_right_um, x_left_um, x_left_um], 
+    plt.plot([x_left_um, x_right_um, x_right_um, x_left_um, x_left_um],
             [z_lower_um, z_lower_um, z_upper_um, z_upper_um, z_lower_um], "r-", markersize=10)
     plt.ylabel("Z (um)")
     plt.xlabel("X (um)")
@@ -345,9 +354,9 @@ for each_label in combined_df_reject_bad_data_df["label"].unique():
     plt.title("Uncaging")
     trimmed_high_x_um = highmag_side_length_um/highmag_pixel * before_uncaging_zproj.shape[1]
     trimmed_high_y_um = highmag_side_length_um/highmag_pixel * before_uncaging_zproj.shape[0]
-    plt.imshow(before_uncaging_zproj, cmap="gray", 
+    plt.imshow(before_uncaging_zproj, cmap="gray", vmin = vmin*2, vmax = vmax*2,
                 extent=(0, trimmed_high_x_um, trimmed_high_y_um, 0))
-    plt.plot(unc_x_for_plot_um, unc_y_for_plot_um, "r+", markersize=10)
+    plt.plot(unc_x_for_plot_um, unc_y_for_plot_um, "c+", markersize=10)
     plt.ylabel("Y (um)")
     plt.xlabel("X (um)")
 
@@ -359,7 +368,7 @@ for each_label in combined_df_reject_bad_data_df["label"].unique():
     roi_types = ["Spine", "DendriticShaft", "Background"]
     color_dict = {"Spine": "red", "DendriticShaft": "blue", "Background": "green"}
     plt_zpro_with_roi(
-        mask_containing_df_single, 
+        mask_containing_df_single,
         roi_types, color_dict, vmax, vmin,
         highmag_side_length_um,ch_1or2)
     plt.title("Pre " + str(mask_containing_df_single["relative_time_min"]) + "min" + f"  Z: {int(mask_containing_df_single['z_from']+1)} to {int(mask_containing_df_single['z_to'])}")
@@ -371,18 +380,23 @@ for each_label in combined_df_reject_bad_data_df["label"].unique():
     roi_types = ["Spine", "DendriticShaft", "Background"]
     color_dict = {"Spine": "red", "DendriticShaft": "blue", "Background": "green"}
     plt_zpro_with_roi(
-        mask_containing_df_single, 
+        mask_containing_df_single,
         roi_types, color_dict, vmax, vmin,
         highmag_side_length_um,ch_1or2)
     plt.title("Post " + str(mask_containing_df_single["relative_time_min"]) + "min" + f"  Z: {int(mask_containing_df_single['z_from']+1)} to {int(mask_containing_df_single['z_to'])}")
     ########################################################
     plt.subplot(fig_dim[0], fig_dim[1], 7)
-    mask_containing_df_single = each_label_df[each_label_df['relative_time_min'] > 25].iloc[0]
+    
+    mask_containing_df_single_candidate = each_label_df[each_label_df['relative_time_min'] > time_min_threshold]
+    if len(mask_containing_df_single_candidate) == 0:
+        mask_containing_df_single_candidate = each_label_df.loc[each_label_df['relative_time_min'].idxmax():,:]
+    mask_containing_df_single = mask_containing_df_single_candidate.iloc[0]
+    data_used_index_for_plot = mask_containing_df_single_candidate.index[0]
 
     roi_types = ["Spine", "DendriticShaft", "Background"]
     color_dict = {"Spine": "red", "DendriticShaft": "blue", "Background": "green"}
     plt_zpro_with_roi(
-        mask_containing_df_single, 
+        mask_containing_df_single,
         roi_types, color_dict, vmax, vmin,
         highmag_side_length_um,ch_1or2)
     plt.title("Post " + str(mask_containing_df_single["relative_time_min"]) + "min" + f"  Z: {int(mask_containing_df_single['z_from']+1)} to {int(mask_containing_df_single['z_to'])}")
@@ -394,27 +408,28 @@ for each_label in combined_df_reject_bad_data_df["label"].unique():
         xlim, [0,0],
         color="gray", linestyle="--", zorder= -10
         )
-    plt.text(0, (ylim[1] - ylim[0])*0.90 + ylim[0], 
+    plt.text(0, (ylim[1] - ylim[0])*0.90 + ylim[0],
     "uncaging", color="k", fontsize=10, va="bottom", ha = "left")
-    
-    plt.plot(each_label_df['relative_time_min'], 
+
+    plt.plot(each_label_df['relative_time_min'],
             each_label_df['norm_intensity'],
             color="k",marker="o",linestyle="-", zorder=0
             )
-    data_used_index = each_label_df[each_label_df['relative_time_min'] > time_min_threshold].index[0]
-    plt.scatter(each_label_df.at[data_used_index, "relative_time_min"],
-            each_label_df.at[data_used_index, "norm_intensity"],
+    
+    # data_used_index = each_label_df[each_label_df['relative_time_min'] > time_min_threshold].index[0]
+    plt.scatter(each_label_df.at[data_used_index_for_plot, "relative_time_min"],
+            each_label_df.at[data_used_index_for_plot, "norm_intensity"],
             color="m",marker="o",s=100, zorder=10
             )
-    text_pos_x = np.clip(each_label_df.at[data_used_index, "relative_time_min"], xlim[0], xlim[1])
-    text_pos_y = np.clip(each_label_df.at[data_used_index, "norm_intensity"], ylim[0], ylim[1])
+    text_pos_x = np.clip(each_label_df.at[data_used_index_for_plot, "relative_time_min"], xlim[0], xlim[1])
+    text_pos_y = np.clip(each_label_df.at[data_used_index_for_plot, "norm_intensity"], ylim[0], ylim[1])
     plt.text(text_pos_x, text_pos_y,
-            str(round(each_label_df.at[data_used_index, "norm_intensity"], 2)),
-            color = "m",  fontsize=20, zorder=100, 
+            str(round(each_label_df.at[data_used_index_for_plot, "norm_intensity"], 2)),
+            color = "m",  fontsize=20, zorder=100,
             va="bottom",ha="left"
             )
 
-    plt.plot([0,0], 
+    plt.plot([0,0],
         [ (ylim[1] - ylim[0])*0.90 + ylim[0],
         (ylim[1] - ylim[0])*0.85 + ylim[0]],
         color="r"
@@ -429,7 +444,7 @@ for each_label in combined_df_reject_bad_data_df["label"].unique():
     ########################################################
     plt.tight_layout()
     unique_id+=1
-    
+
     savepath = os.path.join(savefolder, f"{each_label_df.dt.iloc[0].strftime("%Y%m%d_%H%M%S")}_{os.path.basename(each_label)}_{str(unique_id)}.png")
     print(savepath)
     plt.savefig(savepath, dpi=150, bbox_inches="tight")
@@ -464,7 +479,7 @@ for each_group in LTP_point_df_cut_too_large["two_groups"].unique():
     print(std_norm_intensity)
     print("--------------------------------")
 
-sns.swarmplot(x="two_groups", y="norm_intensity", 
+sns.swarmplot(x="two_groups", y="norm_intensity",
     data=LTP_point_df_cut_too_large)
 #delete upper and right axes
 plt.gca().spines['top'].set_visible(False)

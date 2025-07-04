@@ -14,6 +14,8 @@ from AnalysisForFLIMage.get_annotation_unc_multiple import get_uncaging_pos_mult
 from FLIMageAlignment import Align_4d_array, flim_files_to_nparray
 from roi_analysis_gui import ROIAnalysisGUI
 
+SHIFT_DIRECTION = -1 # +1: shift to the right, -1: shift to the left
+
 def first_processing_for_flim_files(
     one_of_filepath,
     z_plus_minus,
@@ -84,6 +86,7 @@ def first_processing_for_flim_files(
         print(f"each_filepath_without_number: {each_filepath_without_number}")
         print("--------------------------------------------------------------\n"*5)
         each_filegroup_df = combined_df[combined_df['filepath_without_number'] == each_filepath_without_number]
+
         for each_group in each_filegroup_df['group'].unique():
             each_group_df = each_filegroup_df[each_filegroup_df['group'] == each_group]
 
@@ -105,14 +108,14 @@ def first_processing_for_flim_files(
 
             # Store individual shift values for each frame
             valid_df = each_group_df[each_group_df["nth_omit_induction"] != -1].copy()
-            valid_df_sorted = valid_df.sort_values("nth_omit_induction")
 
-            for i, (idx, row) in enumerate(valid_df_sorted.iterrows()):
-                if i < len(shifts):
-                    shift_z, shift_y, shift_x = shifts[i][0], shifts[i][1], shifts[i][2]
-                    combined_df.loc[idx, 'shift_z'] = shift_z
-                    combined_df.loc[idx, 'shift_y'] = shift_y
-                    combined_df.loc[idx, 'shift_x'] = shift_x
+            for (idx, row) in valid_df.iterrows():
+                nth_omit_induction = row["nth_omit_induction"]
+                shift_z, shift_y, shift_x = shifts[nth_omit_induction][0], shifts[nth_omit_induction][1], shifts[nth_omit_induction][2]
+                combined_df.loc[idx, 'shift_z'] = shift_z
+                combined_df.loc[idx, 'shift_y'] = shift_y
+                combined_df.loc[idx, 'shift_x'] = shift_x
+
 
             # Save full region plots
             list_of_save_path = save_full_region_plots(each_group_df, Aligned_4d_array, plot_savefolder,
@@ -243,25 +246,47 @@ def shift_coords_small_to_full_for_each_rois(combined_df, z_plus_minus,
 
                     coords = np.argwhere(each_roi_mask)
                     shifted_coords = coords.copy()
-                    try:
-                        shifted_coords[:, 0] = coords[:, 0] + small_y_from - total_shift_y
-                        shifted_coords[:, 1] = coords[:, 1] + small_x_from - total_shift_x
-                        shifted_mask = np.zeros(image_shape, dtype=bool)
+                    # try:
+                    # shifted_coords[:, 0] = coords[:, 0] + small_y_from - total_shift_y
+                    # shifted_coords[:, 1] = coords[:, 1] + small_x_from - total_shift_x
+                    shifted_coords[:, 0] = coords[:, 0] + small_y_from + total_shift_y*SHIFT_DIRECTION
+                    shifted_coords[:, 1] = coords[:, 1] + small_x_from + total_shift_x*SHIFT_DIRECTION
+
+                    # check if the shifted_coords is out of the image
+                    height, width = image_shape
+                    valid_mask = (
+                        (shifted_coords[:, 0] >= 0) & 
+                        (shifted_coords[:, 0] < height) & 
+                        (shifted_coords[:, 1] >= 0) & 
+                        (shifted_coords[:, 1] < width)
+                    )
+                    shifted_coords = shifted_coords[valid_mask]
+
+                    shifted_mask = np.zeros(image_shape, dtype=bool)
+                    if len(shifted_coords) > 0:
                         shifted_mask[shifted_coords[:, 0], shifted_coords[:, 1]] = True
-                    except:
+                    else:
                         print(f"error at {filepath_without_number} {each_set_label} {nth_omit_induction}")
-                        print(f"small_y_from: {small_y_from}")
-                        print(f"small_x_from: {small_x_from}")
-                        print(f"total_shift_y: {total_shift_y}")
-                        print(f"total_shift_x: {total_shift_x}")
-                        print(f"shifted_coords[:, 0].max(): {shifted_coords[:, 0].max()}")
-                        print(f"shifted_coords[:, 0].min(): {shifted_coords[:, 0].min()}")
-                        print(f"shifted_coords[:, 1].max(): {shifted_coords[:, 1].max()}")
-                        print(f"shifted_coords[:, 1].min(): {shifted_coords[:, 1].min()}")
-                        print("No shift was applied")
-                        shifted_coords = coords.copy()
-                        shifted_mask = np.zeros(image_shape, dtype=bool)
-                        shifted_mask[shifted_coords[:, 0], shifted_coords[:, 1]] = True
+                        print(f"shifted_coords: {shifted_coords}")
+                        print(f"shifted_mask: {shifted_mask}")
+                        assert False
+
+                    
+                    # except:
+                    #     print(f"error at {filepath_without_number} {each_set_label} {nth_omit_induction}")
+                    #     print(f"small_y_from: {small_y_from}")
+                    #     print(f"small_x_from: {small_x_from}")
+                    #     print(f"total_shift_y: {total_shift_y}")
+                    #     print(f"total_shift_x: {total_shift_x}")
+                    #     print(f"shifted_coords[:, 0].max(): {shifted_coords[:, 0].max()}")
+                    #     print(f"shifted_coords[:, 0].min(): {shifted_coords[:, 0].min()}")
+                    #     print(f"shifted_coords[:, 1].max(): {shifted_coords[:, 1].max()}")
+                    #     print(f"shifted_coords[:, 1].min(): {shifted_coords[:, 1].min()}")
+                    #     print("No shift was applied")
+                    #     input("do you want to continue??? press any key to continue ")
+                    #     shifted_coords = coords.copy()
+                    #     shifted_mask = np.zeros(image_shape, dtype=bool)
+                    #     shifted_mask[shifted_coords[:, 0], shifted_coords[:, 1]] = True
                     combined_df.at[current_index, f"{each_roi_type}_shifted_mask"] = shifted_mask.copy()
 
     return combined_df
@@ -294,9 +319,29 @@ def shift_coords_small_to_full(combined_df, z_plus_minus, image_shape = (128, 12
         coords = np.argwhere(each_roi_mask)
 
         shifted_coords = coords.copy()
-        shifted_coords[:, 0] = coords[:, 0] + small_y_from - total_shift_y
-        shifted_coords[:, 1] = coords[:, 1] + small_x_from - total_shift_x
+
+        # shifted_coords[:, 0] = coords[:, 0] + small_y_from - total_shift_y
+        # shifted_coords[:, 1] = coords[:, 1] + small_x_from - total_shift_x
+        shifted_coords[:, 0] = coords[:, 0] + small_y_from + total_shift_y*SHIFT_DIRECTION
+        shifted_coords[:, 1] = coords[:, 1] + small_x_from + total_shift_x*SHIFT_DIRECTION
+
+        height, width = image_shape
+        valid_mask = (
+            (shifted_coords[:, 0] >= 0) & 
+            (shifted_coords[:, 0] < height) & 
+            (shifted_coords[:, 1] >= 0) & 
+            (shifted_coords[:, 1] < width)
+        )
+        shifted_coords = shifted_coords[valid_mask]
+
         shifted_mask = np.zeros(image_shape, dtype=bool)
+        if len(shifted_coords) > 0:
+            shifted_mask[shifted_coords[:, 0], shifted_coords[:, 1]] = True
+        else:
+            print(f"error at {filepath_without_number} {each_set_label} {nth_omit_induction}")
+            print(f"shifted_coords: {shifted_coords}")
+            print(f"shifted_mask: {shifted_mask}")
+            assert False
         shifted_mask[shifted_coords[:, 0], shifted_coords[:, 1]] = True
         combined_df.at[current_index, "shifted_mask"] = shifted_mask
 
@@ -330,8 +375,6 @@ def process_uncaging_positions(
             continue
         assert len(each_set_unc_row) == 1
 
-        #for debug
-        print("shifts\n", shifts)
 
         # Get the nth value for uncaging row
         # unc_nth = each_set_unc_row["nth"].values[0]
@@ -396,14 +439,11 @@ def save_full_region_plots(
             continue
 
         each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
-        try:
-            corrected_uncaging_z = each_set_df["corrected_uncaging_z"].values[0]
-            corrected_uncaging_x = each_set_df["corrected_uncaging_x"].values[0]
-            corrected_uncaging_y = each_set_df["corrected_uncaging_y"].values[0]
-        except:
-            print(f"error at {group_name} {each_set_label}")
-            print(f"each_set_df: {each_set_df}")
-            assert False
+
+        corrected_uncaging_z = each_set_df["corrected_uncaging_z"].values[0]
+        corrected_uncaging_x = each_set_df["corrected_uncaging_x"].values[0]
+        corrected_uncaging_y = each_set_df["corrected_uncaging_y"].values[0]
+
 
         z_from = min(Aligned_4d_array.shape[1]-1,
                      int(max(0, corrected_uncaging_z - z_plus_minus)))
@@ -1941,7 +1981,7 @@ def debug_index_error(filepath, group_name, set_label):
 
 # %%
 if __name__ == "__main__":
-    one_of_filepath = r"C:\Users\WatabeT\Desktop\auto1 - Copy\lowmag4__highmag_2_057.flim"
+    one_of_filepath = r"C:\Users\WatabeT\Desktop\20250701\auto1_test\lowmag1__highmag_1_038.flim"
     z_plus_minus = 2
     ch_1or2 = 2
     pre_length = 2
@@ -1965,6 +2005,12 @@ if __name__ == "__main__":
         os.makedirs(each_folder, exist_ok=True)
 
     combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length)
+    
+    #for debug
+    csv_savepath = os.path.join(os.path.dirname(one_of_filepath), "debug_combined_df.csv")  
+    combined_df.to_csv(csv_savepath, index=False)
+    # print(f"Saved combined_df to {csv_savepath}")
+    # input("Press Enter to continue...")
 
     # Add data validation check
     print(f"\n=== DATA VALIDATION FOR {os.path.basename(one_of_filepath)} ===")
@@ -2001,15 +2047,20 @@ if __name__ == "__main__":
         print(f"each_filepath_without_number: {each_filepath_without_number}")
         print("--------------------------------------------------------------\n"*5)
         each_filegroup_df = combined_df[combined_df['filepath_without_number'] == each_filepath_without_number]
+        
         for each_group in each_filegroup_df['group'].unique():
             each_group_df = each_filegroup_df[each_filegroup_df['group'] == each_group]
 
             filelist = each_group_df["file_path"].tolist()
             # Load and align data
             Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=ch_1or2 - 1)
+            # print("for debug, load and align data, shifts\n", shifts)
+            #save shifts to csv for debug
+            shifts_df = pd.DataFrame(shifts, columns=["shift_z", "shift_y", "shift_x"])
+            shifts_df.to_csv(os.path.join(os.path.dirname(one_of_filepath), each_group+"_shifts.csv"), index=False)
 
             # Add alignment data validation
-            print(f"Group {each_group}: Aligned array shape: {Aligned_4d_array.shape}, Shifts shape: {shifts.shape}")
+            # print(f"Group {each_group}: Aligned array shape: {Aligned_4d_array.shape}, Shifts shape: {shifts.shape}")
 
             # Process uncaging positions
             each_group_df = process_uncaging_positions(each_group_df, shifts, Aligned_4d_array)
@@ -2023,12 +2074,12 @@ if __name__ == "__main__":
             valid_df = each_group_df[each_group_df["nth_omit_induction"] != -1].copy()
             valid_df_sorted = valid_df.sort_values("nth_omit_induction")
 
-            for i, (idx, row) in enumerate(valid_df_sorted.iterrows()):
-                if i < len(shifts):
-                    shift_z, shift_y, shift_x = shifts[i][0], shifts[i][1], shifts[i][2]
-                    combined_df.loc[idx, 'shift_z'] = shift_z
-                    combined_df.loc[idx, 'shift_y'] = shift_y
-                    combined_df.loc[idx, 'shift_x'] = shift_x
+            for (idx, row) in valid_df_sorted.iterrows():
+                nth_omit_induction = row["nth_omit_induction"]
+                shift_z, shift_y, shift_x = shifts[nth_omit_induction][0], shifts[nth_omit_induction][1], shifts[nth_omit_induction][2]
+                combined_df.loc[idx, 'shift_z'] = shift_z
+                combined_df.loc[idx, 'shift_y'] = shift_y
+                combined_df.loc[idx, 'shift_x'] = shift_x
 
             # Save full region plots
             list_of_save_path = save_full_region_plots(each_group_df, Aligned_4d_array, plot_savefolder,
@@ -2057,6 +2108,7 @@ if __name__ == "__main__":
                 small_Tiff_MultiArray, small_Aligned_4d_array, corrected_positions, each_set_df = process_small_region(
                         each_set_df, Aligned_4d_array
                         )
+                print("for debug, corrected_positions\n", corrected_positions)
 
 
                 # Update combined_df with small region boundaries and small shifts
@@ -2087,7 +2139,6 @@ if __name__ == "__main__":
 
                 combined_df.loc[no_uncaging_df.index, "save_small_region_plot_path"] = list_of_save_path
 
-
                 savepath_dict = save_small_region_tiffs(
                     small_Tiff_MultiArray,
                     small_Aligned_4d_array,
@@ -2101,5 +2152,6 @@ if __name__ == "__main__":
                 )
                 combined_df.loc[each_set_df.index, "before_align_save_path"] = savepath_dict["save_path_before_align"]
                 combined_df.loc[each_set_df.index, "after_align_save_path"] = savepath_dict["save_path_after_align"]
-
-# %%
+    csv_savepath = os.path.join(os.path.dirname(one_of_filepath), "combined_df_after_processing.csv")
+    combined_df.to_csv(csv_savepath, index=False)
+    print(f"saved combined_df to {csv_savepath}")
