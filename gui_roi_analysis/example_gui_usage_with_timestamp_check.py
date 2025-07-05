@@ -11,6 +11,7 @@ import pandas as pd
 import tifffile
 from PyQt5.QtWidgets import QApplication
 from matplotlib import pyplot as plt  
+import seaborn as sns
 from gui_integration import shift_coords_small_to_full_for_each_rois, first_processing_for_flim_files
 from gui_roi_analysis.file_selection_gui import launch_file_selection_gui
 from fitting.flim_lifetime_fitting import FLIMLifetimeFitter
@@ -111,8 +112,14 @@ def print_simple_summary(total_groups, regenerated_groups, skipped_groups, plot_
     print("-" * 40)
 # %%
 
+
+
 Do_without_asking = False
-FLIM_analysis_TF = False
+Do_lifetime_analysis_TF = False
+Do_GCaMP_analysis_TF = True
+
+pre_defined_df_TF = True
+df_defined_path = r"C:\Users\WatabeT\Desktop\20250701\auto1\combined_df_2.pkl"
 
 skip_plot_if_not_updated = True
 # Setup parameters
@@ -138,9 +145,11 @@ fixed_tau2 = 1.1
 #     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\4lines_neuron4\lowmag1__highmag_1_002.flim",
 # ]
 one_of_filepath_list = [
-    r"C:\Users\WatabeT\Desktop\20250701\auto1\lowmag1__highmag_1_002.flim",
+    r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250703\24well\auto1\lowmag7__highmag_7_089.flim",
 ]
 
+roi_types = ["Spine", "DendriticShaft", "Background"]
+color_dict = {"Spine": "red", "DendriticShaft": "blue", "Background": "green"}
 
 # if False:
 if Do_without_asking == False:
@@ -150,14 +159,21 @@ if Do_without_asking == False:
         print(f"Loading data from: {df_save_path_1}")
         combined_df = pd.read_pickle(df_save_path_1)
 else:
-    df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df_1.pkl")
+    if pre_defined_df_TF:
+        df_save_path_1 = df_defined_path
+        combined_df = pd.read_pickle(df_save_path_1)
+    else:
+        df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df_1.pkl")
 
 if Do_without_asking == False:
     yn1 = ask_yes_no_gui("Do you want to run the data preparation step?")
     if (yn1 == False) and (yn == False):
         raise Exception("dataframe is not loaded. You do not define it.")
 
-if (Do_without_asking == True) or (yn1 == True):
+if (Do_without_asking == True) and (pre_defined_df_TF == True):
+    print("skipping data preparation step")
+
+elif (Do_without_asking == True) or (yn1 == True):  
     combined_df = pd.DataFrame()
     for one_of_filepath in one_of_filepath_list:
         print(f"\n\n\n Processing ... \n\n{one_of_filepath}\n\n\n")
@@ -170,22 +186,19 @@ if (Do_without_asking == True) or (yn1 == True):
             save_tif_TF = True,
             )
         combined_df = pd.concat([combined_df, temp_df], ignore_index=True)
-    send_slack_url_default(message = "finished data preparation step.")
-    print("define save path for combined_df")
-    df_save_path_1 = ask_save_path_gui()
-    if df_save_path_1[-4:] != ".pkl":
-        df_save_path_1 = df_save_path_1 + ".pkl"
+
+
+    if Do_without_asking == False:
+        send_slack_url_default(message = "finished data preparation step.")
+        print("define save path for combined_df")
+        df_save_path_1 = ask_save_path_gui()
+        if df_save_path_1[-4:] != ".pkl":
+            df_save_path_1 = df_save_path_1 + ".pkl"
+    else:
+        df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df.pkl")
     combined_df.to_pickle(df_save_path_1)
     combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
     print(f"saved combined_df to {df_save_path_1}")
-
-
-
-df_save_path_2 = os.path.join(os.path.dirname(df_save_path_1), "combined_df_2.pkl")
-
-roi_types = ["Spine", "DendriticShaft", "Background"]
-color_dict = {"Spine": "red", "DendriticShaft": "blue", "Background": "green"}
-
 
 
 # %%
@@ -205,22 +218,28 @@ additional_columns_to_show = [
 
 file_selection_gui = launch_file_selection_gui(
     combined_df,
-    df_save_path_2,
+    df_save_path_1,
     additional_columns=additional_columns_to_show
 )
 app.exec_()
 print("ROI visualization plots completed.")
 
 # %%
-if ask_yes_no_gui("stop here?"):
-    assert False
+if Do_without_asking == False:
+    if ask_yes_no_gui("stop here?"):
+        assert False
 
 # %%
 # Simple small image and ROI mask plotting with INI timestamp checking
 print("\n" + "="*40)
 print("Creating small ROI visualization plots...")
 
-if ask_yes_no_gui("Do you want to save small image and ROI mask plots?"):
+if Do_without_asking == False:
+    yn2 = ask_yes_no_gui("Do you want to save small image and ROI mask plots?")
+else:
+    yn2 = True
+
+if yn2:
     total_groups = 0
     regenerated_groups = 0
     skipped_groups = 0
@@ -322,7 +341,9 @@ if ask_yes_no_gui("Do you want to save small image and ROI mask plots?"):
         save_plot_timestamp_to_ini(each_filepath, "small")
 
     print_simple_summary(total_groups, regenerated_groups, skipped_groups, "small")
-    send_slack_url_default(message = "finished saving small image and ROI mask plots with INI timestamp checking.")
+    
+    if Do_without_asking == False:
+        send_slack_url_default(message = "finished saving small image and ROI mask plots with INI timestamp checking.")
 
 # %%
 # Shift the ROI masks to the full size image
@@ -335,12 +356,21 @@ combined_df = shift_coords_small_to_full_for_each_rois(combined_df, z_plus_minus
 print("\n" + "="*40)
 print("Creating full-size ROI visualization plots...")
 
-if ask_yes_no_gui("Do you want to save fullsize image and ROI mask plots?"):
-    if ask_yes_no_gui("Do you want to analyze lifetime on the ROI?"):
+if Do_without_asking == False:
+    yn3 = ask_yes_no_gui("Do you want to save fullsize image and ROI mask plots?")
+else:
+    yn3 = True
+
+if yn3:
+    if Do_without_asking == False:
+        yn4 = ask_yes_no_gui("Do you want to analyze lifetime on the ROI?")
+        measure_lifetime = yn4
+    else:        
+        measure_lifetime = Do_lifetime_analysis_TF
+
+    if measure_lifetime:
         fitter = FLIMLifetimeFitter()
-        measure_lifetime = True
-    else:
-        measure_lifetime = False
+
 
     roi_columns = [col for col in combined_df.columns if col.endswith('_roi_mask')]
     filelist = combined_df[(combined_df["nth_omit_induction"] != -1) &
@@ -445,7 +475,7 @@ if ask_yes_no_gui("Do you want to save fullsize image and ROI mask plots?"):
                     print(f"No ROI masks defined for nth_omit_induction {nth_omit_induction}, skipping...")
                     continue
 
-                # Create the plot
+                # Create the fullsize plot
                 each_tiff_array = six_dim[z_from:z_to,0,ch_1or2 - 1,:,:,:].sum(axis=-1)
                 z_projection = each_tiff_array.max(axis=0)
                 if first:
@@ -479,12 +509,17 @@ if ask_yes_no_gui("Do you want to save fullsize image and ROI mask plots?"):
     print("All processing completed successfully!")
     # send_slack_url_default(message = "finished saving fullsize image and ROI mask plots with INI timestamp checking.")
 
-combined_df.to_pickle(df_save_path_2)
+combined_df.to_pickle(df_save_path_1)
 
 # %%
 # Rest of the analysis continues as before...
 # GCaMP analysis
-if ask_yes_no_gui("Do you want to analyze GCaMP?"):
+if Do_without_asking == False:
+    yn5 = ask_yes_no_gui("Do you want to analyze GCaMP?")
+else:
+    yn5 = Do_GCaMP_analysis_TF
+
+if yn5:
     Fluor_ch_1or2_dict = {"GCaMP":1, "tdTomato":2}
     base_frame_index = [0, 1]
     afterbase_frame_index = [3]
@@ -552,16 +587,10 @@ for each_filepath in combined_df['filepath_without_number'].unique():
             continue
         uncaging_df = each_group_df[(each_group_df["phase"] == "unc") & (each_group_df["nth_set_label"] == each_set_label)]
         each_set_df = each_group_df[(each_group_df["nth_set_label"] == each_set_label)]
-        # combined_df.loc[uncaging_df.index, "label"] = f"{each_filepath}_{each_set_label}"
 
         each_set_df = each_group_df[(each_group_df["nth_set_label"] == each_set_label) &
                                     (each_group_df["nth_omit_induction"] != -1)]
-        # combined_df.loc[each_set_df.index, "subBG_intensity_per_pixel"] = each_set_df["Spine_intensity_sum"]/each_set_df["Spine_roi_area_pixels"] - each_set_df["Background_intensity_sum"]/each_set_df["Background_roi_area_pixels"]
-        # combined_df.loc[current_index, f"Spine_subBG_intensity_per_pixel_from_full_image"] = combined_df.loc[current_index, f"Spine_intensity_per_pixel_from_full_image"] - combined_df.loc[current_index, f"Background_intensity_per_pixel_from_full_image"]
-        # combined_df.loc[current_index, f"Dendritic_shaft_subBG_intensity_per_pixel_from_full_image"] = combined_df.loc[current_index, f"DendriticShaft_intensity_per_pixel_from_full_image"] - combined_df.loc[current_index, f"Background_intensity_per_pixel_from_full_image"]
-        
         numerator = combined_df.loc[each_set_df.index,"Spine_subBG_intensity_per_pixel_from_full_image"]
-        # denominator = combined_df.loc[each_set_df[each_set_df["phase"] == "pre"].index, "subBG_intensity_per_pixel"].mean(skipna=False)
         denominator = float(combined_df.loc[each_set_df[each_set_df["phase"] == "pre"].index, "Spine_subBG_intensity_per_pixel_from_full_image"].mean(skipna=False))
 
         combined_df.loc[each_set_df.index, "norm_intensity"] = (numerator/denominator).astype(float) - 1.0
@@ -578,8 +607,9 @@ datetime_started_experiment = combined_df["dt"].min()
 combined_df["time_after_started_experiment"] = combined_df["dt"] - datetime_started_experiment
 combined_df["time_after_started_experiment_sec"] = combined_df["time_after_started_experiment"].dt.total_seconds()
 combined_df["time_after_started_experiment_min"] = combined_df["time_after_started_experiment_sec"]/60
+combined_df["time_after_started_experiment_hour"] = combined_df["time_after_started_experiment_min"]/60
 combined_df["min_from_start"] = combined_df["time_after_started_experiment_sec"]//60
-combined_df.to_pickle(df_save_path_2)
+combined_df.to_pickle(df_save_path_1)
 
 
 combined_df_reject_bad_data = combined_df[(combined_df["reject"] == False)]
@@ -593,7 +623,7 @@ combined_df_reject_bad_data = combined_df_reject_bad_data[combined_df_reject_bad
 # combined_df_reject_bad_data.dropna(subset=['label'])
 combined_df_reject_bad_data = combined_df_reject_bad_data[~combined_df_reject_bad_data["label"].isna()]
 
-savepath_for_combined_df_reject_bad_data = os.path.join(os.path.dirname(df_save_path_2), "combined_df_reject_bad_data.pkl")
+savepath_for_combined_df_reject_bad_data = os.path.join(os.path.dirname(df_save_path_1), "combined_df_reject_bad_data.pkl")
 combined_df_reject_bad_data.to_pickle(savepath_for_combined_df_reject_bad_data)
 
 
@@ -601,12 +631,13 @@ combined_df_reject_bad_data.to_pickle(savepath_for_combined_df_reject_bad_data)
 # %%
 #plot intensity time
 default_save_plot_folder = os.path.dirname(df_save_path_1)
-save_plot_folder = ask_save_folder_gui(default_folder=default_save_plot_folder)
+if Do_without_asking == False:
+    save_plot_folder = ask_save_folder_gui(default_folder=default_save_plot_folder)
+else:
+    save_plot_folder = os.path.join(default_save_plot_folder, "summary")
 os.makedirs(save_plot_folder, exist_ok=True)
-# combined_df["intensity"] = combined_df["Spine_intensity"] + combined_df["DendriticShaft_intensity"] + combined_df["Background_intensity"]
-# clean_df = df.dropna()
-import seaborn as sns
-import matplotlib.pyplot as plt
+
+# plot LTP level against elapsed time (min) for each group
 plt.figure(figsize=(4, 3))
 sns.lineplot(x='relative_time_min', y="norm_intensity", 
             data=combined_df_reject_bad_data, hue="label",legend=False)
@@ -619,6 +650,7 @@ plt.gca().spines['right'].set_visible(False)
 plt.gca().spines['top'].set_visible(False)
 plt.show()
 
+# plot LTP level against BINNED time (min) for each group
 plt.figure(figsize=(4, 3))
 sns.lineplot(x='binned_min', y="norm_intensity", 
             data=combined_df_reject_bad_data, hue="label",legend=False)
@@ -639,8 +671,6 @@ plt.show()
 
 # %%
 # Extract norm_intensity values when relative_time_min first exceeds 25 minutes
-bool_analyze_GCaMP = ask_yes_no_gui("do you analyze GCaMP?")
-
 
 threshold_min = 25
 results = []
@@ -650,7 +680,7 @@ for label in combined_df_reject_bad_data['label'].dropna().unique():
     uncaging_df = combined_df[(combined_df['phase'] == "unc") & (combined_df['label'] == label)]
     if len(above_threshold) > 0:
         min_row = above_threshold.loc[above_threshold['relative_time_min'].idxmin()]
-        if bool_analyze_GCaMP:
+        if yn5:
             results.append({
                 'label': label,
                 'time_min': min_row['relative_time_min'],
@@ -675,7 +705,7 @@ LTP_point_df_cut_too_large = LTP_point_df[LTP_point_df["norm_intensity"] < rejec
 
 
 
-if bool_analyze_GCaMP:
+if yn5:
     LTP_point_df["GCaMP_Spine_F_F0"] = LTP_point_df["GCaMP_Spine_F_F0"].astype(float)
     LTP_point_df["GCaMP_DendriticShaft_F_F0"] = LTP_point_df["GCaMP_DendriticShaft_F_F0"].astype(float) 
 
@@ -768,64 +798,67 @@ plt.gca().spines['top'].set_visible(False)
 plt.savefig(os.path.join(save_plot_folder, "deltavolume_against_time_after_start.png"), dpi=150,bbox_inches="tight")
 plt.show()
 
+LTP_point_df["time_after_started_experiment_hour"] = LTP_point_df["time_after_started_experiment_min"]/60
+plt.figure(figsize=(4, 3))
+sns.scatterplot(x='time_after_started_experiment_hour', y="norm_intensity", 
+            data=LTP_point_df, hue="label",legend=False, palette=['k'])
+y_label = plt.ylabel("Normalized $\Delta$volume (a.u.)")
+x_label = plt.xlabel("Time (hour) after started experiment")
+plt.xlim([0,LTP_point_df["time_after_started_experiment_hour"].max()*1.05])
+plt.gca().spines['right'].set_visible(False)
+plt.gca().spines['top'].set_visible(False)
+plt.savefig(os.path.join(save_plot_folder, "deltavolume_against_time_after_start_hour.png"), dpi=150,bbox_inches="tight")
+plt.show()
+
 
 # %%
-# Enhanced ROI mask verification with detailed information
-print("\n" + "="*80)
-print("ENHANCED ROI MASK VERIFICATION")
-print("="*80)
+#save df to csv
+combined_df.to_csv(os.path.join(save_plot_folder, "combined_df_after_analysis.csv"))
+LTP_point_df.to_csv(os.path.join(save_plot_folder, "LTP_point_df_after_analysis.csv"))
 
-# Get all unique groups for comprehensive check
-if 'filepath_without_number' in combined_df.columns:
-    unique_groups = combined_df['filepath_without_number'].unique()
-    group_col = 'filepath_without_number'
-else:
-    unique_groups = combined_df['group'].unique()
-    group_col = 'group'
-
-print(f"Found {len(unique_groups)} unique groups to check")
-
-roi_types = ["Spine", "DendriticShaft", "Background"]
-colors = ['red', 'blue', 'green']
-
-for group in unique_groups[:3]:  # Check first 3 groups to avoid too much output
-    print(f"\n--- GROUP: {group} ---")
-    group_df = combined_df[combined_df[group_col] == group]
-    
-    # Check each set within this group
-    for set_label in group_df['nth_set_label'].unique():
-        if set_label == -1:
-            continue
-            
-        set_df = group_df[(group_df['nth_set_label'] == set_label) & 
-                         (group_df['nth_omit_induction'] >= 0)]
-        
-        if len(set_df) == 0:
-            continue
-            
-        print(f"  Set {set_label}: {len(set_df)} analysis frames")
-        
-        # Check each ROI type
-        for roi_type in roi_types:
-            mask_col = f"{roi_type}_roi_mask"
-            timestamp_col = f"{roi_type}_roi_analysis_timestamp"
-            
-            if mask_col in combined_df.columns:
-                masks_exist = set_df[mask_col].notna().sum()
-                total_frames = len(set_df)
-                
-                if masks_exist > 0:
-                    # Get timestamp of the analysis
-                    latest_timestamp = set_df[timestamp_col].max()
-                    
-                    # Get a sample mask to check properties
-                    sample_mask = set_df[set_df[mask_col].notna()].iloc[0][mask_col]
-                    mask_area = np.sum(sample_mask) if isinstance(sample_mask, np.ndarray) else 0
-                    
-                    print(f"    {roi_type}: {masks_exist}/{total_frames} frames, "
-                          f"area={mask_area} pixels, updated={latest_timestamp}")
-                else:
-                    print(f"    {roi_type}: No masks found")
 
 # %%
+#print summary
+from itertools import groupby
 
+def count_true_groups(arr):
+    return sum(1 for k, g in groupby(arr) if k)
+
+uncaging_tf = combined_df['uncaging_frame'] == True
+titration_tf = combined_df['titration_frame'] == True
+uncaging_or_titraion_tf = (combined_df['uncaging_frame'] == True) | (combined_df['titration_frame'] == True)
+
+#Trueの隣接したの個数を数える
+uncaging_tf_count = count_true_groups(uncaging_tf.values)
+titration_tf_count = count_true_groups(titration_tf.values)
+uncaging_or_titraion_tf_count = count_true_groups(uncaging_or_titraion_tf.values)
+
+
+#show above in a table
+
+from tabulate import tabulate
+
+# Trial information table
+trial_info = [
+    ["number of titration trials", titration_tf_count],
+    ["number of uncaging trials", uncaging_tf_count],
+    ["number of excluded data", uncaging_tf_count - len(LTP_point_df)],
+    ["number of included data", len(LTP_point_df)]
+]
+
+print(tabulate(trial_info, tablefmt="simple_grid"))
+
+# LTP statistics table
+ltp_mean = round(LTP_point_df["norm_intensity"].mean(), 2)
+ltp_std = round(LTP_point_df["norm_intensity"].std(), 2)
+
+ltp_stats = [
+    ["LTP Mean", ltp_mean],
+    ["LTP Std", ltp_std],
+    ["LTP Max", round(LTP_point_df["norm_intensity"].max(), 2)],
+    ["LTP Min", round(LTP_point_df["norm_intensity"].min(), 2)],
+    ["LTP SNR", round(ltp_mean / ltp_std, 2)]
+]
+
+print(tabulate(ltp_stats, tablefmt="simple_grid"))
+# %%
