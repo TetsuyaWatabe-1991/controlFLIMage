@@ -115,6 +115,7 @@ def first_processing_for_flim_files(
                 combined_df.loc[idx, 'shift_z'] = shift_z
                 combined_df.loc[idx, 'shift_y'] = shift_y
                 combined_df.loc[idx, 'shift_x'] = shift_x
+                
 
 
             # Save full region plots
@@ -156,6 +157,17 @@ def first_processing_for_flim_files(
                 combined_df.loc[each_set_df.index, "small_shift_y"] = each_set_df["small_shift_y"].values
                 combined_df.loc[each_set_df.index, "small_shift_x"] = each_set_df["small_shift_x"].values
 
+                ### I very often use x y shift at unc, so try to define it here  20250707
+                last_pre_frame = combined_df.loc[(each_set_df[each_set_df["phase"] == "pre"]).index].iloc[-1]
+                each_set_df_unc_or_titration = each_set_df[each_set_df["phase"].isin(["unc", "titration"])]
+                assert (len(each_set_df_unc_or_titration) > 0)
+                assert (len(each_set_df_unc_or_titration) < 7)
+                for each_col in ["shift_x", "shift_y", "shift_z", "small_shift_x", "small_shift_y", "small_shift_z"]:
+                    print(f"each_col: {each_col}")
+                    print(f"last_pre_frame[each_col]: {last_pre_frame[each_col]}")
+                    combined_df.loc[each_set_df_unc_or_titration.index, each_col] = last_pre_frame[each_col]                
+                #### till here 20250707
+
 
                 list_of_save_path = save_small_region_plots(
                     small_Aligned_4d_array,
@@ -188,6 +200,7 @@ def first_processing_for_flim_files(
                 )
                 combined_df.loc[each_set_df.index, "before_align_save_path"] = savepath_dict["save_path_before_align"]
                 combined_df.loc[each_set_df.index, "after_align_save_path"] = savepath_dict["save_path_after_align"]
+                combined_df.loc[each_set_df.index, "save_path_tzyx_aligned"] = savepath_dict["save_path_tzyx_aligned"]
 
     if save_tif_TF*save_plot_TF:
         for each_group in combined_df['group'].unique():
@@ -267,27 +280,13 @@ def shift_coords_small_to_full_for_each_rois(combined_df, z_plus_minus,
                         shifted_mask[shifted_coords[:, 0], shifted_coords[:, 1]] = True
                     else:
                         print(f"error at {filepath_without_number} {each_set_label} {nth_omit_induction}")
-                        print(f"shifted_coords: {shifted_coords}")
-                        print(f"shifted_mask: {shifted_mask}")
-                        assert False
+                        # print(f"shifted_coords: {shifted_coords}")
+                        # print(f"shifted_mask: {shifted_mask}")
+                        shifted_mask[coords[:, 0], coords[:, 1]] = True
+                        # assert False
 
-                    
-                    # except:
-                    #     print(f"error at {filepath_without_number} {each_set_label} {nth_omit_induction}")
-                    #     print(f"small_y_from: {small_y_from}")
-                    #     print(f"small_x_from: {small_x_from}")
-                    #     print(f"total_shift_y: {total_shift_y}")
-                    #     print(f"total_shift_x: {total_shift_x}")
-                    #     print(f"shifted_coords[:, 0].max(): {shifted_coords[:, 0].max()}")
-                    #     print(f"shifted_coords[:, 0].min(): {shifted_coords[:, 0].min()}")
-                    #     print(f"shifted_coords[:, 1].max(): {shifted_coords[:, 1].max()}")
-                    #     print(f"shifted_coords[:, 1].min(): {shifted_coords[:, 1].min()}")
-                    #     print("No shift was applied")
-                    #     input("do you want to continue??? press any key to continue ")
-                    #     shifted_coords = coords.copy()
-                    #     shifted_mask = np.zeros(image_shape, dtype=bool)
-                    #     shifted_mask[shifted_coords[:, 0], shifted_coords[:, 1]] = True
                     combined_df.at[current_index, f"{each_roi_type}_shifted_mask"] = shifted_mask.copy()
+
 
     return combined_df
 
@@ -375,45 +374,15 @@ def process_uncaging_positions(
             continue
         assert len(each_set_unc_row) == 1
 
-
-        # Get the nth value for uncaging row
-        # unc_nth = each_set_unc_row["nth"].values[0]
-        # assert type(unc_nth) == int
-        # nth_omit_ind_next_to_unc = each_set_df[each_set_df["nth"] == unc_nth + 1]["nth_omit_induction"]
-        # assert len(nth_omit_ind_next_to_unc) == 1
-        # nth_omit_ind_before_unc = nth_omit_ind_next_to_unc.values[0] - 1
-
-        # Get the last pre frame
         last_pre_frame = each_set_df[each_set_df["phase"] == "pre"].iloc[-1]
-
-        # z_shift_last_pre = last_pre_frame["z_relative_step_nth"].values[0]
-        # print("each_set_unc_row", each_set_unc_row)
-        # print("last_pre_frame", last_pre_frame)
-
         nth_omit_induction_last_pre_frame = last_pre_frame["nth_omit_induction"]
 
-
-        # this won't work if titration is not included, so we need to use the last pre frame
-        # z_shift_last_pre = shifts[unc_nth - 1, 0]
         z_shift_last_pre = shifts[nth_omit_induction_last_pre_frame, 0]
 
         z_shift_last_pre_rounded = round(z_shift_last_pre, 0)
         z_relative_to_last_pre = each_set_unc_row.iat[0, each_set_unc_row.columns.get_loc("z_relative_step_nth")]
         z_nth_relative_to_first = round(z_relative_to_last_pre - z_shift_last_pre_rounded)
 
-        # Update positions with bounds checking
-        # print("each_set_df", each_set_df)
-        # print("each_set_unc_row", each_set_unc_row)
-        # print("len(each_set_unc_row)", len(each_set_unc_row))
-        # print("shifts", shifts)
-        # print("len(shifts)", len(shifts))
-        # print("unc_nth", unc_nth)
-        # print("z_nth_relative_to_first", z_nth_relative_to_first)
-
-        # Get shift values with bounds checking
-        # if unc_nth < len(shifts):
-        # shift_x = shifts[unc_nth, 2]
-        # shift_y = shifts[unc_nth, 1]
         shift_x = shifts[nth_omit_induction_last_pre_frame, 2]
         shift_y = shifts[nth_omit_induction_last_pre_frame, 1]
 
@@ -642,6 +611,7 @@ def save_small_region_tiffs(
 
     save_path_before_align = os.path.join(tif_savefolder, f"{each_group}_{each_set_label}_before_align.tif")
     save_path_after_align = os.path.join(tif_savefolder, f"{each_group}_{each_set_label}_after_align.tif")
+    save_path_tzyx_aligned = os.path.join(tif_savefolder, f"{each_group}_{each_set_label}_aligned_tzyx.tif")
 
     if save_tif_TF:
 
@@ -652,6 +622,7 @@ def save_small_region_tiffs(
 
         zproj_before_align = small_Tiff_MultiArray[:, z_from:z_to, :, :].max(axis=1)
         zproj_after_align = small_Aligned_4d_array[:, z_from:z_to, :, :].max(axis=1)
+        tzyx_aligned_array = small_Aligned_4d_array[:, z_from:z_to, :, :]
 
         tifffile.imwrite(
             save_path_before_align,
@@ -661,9 +632,15 @@ def save_small_region_tiffs(
             save_path_after_align,
             zproj_after_align
         )
+        tifffile.imwrite(
+            save_path_tzyx_aligned,
+            tzyx_aligned_array
+        )
+
     if return_save_path:
         return {"save_path_before_align": save_path_before_align,
-                "save_path_after_align": save_path_after_align}
+                "save_path_after_align": save_path_after_align,
+                "save_path_tzyx_aligned": save_path_tzyx_aligned}
     else:
         return None
 
@@ -1979,179 +1956,206 @@ def debug_index_error(filepath, group_name, set_label):
     print("=== END DEBUG ===\n")
 
 
-# %%
-if __name__ == "__main__":
-    one_of_filepath = r"C:\Users\WatabeT\Desktop\20250701\auto1_test\lowmag1__highmag_1_038.flim"
-    z_plus_minus = 2
-    ch_1or2 = 2
-    pre_length = 2
-    save_plot_TF = True
-    save_tif_TF = True
-    ignore_words = ["for_align"]
-    # Load initial data
+# # %%
+# if __name__ == "__main__":
+#     one_of_filepath = r"C:\Users\WatabeT\Desktop\20250701\auto1\lowmag1__highmag_1_038.flim"
+#     z_plus_minus = 2
+#     ch_1or2 = 2
+#     pre_length = 2
+#     save_plot_TF = False
+#     save_tif_TF = False
+#     ignore_words = ["for_align"]
+#     # Load initial data
 
-    one_of_file_list = glob.glob(
-        os.path.join(
-            os.path.dirname(one_of_filepath),
-            "*_highmag_*002.flim"
-            )
-        )
-    one_of_file_list = [each_file for each_file in one_of_file_list if not any(ignore_word in each_file for ignore_word in ignore_words)]
+#     one_of_file_list = glob.glob(
+#         os.path.join(
+#             os.path.dirname(one_of_filepath),
+#             "*_highmag_*002.flim"
+#             )
+#         )
+#     one_of_file_list = [each_file for each_file in one_of_file_list if not any(ignore_word in each_file for ignore_word in ignore_words)]
 
-    plot_savefolder = os.path.join(os.path.dirname(one_of_filepath), "png")
-    tif_savefolder = os.path.join(os.path.dirname(one_of_filepath), "tif")
-    roi_savefolder = os.path.join(os.path.dirname(one_of_filepath), "roi")
-    for each_folder in [plot_savefolder, tif_savefolder, roi_savefolder]:
-        os.makedirs(each_folder, exist_ok=True)
+#     plot_savefolder = os.path.join(os.path.dirname(one_of_filepath), "png")
+#     tif_savefolder = os.path.join(os.path.dirname(one_of_filepath), "tif")
+#     roi_savefolder = os.path.join(os.path.dirname(one_of_filepath), "roi")
+#     for each_folder in [plot_savefolder, tif_savefolder, roi_savefolder]:
+#         os.makedirs(each_folder, exist_ok=True)
 
-    combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length)
+#     combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length)
     
-    #for debug
-    csv_savepath = os.path.join(os.path.dirname(one_of_filepath), "debug_combined_df.csv")  
-    combined_df.to_csv(csv_savepath, index=False)
-    # print(f"Saved combined_df to {csv_savepath}")
-    # input("Press Enter to continue...")
+#     #for debug
+#     csv_savepath = os.path.join(os.path.dirname(one_of_filepath), "debug_combined_df.csv")  
+#     combined_df.to_csv(csv_savepath, index=False)
+#     # print(f"Saved combined_df to {csv_savepath}")
+#     # input("Press Enter to continue...")
 
-    # Add data validation check
-    print(f"\n=== DATA VALIDATION FOR {os.path.basename(one_of_filepath)} ===")
-    print(f"Total files found: {len(one_of_file_list)}")
-    print(f"Combined dataframe shape: {combined_df.shape}")
+#     # Add data validation check
+#     print(f"\n=== DATA VALIDATION FOR {os.path.basename(one_of_filepath)} ===")
+#     print(f"Total files found: {len(one_of_file_list)}")
+#     print(f"Combined dataframe shape: {combined_df.shape}")
 
-    # Check for potential issues
-    if 'nth' in combined_df.columns:
-        nth_values = combined_df['nth'].unique()
-        print(f"Unique nth values: {sorted(nth_values)}")
+#     # Check for potential issues
+#     if 'nth' in combined_df.columns:
+#         nth_values = combined_df['nth'].unique()
+#         print(f"Unique nth values: {sorted(nth_values)}")
 
-        # Check for negative or very large nth values
-        negative_nth = combined_df[combined_df['nth'] < 0]
-        if len(negative_nth) > 0:
-            print(f"WARNING: Found {len(negative_nth)} rows with negative nth values")
-            print(f"Negative nth values: {negative_nth['nth'].unique()}")
+#         # Check for negative or very large nth values
+#         negative_nth = combined_df[combined_df['nth'] < 0]
+#         if len(negative_nth) > 0:
+#             print(f"WARNING: Found {len(negative_nth)} rows with negative nth values")
+#             print(f"Negative nth values: {negative_nth['nth'].unique()}")
 
-    if 'phase' in combined_df.columns:
-        phase_counts = combined_df['phase'].value_counts()
-        print(f"Phase distribution: {phase_counts.to_dict()}")
+#     if 'phase' in combined_df.columns:
+#         phase_counts = combined_df['phase'].value_counts()
+#         print(f"Phase distribution: {phase_counts.to_dict()}")
 
-        # Check if uncaging data exists
-        unc_data = combined_df[combined_df['phase'] == 'unc']
-        if len(unc_data) == 0:
-            print("WARNING: No uncaging data found in this dataset")
-        else:
-            print(f"Found {len(unc_data)} uncaging rows")
+#         # Check if uncaging data exists
+#         unc_data = combined_df[combined_df['phase'] == 'unc']
+#         if len(unc_data) == 0:
+#             print("WARNING: No uncaging data found in this dataset")
+#         else:
+#             print(f"Found {len(unc_data)} uncaging rows")
 
-    print("=== END DATA VALIDATION ===\n")
+#     print("=== END DATA VALIDATION ===\n")
 
-    # Process each group
-    for each_filepath_without_number in combined_df['filepath_without_number'].unique():
-        print("--------------------------------------------------------------\n"*5)
-        print(f"each_filepath_without_number: {each_filepath_without_number}")
-        print("--------------------------------------------------------------\n"*5)
-        each_filegroup_df = combined_df[combined_df['filepath_without_number'] == each_filepath_without_number]
-        
-        for each_group in each_filegroup_df['group'].unique():
-            each_group_df = each_filegroup_df[each_filegroup_df['group'] == each_group]
+#     # Process each group
+#     for each_filepath_without_number in combined_df['filepath_without_number'].unique():
+#         print("--------------------------------------------------------------\n"*5)
+#         print(f"each_filepath_without_number: {each_filepath_without_number}")
+#         print("--------------------------------------------------------------\n"*5)
+#         each_filegroup_df = combined_df[combined_df['filepath_without_number'] == each_filepath_without_number]
 
-            filelist = each_group_df["file_path"].tolist()
-            # Load and align data
-            Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=ch_1or2 - 1)
-            # print("for debug, load and align data, shifts\n", shifts)
-            #save shifts to csv for debug
-            shifts_df = pd.DataFrame(shifts, columns=["shift_z", "shift_y", "shift_x"])
-            shifts_df.to_csv(os.path.join(os.path.dirname(one_of_filepath), each_group+"_shifts.csv"), index=False)
+#         for each_group in each_filegroup_df['group'].unique():
+#             each_group_df = each_filegroup_df[each_filegroup_df['group'] == each_group]
 
-            # Add alignment data validation
-            # print(f"Group {each_group}: Aligned array shape: {Aligned_4d_array.shape}, Shifts shape: {shifts.shape}")
+#             filelist = each_group_df["file_path"].tolist()
+#             # Load and align data
+#             Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=ch_1or2 - 1)
+#             print("for debug, load and align data, shifts\n", shifts)
 
-            # Process uncaging positions
-            each_group_df = process_uncaging_positions(each_group_df, shifts, Aligned_4d_array)
+#             # Add alignment data validation
+#             print(f"Group {each_group}: Aligned array shape: {Aligned_4d_array.shape}, Shifts shape: {shifts.shape}")
 
-            # Update combined_df with corrected uncaging positions
-            for col in ['corrected_uncaging_x', 'corrected_uncaging_y', 'corrected_uncaging_z']:
-                if col in each_group_df.columns:
-                    combined_df.loc[each_group_df.index, col] = each_group_df[col].values
+#             # Process uncaging positions
+#             each_group_df = process_uncaging_positions(each_group_df, shifts, Aligned_4d_array)
 
-            # Store individual shift values for each frame
-            valid_df = each_group_df[each_group_df["nth_omit_induction"] != -1].copy()
-            valid_df_sorted = valid_df.sort_values("nth_omit_induction")
+#             # Update combined_df with corrected uncaging positions
+#             for col in ['corrected_uncaging_x', 'corrected_uncaging_y', 'corrected_uncaging_z']:
+#                 if col in each_group_df.columns:
+#                     combined_df.loc[each_group_df.index, col] = each_group_df[col].values
 
-            for (idx, row) in valid_df_sorted.iterrows():
-                nth_omit_induction = row["nth_omit_induction"]
-                shift_z, shift_y, shift_x = shifts[nth_omit_induction][0], shifts[nth_omit_induction][1], shifts[nth_omit_induction][2]
-                combined_df.loc[idx, 'shift_z'] = shift_z
-                combined_df.loc[idx, 'shift_y'] = shift_y
-                combined_df.loc[idx, 'shift_x'] = shift_x
+#             # Store individual shift values for each frame
+#             valid_df = each_group_df[each_group_df["nth_omit_induction"] != -1].copy()
 
-            # Save full region plots
-            list_of_save_path = save_full_region_plots(each_group_df, Aligned_4d_array, plot_savefolder,
-                                                    z_plus_minus,
-                                                    return_list_of_save_path=True)
-
-            getting_length_df = each_group_df[(each_group_df["nth_omit_induction"] != -1) &
-                                        (each_group_df["nth_set_label"] != -1)]
-            # print(f"length of getting_length_df: {len(getting_length_df)}")
-            # print(f"length of list_of_save_path: {len(list_of_save_path)}")
-            combined_df.loc[getting_length_df.index, "save_full_region_plot_path"] = list_of_save_path
-
-            # Process small regions
-            for each_set_label in each_group_df["nth_set_label"].unique():
-                if each_set_label == -1:
-                    continue
-
-                each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
-
-                if len(each_set_df) < 3:
-                    print(f"len(each_set_df): {len(each_set_df)}")
-                    print("do not analyze this")
-                    continue
+#             for (idx, row) in valid_df.iterrows():
+#                 nth_omit_induction = row["nth_omit_induction"]
+#                 shift_z, shift_y, shift_x = shifts[nth_omit_induction][0], shifts[nth_omit_induction][1], shifts[nth_omit_induction][2]
+#                 combined_df.loc[idx, 'shift_z'] = shift_z
+#                 combined_df.loc[idx, 'shift_y'] = shift_y
+#                 combined_df.loc[idx, 'shift_x'] = shift_x
+                
 
 
-                small_Tiff_MultiArray, small_Aligned_4d_array, corrected_positions, each_set_df = process_small_region(
-                        each_set_df, Aligned_4d_array
-                        )
-                print("for debug, corrected_positions\n", corrected_positions)
+#             # Save full region plots
+#             list_of_save_path = save_full_region_plots(each_group_df, Aligned_4d_array, plot_savefolder,
+#                                                     z_plus_minus,
+#                                                     return_list_of_save_path=True)
+
+#             getting_length_df = each_group_df[(each_group_df["nth_omit_induction"] != -1) &
+#                                         (each_group_df["nth_set_label"] != -1)]
+#             # print(f"length of getting_length_df: {len(getting_length_df)}")
+#             # print(f"length of list_of_save_path: {len(list_of_save_path)}")
+#             combined_df.loc[getting_length_df.index, "save_full_region_plot_path"] = list_of_save_path
+
+#             # Process small regions
+#             for each_set_label in each_group_df["nth_set_label"].unique():
+#                 if each_set_label == -1:
+#                     continue
+
+#                 each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
+
+#                 if len(each_set_df) < 3:
+#                     print(f"len(each_set_df): {len(each_set_df)}")
+#                     print("do not analyze this")
+#                     continue
 
 
-                # Update combined_df with small region boundaries and small shifts
-                for col in ['small_z_from', 'small_z_to', 'small_x_from', 'small_x_to', 'small_y_from', 'small_y_to']:
-                    if col in each_set_df.columns:
-                        combined_df.loc[each_set_df.index, col] = each_set_df[col].values
-
-                combined_df.loc[each_set_df.index, "small_shift_z"] = each_set_df["small_shift_z"].values
-                combined_df.loc[each_set_df.index, "small_shift_y"] = each_set_df["small_shift_y"].values
-                combined_df.loc[each_set_df.index, "small_shift_x"] = each_set_df["small_shift_x"].values
+#                 small_Tiff_MultiArray, small_Aligned_4d_array, corrected_positions, each_set_df = process_small_region(
+#                         each_set_df, Aligned_4d_array
+#                         )
+#                 print("for debug, corrected_positions\n", corrected_positions)
 
 
-                list_of_save_path = save_small_region_plots(
-                    small_Aligned_4d_array,
-                    corrected_positions,
-                    each_set_label,
-                    plot_savefolder,
-                    z_plus_minus,
-                    each_set_df,
-                    return_list_of_save_path=True,
-                    save_plot_TF=save_plot_TF
-                )
-                no_uncaging_df = each_set_df[each_set_df["nth_omit_induction"] != -1]
-                count_up = -1
-                for ind, each_row in no_uncaging_df.iterrows():
-                    count_up += 1
-                    combined_df.loc[ind, "relative_nth_omit_induction"] = count_up
+#                 # Update combined_df with small region boundaries and small shifts
+#                 for col in ['small_z_from', 'small_z_to', 'small_x_from', 'small_x_to', 'small_y_from', 'small_y_to']:
+#                     if col in each_set_df.columns:
+#                         combined_df.loc[each_set_df.index, col] = each_set_df[col].values
 
-                combined_df.loc[no_uncaging_df.index, "save_small_region_plot_path"] = list_of_save_path
+#                 combined_df.loc[each_set_df.index, "small_shift_z"] = each_set_df["small_shift_z"].values
+#                 combined_df.loc[each_set_df.index, "small_shift_y"] = each_set_df["small_shift_y"].values
+#                 combined_df.loc[each_set_df.index, "small_shift_x"] = each_set_df["small_shift_x"].values
 
-                savepath_dict = save_small_region_tiffs(
-                    small_Tiff_MultiArray,
-                    small_Aligned_4d_array,
-                    corrected_positions,
-                    each_group,
-                    each_set_label,
-                    tif_savefolder,
-                    z_plus_minus,
-                    return_save_path=True,
-                    save_tif_TF=save_tif_TF
-                )
-                combined_df.loc[each_set_df.index, "before_align_save_path"] = savepath_dict["save_path_before_align"]
-                combined_df.loc[each_set_df.index, "after_align_save_path"] = savepath_dict["save_path_after_align"]
-    csv_savepath = os.path.join(os.path.dirname(one_of_filepath), "combined_df_after_processing.csv")
-    combined_df.to_csv(csv_savepath, index=False)
-    print(f"saved combined_df to {csv_savepath}")
+#                 ### I very often use x y shift at unc, so try to define it here  20250707
+#                 last_pre_frame = combined_df.loc[(each_set_df[each_set_df["phase"] == "pre"]).index].iloc[-1]
+#                 each_set_df_unc_or_titration = each_set_df[each_set_df["phase"].isin(["unc", "titration"])]
+#                 assert (len(each_set_df_unc_or_titration) > 0)
+#                 assert (len(each_set_df_unc_or_titration) < 7)
+#                 for each_col in ["shift_x", "shift_y", "shift_z", "small_shift_x", "small_shift_y", "small_shift_z"]:
+#                     print(f"each_col: {each_col}")
+#                     print(f"last_pre_frame[each_col]: {last_pre_frame[each_col]}")
+#                     combined_df.loc[each_set_df_unc_or_titration.index, each_col] = last_pre_frame[each_col]
+#                 assert False, "stop here"
+#                 #### till here 20250707
+
+
+#                 list_of_save_path = save_small_region_plots(
+#                     small_Aligned_4d_array,
+#                     corrected_positions,
+#                     each_set_label,
+#                     plot_savefolder,
+#                     z_plus_minus,
+#                     each_set_df,
+#                     return_list_of_save_path=True,
+#                     save_plot_TF=save_plot_TF
+#                 )
+#                 no_uncaging_df = each_set_df[each_set_df["nth_omit_induction"] != -1]
+#                 count_up = -1
+#                 for ind, each_row in no_uncaging_df.iterrows():
+#                     count_up += 1
+#                     combined_df.loc[ind, "relative_nth_omit_induction"] = count_up
+
+#                 combined_df.loc[no_uncaging_df.index, "save_small_region_plot_path"] = list_of_save_path
+
+#                 savepath_dict = save_small_region_tiffs(
+#                     small_Tiff_MultiArray,
+#                     small_Aligned_4d_array,
+#                     corrected_positions,
+#                     each_group,
+#                     each_set_label,
+#                     tif_savefolder,
+#                     z_plus_minus,
+#                     return_save_path=True,
+#                     save_tif_TF=save_tif_TF
+#                 )
+#                 combined_df.loc[each_set_df.index, "before_align_save_path"] = savepath_dict["save_path_before_align"]
+#                 combined_df.loc[each_set_df.index, "after_align_save_path"] = savepath_dict["save_path_after_align"]
+#                 combined_df.loc[each_set_df.index, "save_path_tzyx_aligned"] = savepath_dict["save_path_tzyx_aligned"]
+
+#     if save_tif_TF*save_plot_TF:
+#         for each_group in combined_df['group'].unique():
+#             each_group_df = combined_df[combined_df['group'] == each_group]
+#             for each_set_label in each_group_df["nth_set_label"].unique():
+#                 if each_set_label == -1:
+#                     continue
+#                 max_nth_omit_ind_before_unc = each_group_df[each_group_df["phase"] == "pre"]["nth_omit_induction"].max()
+#                 plot_path = each_group_df[each_group_df["nth_omit_induction"] == max_nth_omit_ind_before_unc]["save_full_region_plot_path"].values[0]
+#                 img = plt.imread(plot_path)
+#                 plt.imshow(img)
+#                 plt.axis("off")
+#                 plt.show()
+#                 after_align_tiff_path = each_group_df[each_group_df["nth_omit_induction"] == max_nth_omit_ind_before_unc]["after_align_save_path"].values[0]
+#                 after_align_tiff = tifffile.imread(after_align_tiff_path)
+#                 max_proj = after_align_tiff.max(axis=0)
+#                 plt.imshow(max_proj, cmap="gray")
+#                 plt.show()
+

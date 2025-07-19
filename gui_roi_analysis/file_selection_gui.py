@@ -16,7 +16,7 @@ from PyQt5.QtGui import QFont, QColor
 class FileSelectionGUI(QMainWindow):
     roi_analysis_completed = pyqtSignal(str, int, str)  # group, set_label, header
     
-    def __init__(self, combined_df, df_save_path_2=None, additional_columns=None, parent=None):
+    def __init__(self, combined_df, df_save_path_2=None, additional_columns=None, save_auto = True, parent=None):
         super().__init__(parent)
         
         print("Initializing FileSelectionGUI...")
@@ -25,7 +25,7 @@ class FileSelectionGUI(QMainWindow):
             self.combined_df = combined_df
             self.df_save_path_2 = df_save_path_2  # Store the save path for auto-saving
             self.additional_columns = additional_columns or []  # Store additional columns to display
-            
+            self.save_auto = save_auto
             # Initialize reject column if it doesn't exist
             if 'reject' not in self.combined_df.columns:
                 self.combined_df['reject'] = False
@@ -111,10 +111,16 @@ class FileSelectionGUI(QMainWindow):
             self.status_label.setStyleSheet("color: green; font-weight: bold;")
             button_layout.addWidget(self.status_label)
             
+            # Save button
+            save_btn = QPushButton("💾 Save")
+            save_btn.setToolTip("Manually save the DataFrame")
+            save_btn.clicked.connect(self.manual_save_dataframe)
+            button_layout.addWidget(save_btn)
+            
             # Close button
             close_btn = QPushButton("❌ Close")
             close_btn.setToolTip("Close the file selection window")
-            close_btn.clicked.connect(self.close)
+            close_btn.clicked.connect(self.close_and_save)
             button_layout.addWidget(close_btn)
             
             main_layout.addLayout(button_layout)
@@ -725,7 +731,7 @@ class FileSelectionGUI(QMainWindow):
     
     def auto_save_dataframe(self):
         """Auto-save the combined_df to the specified path"""
-        if self.df_save_path_2:
+        if self.df_save_path_2 and self.save_auto:
             try:
                 self.combined_df.to_pickle(self.df_save_path_2)
                 self.log_message(f"DataFrame auto-saved to {self.df_save_path_2}")
@@ -733,7 +739,30 @@ class FileSelectionGUI(QMainWindow):
                 self.log_message(f"ERROR: Failed to auto-save DataFrame: {e}")
                 print(f"Auto-save error: {e}")
         else:
-            self.log_message("No save path specified for auto-save")
+            self.log_message("No save path specified for auto-save or save_auto is False")
+    
+    def manual_save_dataframe(self):
+        """Manually save the combined_df to the specified path (ignores save_auto setting)"""
+        if self.df_save_path_2:
+            try:
+                self.combined_df.to_pickle(self.df_save_path_2)
+                self.log_message(f"DataFrame manually saved to {self.df_save_path_2}")
+                self.status_label.setText("Saved")
+                self.status_label.setStyleSheet("color: green; font-weight: bold;")
+            except Exception as e:
+                self.log_message(f"ERROR: Failed to manually save DataFrame: {e}")
+                print(f"Manual save error: {e}")
+                self.status_label.setText("Save failed")
+                self.status_label.setStyleSheet("color: red; font-weight: bold;")
+        else:
+            self.log_message("ERROR: No save path specified for manual save")
+            self.status_label.setText("No save path")
+            self.status_label.setStyleSheet("color: red; font-weight: bold;")
+
+    def close_and_save(self):
+        """Save the DataFrame manually, then close the window."""
+        self.manual_save_dataframe()        
+        self.close()
     
     def debug_roi_mask_state(self, group, set_label, roi_type=None):
         """Debug method to log ROI mask state after analysis"""
@@ -785,7 +814,7 @@ class FileSelectionGUI(QMainWindow):
             traceback.print_exc()
 
 
-def launch_file_selection_gui(combined_df, df_save_path_2=None, additional_columns=None):
+def launch_file_selection_gui(combined_df, df_save_path_2=None, additional_columns=None, save_auto = True):
     """Launch the file selection GUI
     
     Args:
@@ -806,7 +835,7 @@ def launch_file_selection_gui(combined_df, df_save_path_2=None, additional_colum
             print("Created new QApplication instance")
         
         print("Creating FileSelectionGUI instance...")
-        gui = FileSelectionGUI(combined_df, df_save_path_2, additional_columns)
+        gui = FileSelectionGUI(combined_df, df_save_path_2, additional_columns, save_auto)
         print("Showing GUI window...")
         gui.show()
         

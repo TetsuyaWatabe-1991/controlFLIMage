@@ -190,7 +190,7 @@ for filepath_without_number in combined_df["filepath_without_number"].unique():
         plt.close()
 
 
-
+#%%
 ltp_list = []
 after_min = 25
 for filepath_without_number in combined_df["filepath_without_number"].unique():
@@ -203,7 +203,7 @@ for filepath_without_number in combined_df["filepath_without_number"].unique():
         # each_set_df = each_set_df[each_set_df["nth_set_label"] == each_nth_set_label]
                 
 
-        each_set_df = combined_df[(combined_df["nth_set_label"] == nth_set_label)
+        each_set_df = combined_df[(combined_df["nth_set_label"] == each_nth_set_label)
                                     & (combined_df["filepath_without_number"] == filepath_without_number)
                                     & (combined_df["nth_omit_induction"] > 0)
                                     ]
@@ -211,6 +211,8 @@ for filepath_without_number in combined_df["filepath_without_number"].unique():
             continue
 
         each_set_df_after_min = each_set_df[each_set_df["relative_time_min"] > after_min]
+        if len(each_set_df_after_min) == 0:
+            continue
 
         idx_after_min = each_set_df_after_min["relative_time_min"].idxmin()
 

@@ -19,6 +19,10 @@ from FLIMageFileReader2 import FileReader
 from simple_dialog import ask_yes_no_gui, ask_save_path_gui, ask_open_path_gui, ask_save_folder_gui
 from plot_functions import draw_boundaries
 from utility.send_notification import send_slack_url_default
+from save_S_from_tzyx_2 import save_deepd3_S_tif
+from spine_roi_from_S import define_roi_from_S
+
+
 # %%
 # Simple INI-based timestamp checking functions
 
@@ -113,13 +117,16 @@ def print_simple_summary(total_groups, regenerated_groups, skipped_groups, plot_
 # %%
 
 
+yn = ask_yes_no_gui("Do without asking?")
+Do_without_asking = yn
 
-Do_without_asking = False
+skip_gui_TF = False
 Do_lifetime_analysis_TF = False
 Do_GCaMP_analysis_TF = True
+ROI_define_auto_skipping_GUI = True
 
 pre_defined_df_TF = True
-df_defined_path = r"C:\Users\WatabeT\Desktop\20250701\auto1\combined_df_2.pkl"
+df_defined_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250703\24well\auto1\combined_df_with_roi_mask.pkl"
 
 skip_plot_if_not_updated = True
 # Setup parameters
@@ -145,7 +152,8 @@ fixed_tau2 = 1.1
 #     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\4lines_neuron4\lowmag1__highmag_1_002.flim",
 # ]
 one_of_filepath_list = [
-    r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250703\24well\auto1\lowmag7__highmag_7_089.flim",
+    r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250703\24well\auto1\lowmag7__highmag_7_089.flim"
+    # r"C:\Users\WatabeT\Desktop\20250701\auto1\lowmag2__highmag_2_002.flim"
 ]
 
 roi_types = ["Spine", "DendriticShaft", "Background"]
@@ -202,32 +210,46 @@ elif (Do_without_asking == True) or (yn1 == True):
 
 
 # %%
+if Do_without_asking == False:
+    if ask_yes_no_gui("Do you want to define ROI from S?"):
+        
+        save_deepd3_S_tif(df_save_path_1)
+        define_roi_from_S(df_save_path_1, save_path_suffix = "")
+
+        combined_df = pd.read_pickle(df_save_path_1)
+        combined_df["reject"] = False
+
+# %%
 # Launch the new file selection GUI instead of the old loop
-app = QApplication.instance()
-if app is None:
-    app = QApplication(sys.argv)
-    print("Created new QApplication instance")
-else:
-    print("Using existing QApplication instance")
+if (Do_without_asking and skip_gui_TF) == False:
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
+        print("Created new QApplication instance")
+    else:
+        print("Using existing QApplication instance")
 
-# Define additional columns to show in the GUI (optional)
-additional_columns_to_show = [
-    'dt',
-    "donotexist"  # Show timing information
-]
+    # Define additional columns to show in the GUI (optional)
+    additional_columns_to_show = [
+        'dt',
+        "donotexist"  # Show timing information
+    ]
 
-file_selection_gui = launch_file_selection_gui(
-    combined_df,
-    df_save_path_1,
-    additional_columns=additional_columns_to_show
-)
-app.exec_()
-print("ROI visualization plots completed.")
+    file_selection_gui = launch_file_selection_gui(
+        combined_df,
+        df_save_path_1,
+        additional_columns=additional_columns_to_show,
+        save_auto = False
+    )
+    app.exec_()
+    print("ROI visualization plots completed.")
+    combined_df = pd.read_pickle(df_save_path_1)
 
 # %%
 if Do_without_asking == False:
     if ask_yes_no_gui("stop here?"):
         assert False
+    
 
 # %%
 # Simple small image and ROI mask plotting with INI timestamp checking
@@ -587,18 +609,20 @@ for each_filepath in combined_df['filepath_without_number'].unique():
             continue
         uncaging_df = each_group_df[(each_group_df["phase"] == "unc") & (each_group_df["nth_set_label"] == each_set_label)]
         each_set_df = each_group_df[(each_group_df["nth_set_label"] == each_set_label)]
+        combined_df.loc[each_set_df.index, "label"] = f"{each_filepath}_{each_set_label}"
 
-        each_set_df = each_group_df[(each_group_df["nth_set_label"] == each_set_label) &
+        each_set_df_without_unc = each_group_df[(each_group_df["nth_set_label"] == each_set_label) &
                                     (each_group_df["nth_omit_induction"] != -1)]
-        numerator = combined_df.loc[each_set_df.index,"Spine_subBG_intensity_per_pixel_from_full_image"]
-        denominator = float(combined_df.loc[each_set_df[each_set_df["phase"] == "pre"].index, "Spine_subBG_intensity_per_pixel_from_full_image"].mean(skipna=False))
+        numerator = combined_df.loc[each_set_df_without_unc.index,"Spine_subBG_intensity_per_pixel_from_full_image"]
+        denominator = float(combined_df.loc[each_set_df_without_unc[each_set_df_without_unc["phase"] == "pre"].index, "Spine_subBG_intensity_per_pixel_from_full_image"].mean(skipna=False))
 
         combined_df.loc[each_set_df.index, "norm_intensity"] = (numerator/denominator).astype(float) - 1.0
-        combined_df.loc[each_set_df.index, "label"] = f"{each_filepath}_{each_set_label}"
+        #combined_df.loc[each_set_df.index, "label"] = f"{each_filepath}_{each_set_label}"
+        
         #Below will be impremented in other function??
-        for NthFrame in each_set_df["nth_omit_induction"].unique()[:-1]:
-            Time_N = each_set_df[(each_set_df["nth_omit_induction"]==NthFrame)]["relative_time_sec"]
-            Time_Nplus1 = each_set_df[(each_set_df["nth_omit_induction"]==NthFrame+1)]["relative_time_sec"]
+        for NthFrame in each_set_df_without_unc["nth_omit_induction"].unique()[:-1]:
+            Time_N = each_set_df_without_unc[(each_set_df_without_unc["nth_omit_induction"]==NthFrame)]["relative_time_sec"]
+            Time_Nplus1 = each_set_df_without_unc[(each_set_df_without_unc["nth_omit_induction"]==NthFrame+1)]["relative_time_sec"]
             rownum = Time_N.keys()
             delta_sec = float(Time_Nplus1.values[0] - Time_N.values[0])
             combined_df.loc[rownum,"delta_sec"] = delta_sec
@@ -623,7 +647,7 @@ combined_df_reject_bad_data = combined_df_reject_bad_data[combined_df_reject_bad
 # combined_df_reject_bad_data.dropna(subset=['label'])
 combined_df_reject_bad_data = combined_df_reject_bad_data[~combined_df_reject_bad_data["label"].isna()]
 
-savepath_for_combined_df_reject_bad_data = os.path.join(os.path.dirname(df_save_path_1), "combined_df_reject_bad_data.pkl")
+savepath_for_combined_df_reject_bad_data = df_save_path_1.replace(".pkl", "_reject_bad_data.pkl")
 combined_df_reject_bad_data.to_pickle(savepath_for_combined_df_reject_bad_data)
 
 
@@ -678,6 +702,7 @@ for label in combined_df_reject_bad_data['label'].dropna().unique():
     label_df = combined_df_reject_bad_data[combined_df_reject_bad_data['label'] == label]
     above_threshold = label_df[label_df['relative_time_min'] > threshold_min]
     uncaging_df = combined_df[(combined_df['phase'] == "unc") & (combined_df['label'] == label)]
+    print(label)
     if len(above_threshold) > 0:
         min_row = above_threshold.loc[above_threshold['relative_time_min'].idxmin()]
         if yn5:
@@ -862,3 +887,16 @@ ltp_stats = [
 
 print(tabulate(ltp_stats, tablefmt="simple_grid"))
 # %%
+
+
+
+high_GC = LTP_point_df[LTP_point_df["GCaMP_DendriticShaft_F_F0"]>5]
+print("mean: ",high_GC["norm_intensity"].mean())
+print("std: ",high_GC["norm_intensity"].std())
+print("number of data: ",len(high_GC), " / ", len(LTP_point_df))
+
+
+# %%
+
+
+

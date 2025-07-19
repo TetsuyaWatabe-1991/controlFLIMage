@@ -211,31 +211,52 @@ class SpinePosDeepD3():
         plt.show()
 
     def return_uncaging_pos_based_on_roi_sum(self,
-                                             flim_path,
+                                             flim_path = "",
+                                             direct_ZYXarray_use = False,
+                                             direct_ZYXarray = None,
+                                             xy_pixel_um = None,
+                                             z_pixel_um = None,
                                              max_distance = True,
                                              plot_them = True,
+                                             specify_flim_ch = False,
+                                             ch_1or2 = 2,
                                              upper_lim_spine_pixel_percentile = 60,
                                              lower_lim_spine_pixel_percentile = 30,
                                              upper_lim_spine_intensity_percentile = 70,
                                              lower_lim_spine_intensity_percentile = 10,
                                              ignore_first_n_plane=1,
                                              ignore_last_n_plane=1,
-                                             ignore_edge_percentile = 5
+                                             ignore_edge_percentile = 5,
+                                             savefolder = ""
                                              ):
         
-
-        iminfo = FileReader()
-        iminfo.read_imageFile(flim_path, True)
-        ZYXarray = np.array(iminfo.image).sum(axis=tuple([1,2,5]))
-        
-        x_um, _, z_um = get_xyz_pixel_um(iminfo)
-        self.params["xy_pixel_um"] = x_um
-        self.params["z_pixel_um"] = z_um
+        if direct_ZYXarray_use == False:
+            assert os.path.exists(flim_path), f"flim_path not found: {flim_path}"
+            iminfo = FileReader()
+            iminfo.read_imageFile(flim_path, True)
+            if specify_flim_ch:
+                assert ch_1or2 in [1,2], f"ch_1or2 is not 1 or 2: {ch_1or2}"
+                ZYXarray = np.array(iminfo.image)[:,:,ch_1or2-1,:,:,:].sum(axis=tuple([1,4]))
+            else:
+                ZYXarray = np.array(iminfo.image).sum(axis=tuple([1,2,5]))
+            x_um, _, z_um = get_xyz_pixel_um(iminfo)
+            self.params["xy_pixel_um"] = x_um
+            self.params["z_pixel_um"] = z_um
+            ext = flim_path.split(".")[-1]
+            if os.path.exists(savefolder) == False:
+                savefolder = flim_path[:-len(ext)-1]
+        else:
+            ZYXarray = direct_ZYXarray
+            assert ZYXarray.shape
+            assert type(xy_pixel_um) == float, f"xy_pixel_um is not float: {xy_pixel_um}"
+            assert type(z_pixel_um) == float, f"z_pixel_um is not float: {z_pixel_um}"
+            assert os.path.exists(savefolder), f"savefolder not found: {savefolder}"
+            self.params["xy_pixel_um"] = xy_pixel_um
+            self.params["z_pixel_um"] = z_pixel_um
         
         temp_output_path = BytesIO()
         tifffile.imwrite(temp_output_path, ZYXarray)
         
-        ext = flim_path.split(".")[-1]
         print("Loading stack...")
         S = Stack(temp_output_path, 
                   dimensions=dict(xy=self.params["xy_pixel_um"], 
@@ -385,7 +406,7 @@ class SpinePosDeepD3():
                             continue
 
         if plot_them:
-            savefolder = flim_path[:-len(ext)-1]
+
             savefilename = os.path.basename(savefolder)
             self.plot_uncaging_pos(S, r, prop_dict, cand_spines, 
                                    skeleton, result_dict, savefolder, 

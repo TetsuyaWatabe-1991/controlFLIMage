@@ -4,9 +4,10 @@ sys.path.append('..\\')
 import os
 import glob
 import pandas as pd
-from FLIMageAlignment import get_flimfile_list
+from FLIMageAlignment import get_flimfile_list, get_xyz_pixel_um
 from FLIMageFileReader2 import FileReader
 from datetime import datetime
+
 
 def get_uncaging_pos_multiple(one_of_file_list, 
                               pre_length = 1,
@@ -48,6 +49,8 @@ def get_uncaging_pos_multiple(one_of_file_list,
                 
             y_pix = iminfo.statedict["State.Acq.linesPerFrame"]
             x_pix = iminfo.statedict["State.Acq.pixelsPerLine"]
+            x_um, y_um, z_um = get_xyz_pixel_um(iminfo)
+
             uncaging_x_y_0to1 = [0,0]
             motor_position = iminfo.statedict["State.Motor.motorPosition"]
             z_position = motor_position[2]
@@ -88,6 +91,10 @@ def get_uncaging_pos_multiple(one_of_file_list,
                 "dt": [dt],
                 "dt_str": [dt_str],
                 "relative_time_sec": [None],
+                "x_um": [x_um],
+                "y_um": [y_um],
+                "z_um": [z_um],
+                "statedict": [iminfo.statedict],
                 })
             
             each_group_df = pd.concat([each_group_df, each_df],ignore_index=True)
