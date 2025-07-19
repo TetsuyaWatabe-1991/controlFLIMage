@@ -1415,9 +1415,11 @@ def save_spine_dend_info(spine_zyx, dend_slope, dend_intercept, inipath,
         
 def read_xyz_single(inipath, return_excluded = False):
     config = configparser.ConfigParser()
+    print(inipath)
     if os.path.exists(inipath) == False:
         print(inipath, "do not exist")
-    assert(os.path.exists(inipath))
+        assert False
+    # assert(os.path.exists(inipath))
     config.read(inipath,encoding='cp932')
     if len(config.sections()) != 1:
         raise Exception('The inifile does not have single section.')

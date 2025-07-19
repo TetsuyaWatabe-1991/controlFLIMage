@@ -1,6 +1,6 @@
 # %%
 import sys
-sys.path.append(r"C:\Users\WatabeT\Documents\Git\controlFLIMage")
+sys.path.append("..\..")
 import glob
 from FLIMageFileReader2 import FileReader
 from matplotlib import pyplot as plt
@@ -13,13 +13,12 @@ ch1or2 = 2
 
 #%%
 
-folder_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250701\auto1"
+folder_path = r"G:\ImagingData\Tetsuya\20250702\flimagetest"
 
-file_list = glob.glob(os.path.join(folder_path, "for_align*highmag*.flim"))
+file_list = glob.glob(os.path.join(folder_path, "ver*.flim"))
 
-file_list2 = glob.glob(os.path.join(folder_path, "lowmag[0-9]_[0-9][0-9][0-9].flim"))
-
-file_list = file_list2 + file_list
+# file_list2 = glob.glob(os.path.join(folder_path, "lowmag[0-9]_[0-9][0-9][0-9].flim"))
+# file_list = file_list2 + file_list
 
 each_filepath = file_list[0]
 

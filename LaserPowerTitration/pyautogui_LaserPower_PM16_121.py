@@ -230,7 +230,7 @@ def plot_and_save_results(pow_result_920, pow_result_720, savefolder):
     ax2.axis("off")
     savepath = os.path.join(savefolder, now.strftime("%Y%m%d%H%M.png"))
     plt.savefig(savepath, dpi=300)
-    plt.show()
+    plt.close();plt.clf();
     print("saved as  ", savepath)
     # Save JSON
     for each_res_dict in [pow_result_920, pow_result_720]:
@@ -240,6 +240,7 @@ def plot_and_save_results(pow_result_920, pow_result_720, savefolder):
     savejsonpath = os.path.join(savefolder, now.strftime("%Y%m%d%H%M.json"))
     with open(savejsonpath, "w") as outfile:
         json.dump(result_dict, outfile)
+    os.system(f"start {savepath}")
 
 
 def run_measurements(power_png, flim_ini_path, savefolder,
