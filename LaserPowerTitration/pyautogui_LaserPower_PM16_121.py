@@ -17,6 +17,8 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 import numpy as np
 from controlflimage_threading import Control_flimage
+import win32gui
+import win32con
 
 if False:
     import pyvisa
@@ -66,24 +68,73 @@ class LaserGUIController:
     """
     Handles GUI automation for laser power control using pyautogui.
     """
-    def __init__(self, power_png, flim_ini_path):
+    def __init__(self, power_png, flim_ini_path, skip_window_activation=False):
         assert os.path.exists(power_png), f"Power PNG not found: {power_png}"
         self.power_png = power_png
         self.FLIMageCont = Control_flimage(flim_ini_path)
         self.FLIMageCont.flim.print_responses = False
+        self.skip_window_activation = skip_window_activation
         self._locate_gui_elements()
         self.set_zoom()
+        
+    def activate_flimage_window(self):
+        """
+        Find and activate the FLIMage window by its title.
+        """
+        if self.skip_window_activation:
+            print("Skipping window activation as requested")
+            return True
+            
+        def enum_windows_callback(hwnd, windows):
+            if win32gui.IsWindowVisible(hwnd):
+                window_title = win32gui.GetWindowText(hwnd)
+                # if "FLIMage! Version 4.0.16" in window_title:
+                if "FLIMage! Version " in window_title:
+                    windows.append(hwnd)
+            return True
+        
+        windows = []
+        win32gui.EnumWindows(enum_windows_callback, windows)
+        
+        if windows:
+            hwnd = windows[0]
+            try:
+                win32gui.BringWindowToTop(hwnd)
+                return True
+            except Exception as e:
+                print(f"Error activating FLIMage window: {e}")
+                return False
+
+        else:
+            print("FLIMage window not found. Please make sure FLIMage is running.")
+            return False
         
     def set_zoom(self):
         self.FLIMageCont.flim.sendCommand("SetZoom, 101")
 
 
     def _locate_gui_elements(self):
+        # First try to activate FLIMage window
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            if self.activate_flimage_window():
+                break
+            else:
+                print(f"Attempt {attempt + 1}/{max_attempts} to activate FLIMage window failed")
+                if attempt < max_attempts - 1:
+                    time.sleep(1)
+                    print("Retrying...")
+                else:
+                    print("Failed to activate FLIMage window after multiple attempts")
+        
         while True:
             try:
                 self.power_btn = gui.locateOnScreen(self.power_png, confidence=0.80)
                 break
             except Exception:
+                print("Power button not found. Trying to activate FLIMage window again...")
+                if not self.activate_flimage_window():
+                    print("Failed to activate FLIMage window. Please check if FLIMage is running.")
                 input("Please activate FLIMage window and press any key to start")
         self.Laser1_tab = [self.power_btn[0], self.power_btn[1] - 20]
         self.Laser2_tab = [self.power_btn[0] + 45, self.power_btn[1] - 20]
@@ -109,8 +160,8 @@ class LaserSettingAuto:
     """
     Orchestrates laser power measurement using ThorlabPM100 and LaserGUIController.
     """
-    def __init__(self, power_png, flim_ini_path, pm_resource_addr=None):
-        self.gui = LaserGUIController(power_png, flim_ini_path)
+    def __init__(self, power_png, flim_ini_path, pm_resource_addr=None, skip_window_activation=False):
+        self.gui = LaserGUIController(power_png, flim_ini_path, skip_window_activation=skip_window_activation)
         self.PM100D = ThorlabPM100(resource_addr=pm_resource_addr) if pm_resource_addr else ThorlabPM100()
         self.pow_result = {}
         self.zero_all()
@@ -245,11 +296,12 @@ def plot_and_save_results(pow_result_920, pow_result_720, savefolder):
 
 def run_measurements(power_png, flim_ini_path, savefolder,
                     percent_list_1, percent_list_2,
-                    pm_resource_addr=None):
+                    pm_resource_addr=None, skip_window_activation=False):
     """
     Run the measurement workflow for two lasers and plot/save results.
     """
-    laser_auto = LaserSettingAuto(power_png, flim_ini_path, pm_resource_addr=pm_resource_addr)
+    laser_auto = LaserSettingAuto(power_png, flim_ini_path, pm_resource_addr=pm_resource_addr, 
+                                 skip_window_activation=skip_window_activation)
     pow_result_920 = do_measurement(laser_auto, wavelength=920, laser_1or2=1, percent_list=percent_list_1)
     laser_auto.zero_all()
     pow_result_720 = do_measurement(laser_auto, wavelength=720, laser_1or2=2, percent_list=percent_list_2)
@@ -262,14 +314,26 @@ def main():
     Main entry point for running the laser power measurement and plotting workflow.
     """
     power_png = r"Z:\Data Temp\Tetsuya\Power.png"
+    assert os.path.exists(power_png), f"Power PNG not found: {power_png}"
     flim_ini_path = r"C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
+    assert os.path.exists(flim_ini_path), f"FLIMage ini not found: {flim_ini_path}"
     savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_Imaging\powermeter"
     percent_list_1 = [0, 10, 20, 30, 50, 70]
     percent_list_2 = [0, 10, 20, 30, 50, 70]
-    run_measurements(power_png, flim_ini_path, savefolder, percent_list_1, percent_list_2)
+    
+    # Try with window activation first, if it fails, try without
+    try:
+        run_measurements(power_png, flim_ini_path, savefolder, percent_list_1, percent_list_2)
+    except Exception as e:
+        print(f"Error with window activation: {e}")
+        print("Retrying without window activation...")
+        run_measurements(power_png, flim_ini_path, savefolder, percent_list_1, percent_list_2, 
+                        skip_window_activation=True)
 
 # %%
 
 if __name__ == '__main__':
     main()
+
+    
 # %%
