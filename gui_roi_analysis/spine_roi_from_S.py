@@ -44,12 +44,20 @@ def visualization_spine_roi_from_S(twoD_img, spine_watershed, regions, save_path
 # from utility.send_notification import send_slack_url_default
 def find_closest_region(x, y, label_image, regions):
     # return the region that contains the point (x, y) or the closest region to the point (x, y)
-    label_value = label_image[y, x] 
+    
+    try:
+        label_value = label_image[y, x] 
 
-    if label_value > 0:
-        for region in regions:
-            if region.label == label_value:
-                return region
+        if label_value > 0:
+            for region in regions:
+                if region.label == label_value:
+                    return region
+    except:
+        print("Error: find_closest_region")
+        print(f"label_image.shape: {label_image.shape}")
+        print(f"y: {y}, x: {x}")
+        print(f"regions: {regions}")
+        pass
 
     min_dist = float('inf')
     closest_region = None
@@ -156,97 +164,101 @@ def define_roi_from_S(combined_df_path, save_path_suffix = "_with_roi_mask"):
             # if each_nth_set_label != 0:
             #     continue
             # ################
-            each_nth_set_label_df_include_unc = each_filepath_without_number_df[each_filepath_without_number_df["nth_set_label"] == each_nth_set_label]
-            unc_df = each_nth_set_label_df_include_unc[each_nth_set_label_df_include_unc["phase"] == "unc"]
-            assert len(unc_df) == 1
-            each_nth_set_label_df_without_unc = each_nth_set_label_df_include_unc[each_nth_set_label_df_include_unc["nth_omit_induction"] > -1]
-            
-            unc_x = unc_df.iloc[0].center_x - unc_df.iloc[0].small_x_from  + unc_df.iloc[0].small_shift_x*SHIFT_DIRECTION
-            unc_y = unc_df.iloc[0].center_y - unc_df.iloc[0].small_y_from + unc_df.iloc[0].small_shift_y*SHIFT_DIRECTION
-            
 
-            tzyx_aligned_path_list = each_nth_set_label_df_include_unc.save_path_tzyx_aligned.unique()
-            assert len(tzyx_aligned_path_list) == 1
-            tzyx_aligned_path = tzyx_aligned_path_list[0]
-            save_filename_stem = os.path.basename(tzyx_aligned_path).replace(".tif", "")
-            print(each_filepath_without_number, each_nth_set_label, "\n" ,save_filename_stem)
-        
-            max_proj_spine_path = os.path.join(deepd3_roi_folder, save_filename_stem + "_max_proj_S_spine.tif")
-            max_proj_shaft_path = os.path.join(deepd3_roi_folder, save_filename_stem + "_max_proj_S_shaft.tif")
-
-            # min_proj_spine_path = os.path.join(deepd3_roi_folder, save_filename_stem + "_min_proj_S_spine.tif")
-            # min_proj_shaft_path = os.path.join(deepd3_roi_folder, save_filename_stem + "_min_proj_S_shaft.tif")
-
-            original_image = imread(tzyx_aligned_path)
-            max_projection = original_image.max(axis=0).max(axis=0)
-            save_folder = os.path.join(deepd3_roi_folder, "roi_visualization")
-            os.makedirs(save_folder, exist_ok=True)
-
-            shaft_img = imread(max_proj_shaft_path)
-            z_from = max(0, shaft_img.shape[0]//2 -1)
-            z_to = min(shaft_img.shape[0], shaft_img.shape[0]//2 + 2)
-            shaft_2d = shaft_img[z_from:z_to, :, :].max(axis=0)
-
-            rois, labeled, regions, spine_watershed = create_roi_from_spine_and_shaft(
-                                max_proj_spine_path, max_proj_shaft_path, plot_them=True, save_them=True, roi_3d_TF = True,
-                                save_path = os.path.join(save_folder, save_filename_stem + "max_and_max_watershed.png"))
-
-            # visualization_spine_roi_from_S(twoD_img = max_projection, spine_watershed = spine_watershed, regions = regions, 
-            #                             save_path = os.path.join(save_folder, save_filename_stem + "max_and_max_watershed_visualization.png"), 
-            #                             save_TF = True, unc_x = unc_x, unc_y = unc_y)
-
-
-            closest_region = find_closest_region(x = int(unc_x), y = int(unc_y), 
-                                                label_image = labeled, regions = regions)
-            label_value = closest_region.label
-
-            binary_spine_roi = labeled == label_value
-            spine_coords = np.argwhere(binary_spine_roi)
-
-            shaft_2d_bin = (shaft_2d > 0.5)&(~binary_spine_roi)
-            shaft_coords = get_closest_points(shaft_2d_bin, [int(unc_y), int(unc_x)], 
-                                              top_n=60, avoid_top_n=30)
-            bg_coords = low_intensity_largest_mask(max_projection, percentile=10)
-
-            ###############
-            ##for debug visualization
-            marker_size = 3
-            plt.imshow(max_projection, cmap="gray")
-            plt.plot(shaft_coords[:, 1], shaft_coords[:, 0], 'r.', markersize=marker_size, alpha=0.5)
-            plt.plot(spine_coords[:, 1], spine_coords[:, 0], 'b.', markersize=marker_size, alpha=0.5)
-            plt.plot(bg_coords[:, 1], bg_coords[:, 0], 'g.', markersize=marker_size, alpha=0.5)
-            roi_visu_save_folder = os.path.join(save_folder, "three_rois_plot_on_img")
-            os.makedirs(roi_visu_save_folder, exist_ok=True)
-            plt.savefig(os.path.join(roi_visu_save_folder, 
-                        save_filename_stem + "_plot_on_img.png"), dpi=300)
-            plt.show()
-            
-            ###############
-
-            for nth_omit_induction in each_nth_set_label_df_without_unc["nth_omit_induction"].unique():
-                each_nth_omit_induction_df = each_nth_set_label_df_without_unc[each_nth_set_label_df_without_unc["nth_omit_induction"] == nth_omit_induction]
+            try:
+                each_nth_set_label_df_include_unc = each_filepath_without_number_df[each_filepath_without_number_df["nth_set_label"] == each_nth_set_label]
+                unc_df = each_nth_set_label_df_include_unc[each_nth_set_label_df_include_unc["phase"] == "unc"]
+                assert len(unc_df) == 1
+                each_nth_set_label_df_without_unc = each_nth_set_label_df_include_unc[each_nth_set_label_df_include_unc["nth_omit_induction"] > -1]
                 
-                coords_dict = {"Spine": spine_coords, "DendriticShaft": shaft_coords, "Background": bg_coords}
+                unc_x = unc_df.iloc[0].center_x - unc_df.iloc[0].small_x_from  + unc_df.iloc[0].small_shift_x*SHIFT_DIRECTION
+                unc_y = unc_df.iloc[0].center_y - unc_df.iloc[0].small_y_from + unc_df.iloc[0].small_shift_y*SHIFT_DIRECTION
+                
 
-                for each_roi_type in coords_dict:
-                    shifted_coords = coords_dict[each_roi_type].copy()
-                    shifted_mask = np.zeros(shape = (max_projection.shape[0], max_projection.shape[1]), dtype=bool)
-                    shifted_mask[shifted_coords[:, 0], shifted_coords[:, 1]] = True
-                    idx = each_nth_omit_induction_df.index[0]
-                    combined_df.at[idx, f"{each_roi_type}_roi_mask"] = shifted_mask.copy()
-                    combined_df.at[idx, f"{each_roi_type}_roi_shape"] = "roi_from_S"
-                    combined_df.at[idx, f"{each_roi_type}_roi_parameters"] = "roi_from_S"
-                    combined_df.at[idx, f"{each_roi_type}_roi_area_pixels"] = np.sum(shifted_mask)
-                    combined_df.at[idx, f"{each_roi_type}_quantified_datetime"] = datetime.datetime.now()
+                tzyx_aligned_path_list = each_nth_set_label_df_include_unc.save_path_tzyx_aligned.unique()
+                assert len(tzyx_aligned_path_list) == 1
+                tzyx_aligned_path = tzyx_aligned_path_list[0]
+                save_filename_stem = os.path.basename(tzyx_aligned_path).replace(".tif", "")
+                print(each_filepath_without_number, each_nth_set_label, "\n" ,save_filename_stem)
+            
+                max_proj_spine_path = os.path.join(deepd3_roi_folder, save_filename_stem + "_max_proj_S_spine.tif")
+                max_proj_shaft_path = os.path.join(deepd3_roi_folder, save_filename_stem + "_max_proj_S_shaft.tif")
 
+                # min_proj_spine_path = os.path.join(deepd3_roi_folder, save_filename_stem + "_min_proj_S_spine.tif")
+                # min_proj_shaft_path = os.path.join(deepd3_roi_folder, save_filename_stem + "_min_proj_S_shaft.tif")
+
+                original_image = imread(tzyx_aligned_path)
+                max_projection = original_image.max(axis=0).max(axis=0)
+                save_folder = os.path.join(deepd3_roi_folder, "roi_visualization")
+                os.makedirs(save_folder, exist_ok=True)
+
+                shaft_img = imread(max_proj_shaft_path)
+                z_from = max(0, shaft_img.shape[0]//2 -1)
+                z_to = min(shaft_img.shape[0], shaft_img.shape[0]//2 + 2)
+                shaft_2d = shaft_img[z_from:z_to, :, :].max(axis=0)
+
+                rois, labeled, regions, spine_watershed = create_roi_from_spine_and_shaft(
+                                    max_proj_spine_path, max_proj_shaft_path, plot_them=True, save_them=True, roi_3d_TF = True,
+                                    save_path = os.path.join(save_folder, save_filename_stem + "max_and_max_watershed.png"))
+
+                # visualization_spine_roi_from_S(twoD_img = max_projection, spine_watershed = spine_watershed, regions = regions, 
+                #                             save_path = os.path.join(save_folder, save_filename_stem + "max_and_max_watershed_visualization.png"), 
+                #                             save_TF = True, unc_x = unc_x, unc_y = unc_y)
+
+
+                closest_region = find_closest_region(x = int(unc_x), y = int(unc_y), 
+                                                    label_image = labeled, regions = regions)
+                label_value = closest_region.label
+
+                binary_spine_roi = labeled == label_value
+                spine_coords = np.argwhere(binary_spine_roi)
+
+                shaft_2d_bin = (shaft_2d > 0.5)&(~binary_spine_roi)
+                shaft_coords = get_closest_points(shaft_2d_bin, [int(unc_y), int(unc_x)], 
+                                                top_n=60, avoid_top_n=30)
+                bg_coords = low_intensity_largest_mask(max_projection, percentile=10)
+
+                ###############
+                ##for debug visualization
+                marker_size = 3
+                plt.imshow(max_projection, cmap="gray")
+                plt.plot(shaft_coords[:, 1], shaft_coords[:, 0], 'r.', markersize=marker_size, alpha=0.5)
+                plt.plot(spine_coords[:, 1], spine_coords[:, 0], 'b.', markersize=marker_size, alpha=0.5)
+                plt.plot(bg_coords[:, 1], bg_coords[:, 0], 'g.', markersize=marker_size, alpha=0.5)
+                roi_visu_save_folder = os.path.join(save_folder, "three_rois_plot_on_img")
+                os.makedirs(roi_visu_save_folder, exist_ok=True)
+                plt.savefig(os.path.join(roi_visu_save_folder, 
+                            save_filename_stem + "_plot_on_img.png"), dpi=300)
+                plt.show()
+                
+                ###############
+
+                for nth_omit_induction in each_nth_set_label_df_without_unc["nth_omit_induction"].unique():
+                    each_nth_omit_induction_df = each_nth_set_label_df_without_unc[each_nth_set_label_df_without_unc["nth_omit_induction"] == nth_omit_induction]
                     
+                    coords_dict = {"Spine": spine_coords, "DendriticShaft": shaft_coords, "Background": bg_coords}
+
+                    for each_roi_type in coords_dict:
+                        shifted_coords = coords_dict[each_roi_type].copy()
+                        shifted_mask = np.zeros(shape = (max_projection.shape[0], max_projection.shape[1]), dtype=bool)
+                        shifted_mask[shifted_coords[:, 0], shifted_coords[:, 1]] = True
+                        idx = each_nth_omit_induction_df.index[0]
+                        combined_df.at[idx, f"{each_roi_type}_roi_mask"] = shifted_mask.copy()
+                        combined_df.at[idx, f"{each_roi_type}_roi_shape"] = "roi_from_S"
+                        combined_df.at[idx, f"{each_roi_type}_roi_parameters"] = "roi_from_S"
+                        combined_df.at[idx, f"{each_roi_type}_roi_area_pixels"] = np.sum(shifted_mask)
+                        combined_df.at[idx, f"{each_roi_type}_quantified_datetime"] = datetime.datetime.now()
+            except:
+                print(f"Error: {each_filepath_without_number}, {each_nth_set_label}, {nth_omit_induction}")
+                pass
+                        
 
     savepath = combined_df_path.replace(".pkl", save_path_suffix + ".pkl")
     combined_df.to_pickle(savepath)
 
 
 if __name__ == "__main__":
-    combined_df_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250703\24well\auto1\combined_df.pkl"
+    combined_df_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250718\auto1\combined_df.pkl"
     define_roi_from_S(combined_df_path)
 
 # %%

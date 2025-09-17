@@ -176,7 +176,7 @@ def plt_GCaMP_F_F0_with_roi(
 
 ch_1or2 = 2
 one_of_filepath_dict = {
-    r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250714\auto1\lowmag1__highmag_7_047.flim":"GCaMP",
+    r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250718\auto1\lowmag1_Cont__highmag_1_002.flim":"GCaMP",
 }
 
 
@@ -195,9 +195,13 @@ one_of_filepath_dict = {
 # LTP_point_df_pkl_path = r"C:\Users\WatabeT\Desktop\20250701\auto1\LTP_point_df.pkl"
 
 
-combined_df_reject_bad_data_pkl_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250714\auto1\combined_df_reject_bad_data.pkl"
-combined_df_pkl_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250714\auto1\combined_df.pkl"
-LTP_point_df_pkl_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250714\auto1\LTP_point_df.pkl"
+# combined_df_reject_bad_data_pkl_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250714\auto1\combined_df_reject_bad_data.pkl"
+# combined_df_pkl_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250714\auto1\combined_df.pkl"
+# LTP_point_df_pkl_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250714\auto1\LTP_point_df.pkl"
+
+combined_df_reject_bad_data_pkl_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250718\auto1\combined_df_with_roi_mask_reject_bad_data.pkl"
+combined_df_pkl_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250718\auto1\combined_df_with_roi_mask.pkl"
+LTP_point_df_pkl_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250718\auto1\LTP_point_df.pkl"
 
 
 savefolder = ask_save_folder_gui()

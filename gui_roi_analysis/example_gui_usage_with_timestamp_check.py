@@ -120,15 +120,14 @@ def print_simple_summary(total_groups, regenerated_groups, skipped_groups, plot_
 yn = ask_yes_no_gui("Do without asking?")
 Do_without_asking = yn
 
-skip_gui_TF = False
+skip_gui_TF = True
 Do_lifetime_analysis_TF = False
 Do_GCaMP_analysis_TF = True
-ROI_define_auto_skipping_GUI = True
 
-pre_defined_df_TF = True
-df_defined_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250703\24well\auto1\combined_df_with_roi_mask.pkl"
+pre_defined_df_TF = False
+df_defined_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250904\auto1\B1cnt_pos2__highmag_1_002.flim"
 
-skip_plot_if_not_updated = True
+skip_plot_if_not_updated = False
 # Setup parameters
 ch_1or2 = 2
 
@@ -152,7 +151,7 @@ fixed_tau2 = 1.1
 #     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\4lines_neuron4\lowmag1__highmag_1_002.flim",
 # ]
 one_of_filepath_list = [
-    r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250703\24well\auto1\lowmag7__highmag_7_089.flim"
+    r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250913\auto1\A5_cnt_pos1__highmag_1_002.flim"
     # r"C:\Users\WatabeT\Desktop\20250701\auto1\lowmag2__highmag_2_002.flim"
 ]
 
@@ -190,8 +189,8 @@ elif (Do_without_asking == True) or (yn1 == True):
             z_plus_minus,
             ch_1or2,
             pre_length = pre_length,
-            save_plot_TF = True,
-            save_tif_TF = True,
+            save_plot_TF = False,
+            save_tif_TF = False,
             )
         combined_df = pd.concat([combined_df, temp_df], ignore_index=True)
 
@@ -215,9 +214,12 @@ if Do_without_asking == False:
         
         save_deepd3_S_tif(df_save_path_1)
         define_roi_from_S(df_save_path_1, save_path_suffix = "")
-
         combined_df = pd.read_pickle(df_save_path_1)
-        combined_df["reject"] = False
+
+        print("define ROI from S finished")
+
+        # combined_df["reject"] = False
+
 
 # %%
 # Launch the new file selection GUI instead of the old loop
@@ -726,7 +728,10 @@ LTP_point_df = pd.DataFrame(results)
 LTP_point_df.to_pickle(os.path.join(os.path.dirname(df_save_path_1), "LTP_point_df.pkl"))
 
 reject_threshold_too_large = 3
-LTP_point_df_cut_too_large = LTP_point_df[LTP_point_df["norm_intensity"] < reject_threshold_too_large]
+reject_threshold_too_small = -0.7
+LTP_point_df_cut_too_large = LTP_point_df[(LTP_point_df["norm_intensity"] < reject_threshold_too_large) 
+                                        & (LTP_point_df["norm_intensity"] > reject_threshold_too_small)]
+
 
 
 
@@ -840,7 +845,8 @@ plt.show()
 #save df to csv
 combined_df.to_csv(os.path.join(save_plot_folder, "combined_df_after_analysis.csv"))
 LTP_point_df.to_csv(os.path.join(save_plot_folder, "LTP_point_df_after_analysis.csv"))
-
+print("saved as ", os.path.join(save_plot_folder, "combined_df_after_analysis.csv"))
+print("saved as ", os.path.join(save_plot_folder, "LTP_point_df_after_analysis.csv"))
 
 # %%
 #print summary
@@ -873,11 +879,14 @@ trial_info = [
 
 print(tabulate(trial_info, tablefmt="simple_grid"))
 
+
+print("before cut")
 # LTP statistics table
 ltp_mean = round(LTP_point_df["norm_intensity"].mean(), 2)
 ltp_std = round(LTP_point_df["norm_intensity"].std(), 2)
 
 ltp_stats = [
+    ["Number of data", len(LTP_point_df)],
     ["LTP Mean", ltp_mean],
     ["LTP Std", ltp_std],
     ["LTP Max", round(LTP_point_df["norm_intensity"].max(), 2)],
@@ -886,17 +895,37 @@ ltp_stats = [
 ]
 
 print(tabulate(ltp_stats, tablefmt="simple_grid"))
+
+
+
+# LTP statistics table after cut
+print("after cut too large or too small")
+
+
+
+ltp_mean_after_cut = round(LTP_point_df_cut_too_large["norm_intensity"].mean(), 2)
+ltp_std_after_cut = round(LTP_point_df_cut_too_large["norm_intensity"].std(), 2)
+
+ltp_stats = [
+    ["Number of data", len(LTP_point_df_cut_too_large)],
+    ["LTP Mean", ltp_mean_after_cut],
+    ["LTP Std", ltp_std_after_cut],
+    ["LTP Max", round(LTP_point_df_cut_too_large["norm_intensity"].max(), 2)],
+    ["LTP Min", round(LTP_point_df_cut_too_large["norm_intensity"].min(), 2)],
+    ["LTP SNR", round(ltp_mean_after_cut / ltp_std_after_cut, 2)]
+]
+
+print(tabulate(ltp_stats, tablefmt="simple_grid"))
+
+
+
+
+
+
+
 # %%
-
-
-
-high_GC = LTP_point_df[LTP_point_df["GCaMP_DendriticShaft_F_F0"]>5]
+high_GC = LTP_point_df[LTP_point_df["GCaMP_DendriticShaft_F_F0"]>6]
 print("mean: ",high_GC["norm_intensity"].mean())
 print("std: ",high_GC["norm_intensity"].std())
 print("number of data: ",len(high_GC), " / ", len(LTP_point_df))
-
-
-# %%
-
-
 
