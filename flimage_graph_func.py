@@ -64,7 +64,7 @@ def plot_drift_from_drift_txt(drift_txt_path, show = True, savefig = False, save
         plt.savefig(savepath,dpi=300,bbox_inches='tight')        
     if show==True:
         plt.show()        
-    plt.close();plt.clf();        
+    plt.close();plt.clf();plt.close("all");        
 
 
 def color_fue(savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLIMage\ForUse",
@@ -147,6 +147,39 @@ def color_fue(savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLI
         plt.show()
 
 
+def plot_max_proj_uncaging(
+                    each_file, ch_1or2, show_uncaging = False,
+                    use_default_savefolder = True, savefolder = "",
+                    ):
+    iminfo = FileReader()
+    iminfo.read_imageFile(each_file, True) 
+    ch = ch_1or2 - 1
+    
+    imagearray=np.array(iminfo.image)
+    
+
+    uncaging_x_y_0to1 = iminfo.statedict["State.Uncaging.Position"]
+    center_y = imagearray.shape[-2] * uncaging_x_y_0to1[1]
+    center_x = imagearray.shape[-3] * uncaging_x_y_0to1[0]
+    
+    maxproj = imagearray[:, 0, ch, :,:,:].sum(axis=-1).sum(axis=0)
+      
+    plt.imshow(maxproj, cmap = 'gray', vmin = 0)
+    if show_uncaging:
+        plt.plot(center_x, center_y, 'co', markersize=4)   
+    if use_default_savefolder:
+        folder = os.path.dirname(each_file)
+        savefolder = os.path.join(folder,"plot_maxproj")
+    else:
+        savefolder = savefolder
+    os.makedirs(savefolder, exist_ok=True)
+    basename = os.path.basename(each_file)                
+    savepath = os.path.join(savefolder, basename[:-5] + "_maxproj.png")
+    plt.savefig(savepath, dpi=150, bbox_inches = "tight")
+    print("maxproj_savepath ", savepath)
+    plt.show()
+    plt.close(); plt.clf();plt.close("all");
+
 
 
 def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0, 
@@ -205,10 +238,11 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
     plt.savefig(savepath, dpi=150, bbox_inches = "tight")
     print("F_F0_savepath ", savepath)
     plt.show()
+    plt.close(); plt.clf();plt.close("all");
     
     color_fue(savefolder = savefolder,
               vmin =vmin, vmax=vmax, cmap=cmap, label_text = "F/F0")
-                  
+
 
     
     
