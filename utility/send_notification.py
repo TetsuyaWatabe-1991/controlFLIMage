@@ -15,11 +15,15 @@ def send_slack_notification(webhook_url, message = "done"):
         print("sent slack notification")
 
 def send_slack_url_default(message='done'):
-    webhook_url = read_slack_webhook_url()
-    send_slack_notification(
+    try:
+        webhook_url = read_slack_webhook_url()
+        send_slack_notification(
         webhook_url = webhook_url,
         message = message
-    )
+        )
+    except:
+        print("Error: slack_webhook_url.txt is not found")
+        return
 
 def upload_image_to_slack(token, channel, filepath, message):
     with open(filepath, "rb") as file_content:

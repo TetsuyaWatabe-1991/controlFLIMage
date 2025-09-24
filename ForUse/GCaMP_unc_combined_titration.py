@@ -246,29 +246,34 @@ if __name__ == "__main__":
     if "FLIMageCont" not in globals():
         FLIMageCont = Control_flimage(ini_path=DIRECTION_INI)
 
+    #omajinai
+    plt.close("all");plt.cla();plt.clf()
+
+
     # Load power calibration
     power_slope, power_intercept = load_power_calibration()
     print(f"\nFinal calibration values: slope = {power_slope}, intercept = {power_intercept}")
 
     # Laser power titration settings (mW, ms)
     LASER_MW_MS = [
-        # [0.1, 6],
-        [1.6, 6],
-        [2.0, 6],
-        [2.4, 6],
+        # [2.4, 6],
         [2.8, 6],
         # [3.3, 6],
-        # [4.0, 6],
+        [4.0, 6],
         # [5.0, 6],
-        # [6.5, 6],
+        [6.0, 6],
+        [8.0, 6],
+        [10.0, 6]
     ]
+
+    INITIAL_NAME = "titrat_780_dend2_25um_"
 
 
     root = tk.Tk()
     root.geometry("600x200")
     root.withdraw()
     EXPERIMENT_BASENAME_PREFIX = simpledialog.askstring("Input", "Enter basename prefix:", 
-                                                        initialvalue="titration_dend0_0um_")
+                                                        initialvalue=INITIAL_NAME)
     root.destroy()
 
     # Multiple setting paths for different experiments
