@@ -123,6 +123,7 @@ Do_without_asking = yn
 skip_gui_TF = True
 Do_lifetime_analysis_TF = False
 Do_GCaMP_analysis_TF = True
+roi_define_from_S_TF = True
 
 pre_defined_df_TF = False
 df_defined_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250904\auto1\B1cnt_pos2__highmag_1_002.flim"
@@ -150,13 +151,26 @@ fixed_tau2 = 1.1
 #     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\lowmag1__highmag_1_002.flim",
 #     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\4lines_neuron4\lowmag1__highmag_1_002.flim",
 # ]
+# one_of_filepath_list = [
+#     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250930\auto1\5_pos1__highmag_6_012.flim",
+#     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20251001\auto1\Tln_2_pos1__highmag_1_022.flim",
+#     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20251002\auto1\6_pos1__highmag_4_008.flim"
+#     # r"C:\Users\WatabeT\Desktop\20250701\auto1\lowmag2__highmag_2_002.flim"
+# ]
+
+
 one_of_filepath_list = [
-    r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250913\auto1\A5_cnt_pos1__highmag_1_002.flim"
-    # r"C:\Users\WatabeT\Desktop\20250701\auto1\lowmag2__highmag_2_002.flim"
+r"G:\ImagingData\Tetsuya\20251016\auto1\1_pos1__highmag_1_002.flim"
 ]
+
+
+save_plot_TF = True
+save_tif_TF = True
 
 roi_types = ["Spine", "DendriticShaft", "Background"]
 color_dict = {"Spine": "red", "DendriticShaft": "blue", "Background": "green"}
+
+
 
 # if False:
 if Do_without_asking == False:
@@ -189,8 +203,8 @@ elif (Do_without_asking == True) or (yn1 == True):
             z_plus_minus,
             ch_1or2,
             pre_length = pre_length,
-            save_plot_TF = False,
-            save_tif_TF = False,
+            save_plot_TF = save_plot_TF,
+            save_tif_TF = save_tif_TF,
             )
         combined_df = pd.concat([combined_df, temp_df], ignore_index=True)
 
@@ -209,16 +223,23 @@ elif (Do_without_asking == True) or (yn1 == True):
 
 
 # %%
+do_roi_define_from_S = False
+
 if Do_without_asking == False:
     if ask_yes_no_gui("Do you want to define ROI from S?"):
-        
-        save_deepd3_S_tif(df_save_path_1)
-        define_roi_from_S(df_save_path_1, save_path_suffix = "")
-        combined_df = pd.read_pickle(df_save_path_1)
+        do_roi_define_from_S = True
 
-        print("define ROI from S finished")
+if Do_without_asking * roi_define_from_S_TF:
+    do_roi_define_from_S = True
 
-        # combined_df["reject"] = False
+if do_roi_define_from_S:
+    save_deepd3_S_tif(df_save_path_1)
+    define_roi_from_S(df_save_path_1, save_path_suffix = "")
+    combined_df = pd.read_pickle(df_save_path_1)
+
+    print("define ROI from S finished")
+
+    # combined_df["reject"] = False
 
 
 # %%
@@ -928,4 +949,14 @@ high_GC = LTP_point_df[LTP_point_df["GCaMP_DendriticShaft_F_F0"]>6]
 print("mean: ",high_GC["norm_intensity"].mean())
 print("std: ",high_GC["norm_intensity"].std())
 print("number of data: ",len(high_GC), " / ", len(LTP_point_df))
+
+
+
+
+high_GC2 = LTP_point_df[
+    (LTP_point_df["GCaMP_DendriticShaft_F_F0"]<10) &
+    (LTP_point_df["GCaMP_DendriticShaft_F_F0"]>5)]
+print("mean: ",high_GC2["norm_intensity"].mean())
+print("std: ",high_GC2["norm_intensity"].std())
+print("number of data: ",len(high_GC2), " / ", len(LTP_point_df))
 

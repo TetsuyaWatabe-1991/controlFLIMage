@@ -56,8 +56,11 @@ class Event:
     __len__  = getHandlerCount
     
 class FLIM_Com:        
-    def __init__(self):
+    def __init__(self, debug_log_mode = False, debug_log_path = "debug_log.log"):
         self.debug = False #More message printed for Debug mode.
+        self.debug_log_mode = debug_log_mode
+        self.debug_log_path = debug_log_path
+
         self.print_responses = True  # Flag to control whether to print responses
         self.__handShakeCode = 'FLIMage'
         self.writeServerName = 'FLIMageW'
@@ -72,6 +75,9 @@ class FLIM_Com:
         self.initFilePath = os.path.join(shell.SHGetFolderPath(0, shellcon.CSIDL_PERSONAL, None, 0), initFilePath)
         if not os.path.isdir(self.initFilePath):
             os.mkdier(self.initFilePath)
+        if self.debug_log_mode:
+            print("FLIM_Com: Debug log mode is on")
+            print("- - "*10,"\nDebug log path: ", self.debug_log_path)
         
     def start(self):
         self.Initializing = True
@@ -130,7 +136,12 @@ class FLIM_Com:
                 self.messageReceived(self.Received, 'W')
             except:
                 self.failureHandle()
-                
+            
+            #write to debug log
+            if self.debug_log_mode:
+                with open(self.debug_log_path, "a") as f:
+                    f.write(f"{datetime.datetime.now()}, {str1}\n")
+                    f.write(f"{datetime.datetime.now()}, {self.Received}\n")                    
             return self.Received
             
     def receiveOne(self):

@@ -200,7 +200,6 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
     pulseWidth = uncaging_iminfo.statedict["State.Uncaging.pulseWidth"]
     center_y = imagearray.shape[-2] * uncaging_x_y_0to1[1]
     center_x = imagearray.shape[-3] * uncaging_x_y_0to1[0]
-       
     
     if imagearray.shape[0] in [4, 33, 34]:
         GCpre = imagearray[0,0,0,:,:,:].sum(axis=-1)

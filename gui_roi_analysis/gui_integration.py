@@ -141,7 +141,8 @@ def first_processing_for_flim_files(
                     print("do not analyze this")
                     continue
 
-
+                print("for debug, each_set_label\n", each_set_label)
+                print("for debug, each_set_df\n", each_set_df)
                 small_Tiff_MultiArray, small_Aligned_4d_array, corrected_positions, each_set_df = process_small_region(
                         each_set_df, Aligned_4d_array
                         )

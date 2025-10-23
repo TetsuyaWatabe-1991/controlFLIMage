@@ -56,22 +56,63 @@ result_df2 = result_df[(result_df["spine_f_f0"] != 0) &
 
 mw_28df = result_df2[result_df2["power_mW"] == 2.8]
 
+#arial 12
+plt.rcParams["font.size"] = 12
+plt.rcParams["font.family"] = "Arial"
 
-plt.figure(figsize=(4,4))
-sns.swarmplot(x="group",y="spine_f_f0",data=mw_28df)
+
+plt.figure(figsize=(3,3))
+p =sns.swarmplot(x="group",y="spine_f_f0",data=mw_28df, s=3)
 plt.ylabel("Spine F/F0")
 plt.xlabel("")
-plt.title("Power: 2.8 mW")
-plt.savefig(os.path.join(savefolder, "spine_f_f0_2.8mW.png"), dpi=150, bbox_inches="tight")
+#show mean and std
+sns.boxplot(showmeans=True,
+            meanline=True,
+            meanprops={'color': 'r', 'ls': '-', 'lw': 2},
+            medianprops={'visible': False},
+            whiskerprops={'visible': False},
+            zorder=10,
+            x="group",
+            y="spine_f_f0",
+            data=mw_28df,
+            showfliers=False,
+            showbox=False,
+            showcaps=False,
+            ax=p)
+# plt.title("Power: 2.8 mW")
+plt.xlabel("")
+plt.ylim([-0.5,11])
+plt.gca().spines['right'].set_visible(False)
+plt.gca().spines['top'].set_visible(False)
+plt.savefig(os.path.join(savefolder, "spine_f_f0_2.8mW.png"), dpi=150, bbox_inches="tight",transparent=True)    
 plt.show()
 
-plt.figure(figsize=(4,4))
-sns.swarmplot(x="group",y="shaft_f_f0",data=mw_28df)
+plt.figure(figsize=(3,3))
+p = sns.swarmplot(x="group",y="shaft_f_f0",data=mw_28df, s=3)
 plt.ylabel("Shaft F/F0")
 plt.xlabel("")
-plt.title("Power: 2.8 mW")
-plt.savefig(os.path.join(savefolder, "shaft_f_f0_2.8mW.png"), dpi=150, bbox_inches="tight")
+#show mean and std
+sns.boxplot(showmeans=True,
+            meanline=True,
+            meanprops={'color': 'r', 'ls': '-', 'lw': 2},
+            medianprops={'visible': False},
+            whiskerprops={'visible': False},
+            zorder=10,
+            x="group",
+            y="shaft_f_f0",
+            data=mw_28df,
+            showfliers=False,
+            showbox=False,
+            showcaps=False,
+            ax=p)
+# plt.title("Power: 2.8 mW")
+plt.xlabel("")
+plt.ylim([-0.5,11])
+plt.gca().spines['right'].set_visible(False)
+plt.gca().spines['top'].set_visible(False)
+plt.savefig(os.path.join(savefolder, "shaft_f_f0_2.8mW.png"), dpi=150, bbox_inches="tight",transparent=True)
 plt.show()
+
 
 
 

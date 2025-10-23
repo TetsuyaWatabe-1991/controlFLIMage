@@ -47,7 +47,13 @@ class ROIAnalysisGUI(QMainWindow):
         self.current_frame = 0
         self.total_frames = after_align_tiff_data.shape[0]
         self.current_roi = None
-        self.roi_shape = 'rectangle'  # 'rectangle', 'ellipse', 'polygon'
+        
+        # Set default ROI shape based on header (ROI type)
+        if header == "Background":
+            self.roi_shape = 'rectangle'  # Use rectangle for Background ROI
+        else:
+            self.roi_shape = 'polygon'    # Use polygon for Spine and Dendrite ROI
+        
         self.is_defining_roi = True  # True for max proj, False for time series
         self.roi_parameters = {}
         
@@ -189,7 +195,12 @@ class ROIAnalysisGUI(QMainWindow):
         self.rect_button.setCheckable(True)
         self.ellipse_button.setCheckable(True)
         self.polygon_button.setCheckable(True)
-        self.rect_button.setChecked(True)
+        
+        # Set default button selection based on ROI type
+        if self.header == "Background":
+            self.rect_button.setChecked(True)      # Rectangle for Background
+        else:
+            self.polygon_button.setChecked(True)   # Polygon for Spine and Dendrite
         
         self.shape_button_group.addButton(self.rect_button, 0)
         self.shape_button_group.addButton(self.ellipse_button, 1)

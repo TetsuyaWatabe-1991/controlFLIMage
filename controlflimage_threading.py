@@ -205,24 +205,36 @@ class Timecounter():
 
 class Control_flimage():
 
-    def __init__(self,ini_path=r'DirectionSetting.ini'):
+    def __init__(self,ini_path=r'DirectionSetting.ini',
+                debug_mode = False):
         print("START")
-        self.flim = FLIM_Com()
-        self.flim.start()
-        self.print_responses = False
-        self.flim.print_responses = self.print_responses
         self.error_dict = {}
         self.max_error_num = 20
         self.XYsize_ini_path = r"XYsize.ini"
-        # self.flimage_exe = r"C:\Users\yasudalab\Documents\GIT\flimage1_3\bin\Debug\FLIMage.exe"
-        self.flimage_exe = r"C:\Users\yasudalab\Documents\GIT\flimage1_3\bin\Release\FLIMage.exe"
+        self.flimage_exe = r"C:\Program Files\FLIMage\FLIMage 4.0.25\FLIMage.exe"
         self.error_log_path = os.path.join(os.path.dirname(ini_path), "error_log.log")
-        
+        self.debug_log_path = os.path.join(os.path.dirname(ini_path), "debug_log.log")
+        self.debug_mode = debug_mode
+        self.print_responses = debug_mode
+
+        self.flim = FLIM_Com(debug_log_mode=self.debug_mode, debug_log_path=self.debug_log_path)
+        self.flim.start()
+        self.flim.print_responses = self.print_responses
+
         if self.flim.Connected:
             print("Good Connection")
             self.flim.messageReceived += FLIM_message_received #Add your function to  handle.
         else:
             self.reconnect()
+        
+        if self.debug_mode:
+            self.print_responses = True
+            with open(self.debug_log_path, "a") as f:
+                f.write(f"{datetime.now()}, Debug mode is on\n")
+                version = self.get_val_sendCommand("State.Acq.version")
+                f.write(f"FLIMage version: {version}\n")
+
+
         self.example_image()
         self.cuboid_ZYX=[1,20,20]
         self.default_cuboid_ZYX=[1,20,20]
@@ -346,9 +358,20 @@ class Control_flimage():
     def get_position(self):
         for i in range(10):
             try:
-                CurrentPos=self.flim.sendCommand('GetCurrentPosition') 
-                a,x_str,y_str,z_str=CurrentPos.split(',')
-                x,y,z=float(x_str),float(y_str),float(z_str)
+                x_list = []
+                y_list = []
+                z_list = []
+                for j in range(5):
+                    CurrentPos=self.flim.sendCommand('GetCurrentPosition') 
+                    a,x_str,y_str,z_str=CurrentPos.split(',')
+                    x,y,z=float(x_str),float(y_str),float(z_str)
+                    x_list.append(x)
+                    y_list.append(y)
+                    z_list.append(z)
+                    sleep(0.05)
+                x = np.median(x_list)
+                y = np.median(y_list)
+                z = np.median(z_list)
                 return x,y,z
             except:
                 ("ERROR 105, Trouble in getting current position")
@@ -378,10 +401,12 @@ class Control_flimage():
         self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
 
 
-    def go_to_relative_pos_motor_checkstate(self, sq_err_thre = 10, 
+    def go_to_relative_pos_motor_checkstate(self, sq_err_thre = 1, 
                                             first_wait_sec = 0.25, 
                                             iter_wait_sec = 0.25):
+        
         x,y,z=self.get_position()
+
         dest_x = x - self.directionMotorX * self.relative_zyx_um[2]
         dest_y = y - self.directionMotorY * self.relative_zyx_um[1]
         dest_z = z - self.directionMotorZ * self.relative_zyx_um[0]
@@ -397,8 +422,7 @@ class Control_flimage():
         recurrent_error_count = 0
         for i in range(60):
             try:
-                currentpos2 = self.get_val_sendCommand("State.Motor.motorPosition")
-                currentpos_num2 = np.array(currentpos2[1:-1].split(","), dtype=float)
+                currentpos_num2=np.array(self.get_position())
             except:
                 recurrent_error_count += 1
                 if recurrent_error_count > 10:
@@ -408,7 +432,7 @@ class Control_flimage():
             diff2 =  currentpos_num2 - dest_xyz
             sum_sq_err2 = (diff2*diff2).sum()
             
-            if sum_sq_err2 > 15:
+            if sum_sq_err2 > sq_err_thre:
                 print("Not moved yet . . . . ")
                 print(f"{i+2} th trial .....")
                 sleep(iter_wait_sec)
@@ -433,23 +457,21 @@ class Control_flimage():
         
         dest_xyz = np.array([dest_x, dest_y, dest_z])
         for i in range(50):
-            # currentpos2 = self.get_val_sendCommand("State.Motor.motorPosition")
-            # currentpos_num2 = np.array(currentpos2[1:-1].split(","), dtype=float)
             currentpos_num2=np.array(self.get_position())
-            
-           
             diff2 =  currentpos_num2 - dest_xyz
             sum_sq_err2 = (diff2*diff2).sum()
             
-            if sum_sq_err2 > 10:
+            if sum_sq_err2 > 2:
                 print("Not moved yet . . . . ")
                 print(f"{i+2} th trial .....")
                 sleep(iter_wait_sec)
                 self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
-
+            else:
+                break
         #2023/6/6 added. MultiZ imaging after single plane requires this.
         self.flim.sendCommand('SetCenter')
         print("set center done")
+
 
     def get_galvo_xy(self):
         for i in range(10):
@@ -524,7 +546,7 @@ class Control_flimage():
             for each_command in self.flim.last_commands_queue:
                 f.write(f"\n{each_command}")
             f.write("\n\n")
-        self.flim = FLIM_Com()
+        self.flim = FLIM_Com(debug_log_mode=self.debug_mode, debug_log_path=self.debug_log_path)
         self.flim.start()
         self.flim.print_responses = self.print_responses
         self.flim.messageReceived += FLIM_message_received
@@ -537,7 +559,7 @@ class Control_flimage():
             if window_exists_startswith('FLIMage! Version'):
                 Exception("FLIMage is open, but cannot respond.")
             else:
-                self.error_dict[datetime.now()] = "reconect" 
+                self.error_dict[datetime.now()] = "reconect"
                 print("Let me try to open FLIMage...")
                 with open(self.error_log_path, "a") as f:
                     f.write(f"open_FLIMage, {datetime.now()}")
@@ -696,7 +718,7 @@ class Control_flimage():
         
 
     def acquisition_include_connect_wait(self,
-                                         sleep_every_sec=0.25, 
+                                         sleep_every_sec=0.5, 
                                          overwrite_warning_click_yes=False,
                                          return_failure=False):
         self.flim_connect_check()
@@ -1482,24 +1504,24 @@ if __name__ == "__main__":
     # singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging.txt"
     # singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging_test.txt"
     inipath = r"C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
-    FLIMageCont = Control_flimage(ini_path = inipath)
+    FLIMageCont = Control_flimage(ini_path = inipath, debug_mode=True)
 
     if False:
         FLIMageCont.flim.sendCommand(f'LoadSetting, {Zstack_ini}')
         FLIMageCont.flim.sendCommand(f'SetDIOPanel, 1, 1')
 
-    def get_realtime_value(FLIMageCont):
-        res = FLIMageCont.flim.sendCommand("GetRealtimeValue")
-        realtime_value = res.split(", ")[-1]
-        if realtime_value.isdigit():
-            return int(realtime_value)
-        else:
-            print("realtime_value is not a digit")
-            return None
+    # def get_realtime_value(FLIMageCont):
+    #     res = FLIMageCont.flim.sendCommand("GetRealtimeValue")
+    #     realtime_value = res.split(", ")[-1]
+    #     if realtime_value.isdigit():
+    #         return int(realtime_value)
+    #     else:
+    #         print("realtime_value is not a digit")
+    #         return None
 
-    for i in range(1000):
-        print(get_realtime_value(FLIMageCont))
-        sleep(0.1)
+    # for i in range(1000):
+    #     print(get_realtime_value(FLIMageCont))
+    #     sleep(0.1)
 
     # FLIMageCont.directionMotorZ=-1 #sometimes, it changes. Why?
     

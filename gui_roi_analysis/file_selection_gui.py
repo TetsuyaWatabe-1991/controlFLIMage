@@ -571,17 +571,43 @@ class FileSelectionGUI(QMainWindow):
                     self.table.setCellWidget(row_idx, col_idx, all_button)
                     col_idx += 1
                     
-                    # Individual ROIs dropdown
-                    individual_combo = QComboBox()
-                    individual_combo.addItem("Select ROI type...")
-                    individual_combo.addItems(roi_types)
-                    individual_combo.setEnabled(bool(tiff_path and os.path.exists(tiff_path)))
-                    individual_combo.currentTextChanged.connect(
-                        lambda roi_type, g=group_id, s=set_label, path=tiff_path: 
-                        self.launch_individual_roi_analysis(g, s, path, roi_type) if roi_type != "Select ROI type..." else None
+                    # Individual ROIs buttons
+                    individual_buttons_widget = QWidget()
+                    individual_buttons_layout = QHBoxLayout(individual_buttons_widget)
+                    individual_buttons_layout.setContentsMargins(2, 2, 2, 2)
+                    individual_buttons_layout.setSpacing(2)
+                    
+                    # Create three buttons for ROI types
+                    spine_button = QPushButton("Sp")
+                    dendrite_button = QPushButton("Dn")
+                    background_button = QPushButton("Bg")
+                    
+                    # Set button properties
+                    for button in [spine_button, dendrite_button, background_button]:
+                        button.setFixedSize(30, 25)
+                        button.setEnabled(bool(tiff_path and os.path.exists(tiff_path)))
+                    
+                    # Connect button click events
+                    spine_button.clicked.connect(
+                        lambda checked, g=group_id, s=set_label, path=tiff_path: 
+                        self.launch_individual_roi_analysis(g, s, path, "Spine")
+                    )
+                    dendrite_button.clicked.connect(
+                        lambda checked, g=group_id, s=set_label, path=tiff_path: 
+                        self.launch_individual_roi_analysis(g, s, path, "DendriticShaft")
+                    )
+                    background_button.clicked.connect(
+                        lambda checked, g=group_id, s=set_label, path=tiff_path: 
+                        self.launch_individual_roi_analysis(g, s, path, "Background")
                     )
                     
-                    self.table.setCellWidget(row_idx, col_idx, individual_combo)
+                    # Add buttons to layout
+                    individual_buttons_layout.addWidget(spine_button)
+                    individual_buttons_layout.addWidget(dendrite_button)
+                    individual_buttons_layout.addWidget(background_button)
+                    individual_buttons_layout.addStretch()
+                    
+                    self.table.setCellWidget(row_idx, col_idx, individual_buttons_widget)
                     col_idx += 1
                     
                 except Exception as row_error:
