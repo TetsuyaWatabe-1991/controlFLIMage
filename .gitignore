@@ -13,4 +13,5 @@ XYsize*.ini
 */__pycache__/*
 ./Archive/*
 Archive/*
+*/Archive/*
 slack_webhook_url.txt
