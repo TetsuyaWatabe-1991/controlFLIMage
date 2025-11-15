@@ -49,7 +49,7 @@ class LaserSettingAuto():
     
     def __init__(self, 
                  power_png_possible_list=[
-                    r"Z:\Data Temp\Tetsuya\Power.png",
+                    r"Z:\User-Personal\Tetsuya_Zdrive\Power.png"
                     r"Z:\Yasuda_lab\Data Temp\Tetsuya\Power.png",
                     r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\Power.png"
                     ]):
@@ -186,12 +186,12 @@ if __name__ == '__main__':
     pow_result_920 = do_measurement(LaserAuto,
                             wavelength =920,
                             laser_1or2 = 1,
-                            percent_list = [0,10,20,30,50,70])
+                            percent_list = [0,10,20,30,50,70,90])
     LaserAuto.zero_all()
     pow_result_720 = do_measurement(LaserAuto,
                            wavelength =720,
                            laser_1or2 = 2,
-                           percent_list = [0,10,20,30,50,70])
+                           percent_list = [10,20,30,50,70,90])
     
     fig, (ax0, ax1, ax2) = plt.subplots(1, 3, figsize = (14,4))
     

@@ -120,15 +120,15 @@ def print_simple_summary(total_groups, regenerated_groups, skipped_groups, plot_
 yn = ask_yes_no_gui("Do without asking?")
 Do_without_asking = yn
 
-skip_gui_TF = True
+skip_gui_TF = False
 Do_lifetime_analysis_TF = False
 Do_GCaMP_analysis_TF = True
-roi_define_from_S_TF = True
+roi_define_from_S_TF = False
 
-pre_defined_df_TF = False
-df_defined_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250904\auto1\B1cnt_pos2__highmag_1_002.flim"
+pre_defined_df_TF = True
+df_defined_path = r"G:\ImagingData\Tetsuya\20251016\auto1\combined_df.pkl"
 
-skip_plot_if_not_updated = False
+skip_plot_if_not_updated = True
 # Setup parameters
 ch_1or2 = 2
 
@@ -143,26 +143,12 @@ fixed_tau_bool = False
 fixed_tau1 = 2.6
 fixed_tau2 = 1.1
 
-# one_of_filepath_list = [
-#     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250531\4lines_2_auto\lowmag1__highmag_1_002.flim",
-#     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250531\2lines_1\lowmag1__highmag_1_002.flim",
-#     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250601\2lines3_auto\lowmag1__highmag_1_002.flim",
-#     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250601\4lines_3_auto\lowmag1__highmag_1_002.flim",
-#     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\lowmag1__highmag_1_002.flim",
-#     r"\\ry-lab-yas15\Users\Yasudalab\Documents\Tetsuya_Imaging\20250602\4lines_neuron4\lowmag1__highmag_1_002.flim",
-# ]
-# one_of_filepath_list = [
-#     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250930\auto1\5_pos1__highmag_6_012.flim",
-#     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20251001\auto1\Tln_2_pos1__highmag_1_022.flim",
-#     r"\\RY-LAB-WS04\ImagingData\Tetsuya\20251002\auto1\6_pos1__highmag_4_008.flim"
-#     # r"C:\Users\WatabeT\Desktop\20250701\auto1\lowmag2__highmag_2_002.flim"
-# ]
 
 
 one_of_filepath_list = [
-r"G:\ImagingData\Tetsuya\20251016\auto1\1_pos1__highmag_1_002.flim"
+r"G:\ImagingData\Tetsuya\20251113\auto1\cnt_4_pos1_001.flim",
+# r"G:\ImagingData\Tetsuya\20251108\basal__highmag_7_081.flim"
 ]
-
 
 save_plot_TF = True
 save_tif_TF = True
@@ -960,3 +946,5 @@ print("mean: ",high_GC2["norm_intensity"].mean())
 print("std: ",high_GC2["norm_intensity"].std())
 print("number of data: ",len(high_GC2), " / ", len(LTP_point_df))
 
+
+# %%
