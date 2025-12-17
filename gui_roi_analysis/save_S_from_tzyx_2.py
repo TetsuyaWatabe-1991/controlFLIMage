@@ -133,7 +133,10 @@ def save_deepd3_S_tif(combined_df_path,
 
     end_time = datetime.datetime.now()
     print(f"Total time taken: {round((end_time - start_time).total_seconds(), 1)} seconds")
-    print(f"Time per file: {round((end_time - start_time).total_seconds() / file_processed_count, 1)} seconds")
+    if file_processed_count > 0:
+        print(f"Time per file: {round((end_time - start_time).total_seconds() / file_processed_count, 1)} seconds")
+    else:
+        print("No files processed")
     return res_dict
 # %%
 
