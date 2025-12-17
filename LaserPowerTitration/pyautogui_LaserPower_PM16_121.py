@@ -250,6 +250,7 @@ def plot_and_save_results(pow_result_920, pow_result_720, savefolder):
     # Laser 2
     x_laser2 = np.array(list(pow_result_720.keys())).reshape(-1, 1)
     y_laser2 = np.array(list(pow_result_720.values()))
+    
     model = LinearRegression()
     model.fit(x_laser2, y_laser2)
     slope = model.coef_[0]
@@ -305,6 +306,10 @@ def run_measurements(power_png, flim_ini_path, savefolder,
     pow_result_920 = do_measurement(laser_auto, wavelength=920, laser_1or2=1, percent_list=percent_list_1)
     laser_auto.zero_all()
     pow_result_720 = do_measurement(laser_auto, wavelength=720, laser_1or2=2, percent_list=percent_list_2)
+
+    pow_offset_for_720 = do_measurement(laser_auto, wavelength=720, laser_1or2=2, percent_list=[0])
+    offset_value = list(pow_offset_for_720.values())[0]
+    pow_result_720 = {k: v - offset_value for k, v in pow_result_720.items()}
     plot_and_save_results(pow_result_920, pow_result_720, savefolder)
     return pow_result_920, pow_result_720
 
@@ -313,12 +318,12 @@ def main():
     """
     Main entry point for running the laser power measurement and plotting workflow.
     """
-    power_png = r"Z:\Data Temp\Tetsuya\Power.png"
+    power_png = r"Z:\User-Personal\Tetsuya_Zdrive\Power.png"
     assert os.path.exists(power_png), f"Power PNG not found: {power_png}"
     flim_ini_path = r"C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
     assert os.path.exists(flim_ini_path), f"FLIMage ini not found: {flim_ini_path}"
     savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_Imaging\powermeter"
-    percent_list_1 = [0, 10, 20, 30, 50, 70]
+    percent_list_1 = [0, 10, 20, 30, 50, 70 ]
     percent_list_2 = [0, 10, 20, 30, 50, 70]
     
     # Try with window activation first, if it fails, try without

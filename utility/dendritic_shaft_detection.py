@@ -440,18 +440,25 @@ def get_and_save_candidate_pos(flim_path, **kwargs):
         "ch1or2": 1,
         "dendrite_percentile": 98,
         "soma_percentile": 99,
-        "max_pos_cand_num": 6
+        "max_pos_cand_num": 6,
+        "skip_if_defined": False
     }
     params.update(kwargs)
+
+    eachpos_export_path = os.path.join(Path(flim_path).parent,
+                                       Path(flim_path).stem)  
+    pos_pix_csv_path = os.path.join(eachpos_export_path, "assigned_pixel_pos.csv")
+    pos_um_csv_path = os.path.join(eachpos_export_path, "assigned_relative_um_pos.csv")
+
+    if params["skip_if_defined"]:
+        if os.path.exists(pos_pix_csv_path):
+            print(f"Skipping {flim_path} because it already has assigned positions")
+            return
     
     iminfo = FileReader()
     iminfo.read_imageFile(flim_path, True)
-    eachpos_export_path = os.path.join(Path(flim_path).parent,
-                                       Path(flim_path).stem)    
+  
     os.makedirs(eachpos_export_path, exist_ok=True)
-
-    pos_pix_csv_path = os.path.join(eachpos_export_path, "assigned_pixel_pos.csv")
-    pos_um_csv_path = os.path.join(eachpos_export_path, "assigned_relative_um_pos.csv")
 
     ZYXarray = np.array(iminfo.image).sum(axis=tuple([1,2,5]))
     x_um, y_um, z_um = get_xyz_pixel_um(iminfo)

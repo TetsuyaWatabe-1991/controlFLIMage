@@ -13,7 +13,7 @@ from controlflimage_threading import Control_flimage
 direction_ini = r"C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
 FLIMageCont = Control_flimage(ini_path=direction_ini)
 
-interval_sec = 60
+interval_sec = 120
 
 align_ch_1or2 = 2
 expected_acq_duration_sec = 10
