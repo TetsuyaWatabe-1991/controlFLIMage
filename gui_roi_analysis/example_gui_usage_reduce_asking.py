@@ -144,7 +144,7 @@ fixed_tau2 = 1.1
 
 
 one_of_filepath_list = [
-r"G:\ImagingData\Tetsuya\20251210\auto1\cnt_4_pos1_001.flim",
+r"G:\ImagingData\Tetsuya\20251203\auto1\cnt_4_pos1_001.flim",
 # r"G:\ImagingData\Tetsuya\20251108\basal__highmag_7_081.flim"
 ]
 
@@ -263,10 +263,10 @@ if Do_without_asking == False:
 print("\n" + "="*40)
 print("Creating small ROI visualization plots...")
 
-if Do_without_asking == False:
-    yn2 = ask_yes_no_gui("Do you want to save small image and ROI mask plots?")
-else:
-    yn2 = True
+# if Do_without_asking == False:
+#     yn2 = ask_yes_no_gui("Do you want to save small image and ROI mask plots?")
+# else:
+yn2 = True
 
 if yn2:
     total_groups = 0
@@ -385,21 +385,21 @@ combined_df = shift_coords_small_to_full_for_each_rois(combined_df, z_plus_minus
 print("\n" + "="*40)
 print("Creating full-size ROI visualization plots...")
 
-if Do_without_asking == False:
-    yn3 = ask_yes_no_gui("Do you want to save fullsize image and ROI mask plots?")
-else:
-    yn3 = True
+# if Do_without_asking == False:
+#     yn3 = ask_yes_no_gui("Do you want to save fullsize image and ROI mask plots?")
+# else:
+yn3 = True
 
 if yn3:
-    if Do_without_asking == False:
-        yn4 = ask_yes_no_gui("Do you want to analyze lifetime on the ROI?")
-        measure_lifetime = yn4
-    else:        
-        measure_lifetime = Do_lifetime_analysis_TF
+    # if Do_without_asking == False:
+    #     yn4 = ask_yes_no_gui("Do you want to analyze lifetime on the ROI?")
+    #     measure_lifetime = yn4
+    # else:        
+    #     measure_lifetime = Do_lifetime_analysis_TF
+    measure_lifetime = Do_lifetime_analysis_TF
 
     if measure_lifetime:
         fitter = FLIMLifetimeFitter()
-
 
     roi_columns = [col for col in combined_df.columns if col.endswith('_roi_mask')]
     filelist = combined_df[(combined_df["nth_omit_induction"] != -1) &
@@ -543,10 +543,10 @@ combined_df.to_pickle(df_save_path_1)
 # %%
 # Rest of the analysis continues as before...
 # GCaMP analysis
-if Do_without_asking == False:
-    yn5 = ask_yes_no_gui("Do you want to analyze GCaMP?")
-else:
-    yn5 = Do_GCaMP_analysis_TF
+# if Do_without_asking == False:
+#     yn5 = ask_yes_no_gui("Do you want to analyze GCaMP?")
+# else:
+yn5 = Do_GCaMP_analysis_TF
 
 if yn5:
     Fluor_ch_1or2_dict = {"GCaMP":1, "tdTomato":2}

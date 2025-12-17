@@ -4,6 +4,8 @@ Created on Wed Dec 28 14:17:04 2022
 
 @author: yasudalab
 """
+print("controlflimage_threading.py is imported")
+
 import os
 import glob
 import math
@@ -211,7 +213,7 @@ class Control_flimage():
         self.error_dict = {}
         self.max_error_num = 20
         self.XYsize_ini_path = r"XYsize.ini"
-        self.flimage_exe = r"C:\Program Files\FLIMage\FLIMage 4.0.25\FLIMage.exe"
+        self.flimage_exe = r"C:\Program Files\FLIMage\FLIMage 4.0.30\FLIMage.exe"
         self.error_log_path = os.path.join(os.path.dirname(ini_path), "error_log.log")
         self.debug_log_path = os.path.join(os.path.dirname(ini_path), "debug_log.log")
         self.debug_mode = debug_mode
@@ -253,6 +255,7 @@ class Control_flimage():
         self.interval_sec=120
         self.ch=0
         self.expected_grab_duration_sec = 2
+        self.wait_before_sending_unc_pos_sec = 2
 
         FOVres = self.get_val_sendCommand('State.Acq.FOV_default')
         self.FOV_default= [float(val) for val in FOVres.strip('][').split(', ')] 
@@ -1241,6 +1244,7 @@ class Control_flimage():
             self.flim.sendCommand('StartGrab')
             self.wait_while_grabbing(sleep_every_sec=0.2)
             self.nowGrabbing=False
+            sleep(0.5)
             if NthAc < self.RepeatNum-1:
                 self.wait_until_next(each_acquisition_from)
         self.loop=False
@@ -1363,6 +1367,7 @@ class Control_flimage():
             modified_uncaging_ylist.append(self.uncaging_y)
             
         self.flim.sendCommand("ClearUncagingLocation")
+        sleep(0.5)
         for nth_pos in range(len(modified_uncaging_xlist)):
             self.flim.sendCommand(f"CreateUncagingLocation,{(modified_uncaging_xlist[nth_pos])},{(modified_uncaging_ylist[nth_pos])}")
         thread1.join()
@@ -1462,6 +1467,8 @@ class Control_flimage():
                         self.uncaging_x += self.shifts_zyx_pixel[-1][2]
                         self.uncaging_y += self.shifts_zyx_pixel[-1][1]
                     
+                    print(f"Waiting {self.wait_before_sending_unc_pos_sec} seconds before sending uncaging position...")
+                    sleep(self.wait_before_sending_unc_pos_sec)
                     self.send_uncaging_pos()
                     
                     if self.ShowUncagingDetection==True:

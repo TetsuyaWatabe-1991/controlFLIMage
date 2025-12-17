@@ -323,8 +323,8 @@ def main():
     flim_ini_path = r"C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
     assert os.path.exists(flim_ini_path), f"FLIMage ini not found: {flim_ini_path}"
     savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_Imaging\powermeter"
-    percent_list_1 = [0, 10, 20, 30, 50, 70, 90]
-    percent_list_2 = [0, 10, 20, 30, 50, 70, 90]
+    percent_list_1 = [0, 10, 20, 30, 50, 70 ]
+    percent_list_2 = [0, 10, 20, 30, 50, 70]
     
     # Try with window activation first, if it fails, try without
     try:
