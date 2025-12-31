@@ -243,6 +243,94 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
               vmin =vmin, vmax=vmax, cmap=cmap, label_text = "F/F0")
 
 
+def plot_GCaMP_and_RFP(each_file, slope = 0, intercept = 0, 
+                    from_Thorlab_to_coherent_factor = 1/3,
+                    vmin = 1, vmax = 10, cmap='inferno', 
+                    acceptable_image_shape_0th_list = [4,32, 33,34],
+                    ch1or2 = 2):
+    """
+    Plot GCaMP F/F0 and RFP (ch1or2=2) first frame side by side
+    Left: GCaMP F/F0
+    Right: RFP (ch1or2=2) first frame (with uncaging pos)
+    """
+    uncaging_iminfo = FileReader()
+    uncaging_iminfo.read_imageFile(each_file, True) 
+    
+    imagearray=np.array(uncaging_iminfo.image)
+    
+    if (imagearray.shape)[0] not in acceptable_image_shape_0th_list:
+        print("Image shape is not expected size.  ",imagearray.shape)
+        return
+    
+    uncaging_x_y_0to1 = uncaging_iminfo.statedict["State.Uncaging.Position"]
+    uncaging_pow = uncaging_iminfo.statedict["State.Uncaging.Power"]
+    pulseWidth = uncaging_iminfo.statedict["State.Uncaging.pulseWidth"]
+    center_y = imagearray.shape[-2] * uncaging_x_y_0to1[1]
+    center_x = imagearray.shape[-3] * uncaging_x_y_0to1[0]
+    
+    # Calculate GCaMP F/F0 (for left plot)
+    if imagearray.shape[0] in [4, 33, 34]:
+        GCpre = imagearray[0,0,0,:,:,:].sum(axis=-1)
+        GCunc = imagearray[3,0,0,:,:,:].sum(axis=-1)
+    elif imagearray.shape[0] in [32]:
+        GCpre = imagearray[8*0 + 1 : 8*1, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+        GCunc = imagearray[8*3 + 1 : 8*4, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+    assert len(GCpre.shape) == 2 #Image should be 2D
+
+    GC_pre_med = median_filter(GCpre, size=3)
+    GC_unc_med = median_filter(GCunc, size=3)
+    
+    GCF_F0 = (GC_unc_med/GC_pre_med)
+    GCF_F0[GC_pre_med == 0] = 0
+    
+    # Get RFP (ch1or2=2) first frame
+    ch = ch1or2 - 1  # ch1or2=2 -> ch=1
+    if imagearray.shape[0] in [4, 33, 34]:
+        RFP_image = imagearray[0, 0, ch, :, :, :].sum(axis=-1)
+    elif imagearray.shape[0] in [32]:
+        RFP_image = imagearray[8*0 + 1 : 8*1, 0, ch, :, :, :].sum(axis=-1).sum(axis=0)
+    assert len(RFP_image.shape) == 2 #Image should be 2D
+    
+    pow_mw = slope * uncaging_pow + intercept
+    pow_mw_coherent = pow_mw/3
+    pow_mw_round = round(pow_mw_coherent,1)
+    
+    # Create two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+    
+    # Set overall title with file path
+    fig.suptitle(each_file, fontsize=10, y=0.98)
+    
+    # Left: GCaMP F/F0
+    ax1.imshow(GCF_F0, cmap = cmap, vmin = vmin, vmax = vmax)
+    ax1.plot(center_x, center_y, 'co', markersize=4)
+    if pow_mw_round > 0:
+        ax1.set_title(f"GCaMP F/F0\n{pow_mw_round} mW, {pulseWidth} ms")
+    else:
+        ax1.set_title(f"GCaMP F/F0\n{uncaging_pow} %, {pulseWidth} ms")
+    ax1.axis('off')
+    
+    # Right: RFP (ch1or2=2) first frame
+    ax2.imshow(RFP_image, cmap='gray', vmin=0)
+    ax2.plot(center_x, center_y, 'co', markersize=4)
+    ax2.set_title(f"RFP (ch{ch1or2}) - 1st frame")
+    ax2.axis('off')
+    
+    plt.tight_layout()
+    
+    folder = os.path.dirname(each_file)
+    savefolder = os.path.join(folder, "plot_GCaMP_and_RFP")
+    os.makedirs(savefolder, exist_ok=True)
+    basename = os.path.basename(each_file)
+    savepath = os.path.join(savefolder, basename[:-5] + "_GCaMP_and_RFP.png")
+    plt.savefig(savepath, dpi=150, bbox_inches = "tight")
+    print("GCaMP_and_RFP_savepath ", savepath)
+    plt.show()
+    plt.close(); plt.clf();plt.close("all");
+    
+    color_fue(savefolder = savefolder,
+              vmin =vmin, vmax=vmax, cmap=cmap, label_text = "F/F0")
+
     
     
 def calc_point_on_line_close_to_xy(x, y, slope, intercept):   
@@ -372,34 +460,8 @@ def calc_spine_dend_GCaMP(
     
     
 if __name__ == "__main__":
-    
-    x_axis = "power"
-    
-    json_path = r"G:\ImagingData\Tetsuya\20250620\auto2\plot\lowmag2__highmag_1_009_F_F0_vs_power.json"
-    with open(json_path, "r") as f:
-        result_dict = json.load(f)
-    print(result_dict)
-    spine_list = []
-    shaft_list = []
-    power_list = []
-    for each_file in result_dict:
-        spineF_F0 = result_dict[each_file]["spineF_F0"]
-        shaftF_F0 = result_dict[each_file]["shaftF_F0"]
-        power = result_dict[each_file][x_axis]
-        spine_list.append(spineF_F0)
-        shaft_list.append(shaftF_F0)
-        power_list.append(power)
-
-    plt.figure(figsize=(4, 4))
-    plt.plot(power_list, spine_list, "ko", label="spine")
-    plt.plot(power_list, shaft_list, "kx", label="shaft")
-    plt.legend()
-    plt.xlabel(x_axis)
-    plt.ylabel("F/F0")
-    plt.show()
-
-    
-    
+    each_file = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20251216\auto1\1_pos1__highmag_1_005.flim"
+    plot_GCaMP_and_RFP(each_file = each_file, ch1or2 = 2)
     
     
     

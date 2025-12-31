@@ -181,7 +181,7 @@ class ImageViewer():
         im_PIL = Image.fromarray(rgb_array)
         
         im_PIL = im_PIL.resize(self.show_size_xy)
-        resize_ratio_yx = (self.show_size_xy[0]/im_array.shape[0],self.show_size_xy[1]/im_array.shape[1])
+        resize_ratio_yx = (self.show_size_xy[1]/im_array.shape[0],self.show_size_xy[0]/im_array.shape[1])
         if return_ratio==True:    
             return im_PIL,resize_ratio_yx
         else:
