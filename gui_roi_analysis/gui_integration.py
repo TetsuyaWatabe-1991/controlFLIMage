@@ -186,7 +186,19 @@ def first_processing_for_flim_files(
                     count_up += 1
                     combined_df.loc[ind, "relative_nth_omit_induction"] = count_up
 
-                combined_df.loc[no_uncaging_df.index, "save_small_region_plot_path"] = list_of_save_path
+                #for debug
+                print("for debug, each_set_label\n", each_set_label)
+                print("no_uncaging_df\n", no_uncaging_df)
+                print("list_of_save_path\n", list_of_save_path)
+                
+                # Sort no_uncaging_df by nth_omit_induction and map to list_of_save_path
+                if list_of_save_path is not None and len(no_uncaging_df) > 0:
+                    no_uncaging_df_sorted = no_uncaging_df.sort_values("nth_omit_induction")
+                    list_indices = (no_uncaging_df_sorted["nth_omit_induction"] - corrected_positions["min_nth"]).values
+                    valid_mask = (list_indices >= 0) & (list_indices < len(list_of_save_path))
+                    
+                    if valid_mask.sum() > 0:
+                        combined_df.loc[no_uncaging_df_sorted.index[valid_mask], "save_small_region_plot_path"] = np.array(list_of_save_path)[list_indices[valid_mask]]
 
                 savepath_dict = save_small_region_tiffs(
                     small_Tiff_MultiArray,
@@ -373,7 +385,10 @@ def process_uncaging_positions(
         if len(each_set_unc_row) == 0:
             print(f"No uncaging data found for group {each_group_df['group'].iloc[0]}, set {each_set_label}")
             continue
-        assert len(each_set_unc_row) == 1
+        if len(each_set_unc_row) > 1:
+            print(f"for debug, each_set_label: {each_set_label}")
+            print(f"each_set_df\n", each_set_df)
+            assert False, "Multiple uncaging rows found for group {each_group_df['group'].iloc[0]}, set {each_set_label}"
 
         last_pre_frame = each_set_df[each_set_df["phase"] == "pre"].iloc[-1]
         nth_omit_induction_last_pre_frame = last_pre_frame["nth_omit_induction"]

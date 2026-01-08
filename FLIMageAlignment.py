@@ -28,6 +28,18 @@ def get_flimfile_list(one_file_path):
     if not isinstance(filelist, list):
         print(f"WARNING: glob.glob returned {type(filelist)}, converting to list")
         filelist = list(filelist) if hasattr(filelist, '__iter__') else []
+        # Sort by the numeric suffix (last 3 digits before .flim)
+    def extract_number(filepath):
+        # Extract the 3-digit number from filename like "xxx_002.flim"
+        basename = os.path.basename(filepath)
+        # Get the last 3 digits before .flim
+        number_str = basename[-8:-5]  # e.g., "002" from "xxx_002.flim"
+        try:
+            return int(number_str)
+        except ValueError:
+            return 0
+    
+    filelist = sorted(filelist, key=extract_number)
     
     # filelist=filelist[:-1]
     return filelist

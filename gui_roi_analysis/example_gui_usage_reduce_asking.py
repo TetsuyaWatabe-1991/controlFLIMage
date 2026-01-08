@@ -125,7 +125,7 @@ Do_GCaMP_analysis_TF = True
 roi_define_from_S_TF = False
 
 pre_defined_df_TF = True
-df_defined_path = r"G:\ImagingData\Tetsuya\20251016\auto1\combined_df.pkl"
+df_defined_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20251231\auto1\combined_df.pkl"
 
 skip_plot_if_not_updated = True
 # Setup parameters
@@ -141,10 +141,10 @@ sync_rate = 80e6
 fixed_tau_bool = False
 fixed_tau1 = 2.6
 fixed_tau2 = 1.1
-
+pre_intensity_fold_exclude_threshold = 1.4
 
 one_of_filepath_list = [
-r"G:\ImagingData\Tetsuya\20251203\auto1\cnt_4_pos1_001.flim",
+r"\\RY-LAB-WS04\ImagingData\Tetsuya\20251231\auto1\1_pos1__highmag_1_002.flim",
 # r"G:\ImagingData\Tetsuya\20251108\basal__highmag_7_081.flim"
 ]
 
@@ -621,7 +621,18 @@ for each_filepath in combined_df['filepath_without_number'].unique():
         each_set_df_without_unc = each_group_df[(each_group_df["nth_set_label"] == each_set_label) &
                                     (each_group_df["nth_omit_induction"] != -1)]
         numerator = combined_df.loc[each_set_df_without_unc.index,"Spine_subBG_intensity_per_pixel_from_full_image"]
-        denominator = float(combined_df.loc[each_set_df_without_unc[each_set_df_without_unc["phase"] == "pre"].index, "Spine_subBG_intensity_per_pixel_from_full_image"].mean(skipna=False))
+        denominator = float(combined_df.loc[each_set_df_without_unc[each_set_df_without_unc["phase"] == "pre"].index, 
+                        "Spine_subBG_intensity_per_pixel_from_full_image"].mean(skipna=False))
+        
+        min_intensity_pre = combined_df.loc[each_set_df_without_unc[each_set_df_without_unc["phase"] == "pre"].index, 
+                        "Spine_subBG_intensity_per_pixel_from_full_image"].min()
+        max_intensity_pre = combined_df.loc[each_set_df_without_unc[each_set_df_without_unc["phase"] == "pre"].index, 
+                        "Spine_subBG_intensity_per_pixel_from_full_image"].max()
+        
+        if numerator.min() < 0:
+            combined_df.loc[each_set_df.index, "reject"] = True
+        if max_intensity_pre/min_intensity_pre > pre_intensity_fold_exclude_threshold:
+            combined_df.loc[each_set_df.index, "reject"] = True
 
         combined_df.loc[each_set_df.index, "norm_intensity"] = (numerator/denominator).astype(float) - 1.0
         #combined_df.loc[each_set_df.index, "label"] = f"{each_filepath}_{each_set_label}"
@@ -710,8 +721,10 @@ for label in combined_df_reject_bad_data['label'].dropna().unique():
     above_threshold = label_df[label_df['relative_time_min'] > threshold_min]
     uncaging_df = combined_df[(combined_df['phase'] == "unc") & (combined_df['label'] == label)]
     print(label)
+
     if len(above_threshold) > 0:
         min_row = above_threshold.loc[above_threshold['relative_time_min'].idxmin()]
+
         if yn5:
             results.append({
                 'label': label,
@@ -728,6 +741,8 @@ for label in combined_df_reject_bad_data['label'].dropna().unique():
                 'norm_intensity': min_row['norm_intensity'],
                 'time_after_started_experiment_min': min_row['time_after_started_experiment_min'],
             })
+        
+
 
 LTP_point_df = pd.DataFrame(results)
 LTP_point_df.to_pickle(os.path.join(os.path.dirname(df_save_path_1), "LTP_point_df.pkl"))
