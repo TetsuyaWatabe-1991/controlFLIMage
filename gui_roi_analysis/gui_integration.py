@@ -145,6 +145,9 @@ def first_processing_for_flim_files(
                 if len(each_set_df) < 3:
                     print(f"len(each_set_df): {len(each_set_df)}")
                     print("do not analyze this")
+                    # Mark this set as rejected in combined_df
+                    combined_df.loc[each_set_df.index, "rejected"] = True
+                    combined_df.loc[each_set_df.index, "rejection_reason"] = f"Insufficient data: only {len(each_set_df)} rows found (minimum 3 required)"
                     continue
 
                 print("for debug, each_set_label\n", each_set_label)
@@ -183,7 +186,6 @@ def first_processing_for_flim_files(
                     print(f"last_pre_frame[each_col]: {last_pre_frame[each_col]}")
                     combined_df.loc[each_set_df_unc_or_titration.index, each_col] = last_pre_frame[each_col]                
                 #### till here 20250707
-
 
                 list_of_save_path = save_small_region_plots(
                     small_Aligned_4d_array,

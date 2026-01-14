@@ -2,15 +2,12 @@
 
 import os
 import sys
-import datetime
-import configparser
 sys.path.append('..\\')
-import glob
 import numpy as np
 import pandas as pd
 import tifffile
 from PyQt5.QtWidgets import QApplication
-from matplotlib import pyplot as plt  
+from custom_plot import plt  
 import seaborn as sns
 from gui_integration import shift_coords_small_to_full_for_each_rois, first_processing_for_flim_files
 from gui_roi_analysis.file_selection_gui import launch_file_selection_gui
@@ -21,8 +18,6 @@ from simple_dialog import (
     ask_open_path_gui, ask_save_folder_gui)
 from plot_functions import draw_boundaries
 from utility.send_notification import send_slack_url_default
-from save_S_from_tzyx_2 import save_deepd3_S_tif
-from spine_roi_from_S import define_roi_from_S
 from plot_timestamp_utils import (
     save_plot_timestamp_to_ini,
     should_regenerate_group_plots,
@@ -30,15 +25,11 @@ from plot_timestamp_utils import (
 )
 # %%
 
-Do_without_asking = False
-
 skip_gui_TF = False
 Do_lifetime_analysis_TF = False
 Do_GCaMP_analysis_TF = False
 roi_define_from_S_TF = False
-
 pre_defined_df_TF = False
-df_defined_path = r"C:\Users\WatabeT\Documents\Git\controlFLIMage\controlFLIMage\ForUse\temporal_use_1\20251231\auto1\combined_df.pkl"
 
 skip_plot_if_not_updated = True
 # Setup parameters
@@ -56,11 +47,15 @@ fixed_tau1 = 2.6
 fixed_tau2 = 1.1
 pre_intensity_fold_exclude_threshold = 1.4
 
-one_of_filepath_list = [
-r"Z:\User-Personal\Tetsuya_Zdrive\Data\202601\20260108_tw\auto1\1223_cnt_2_pos1__highmag_1_002.flim",
-r"Z:\User-Personal\Tetsuya_Zdrive\Data\202601\20260110\auto1\AP5_3_pos1__highmag_1_002.flim"
-# r"G:\ImagingData\Tetsuya\20251108\basal__highmag_7_081.flim"
-]
+#open dialog to select one_of_filepath
+# one_of_filepath = r"Z:\User-Personal\Tetsuya_Zdrive\Data\202601\20260108_tw\auto1\1223_cnt_2_pos1__highmag_1_002.flim",
+one_of_filepath = ask_open_path_gui(filetypes=[("FLIM files","*.flim")])
+#check if one_of_filepath is end with .flim
+
+if not os.path.exists(one_of_filepath):
+    raise Exception("one_of_filepath does not exist")
+    if not one_of_filepath.endswith(".flim"):
+        raise Exception("one_of_filepath is not a FLIM file")
 
 save_plot_TF = True
 save_tif_TF = True
@@ -69,86 +64,98 @@ roi_types = ["Spine", "DendriticShaft", "Background"]
 color_dict = {"Spine": "red", "DendriticShaft": "blue", "Background": "green"}
 
 
-
 # if False:
-if Do_without_asking == False:
-    yn = ask_yes_no_gui("Do you already have combined_df_1.pkl?")
-    if yn:
-        df_save_path_1 = ask_open_path_gui()
-        print(f"Loading data from: {df_save_path_1}")
-        combined_df = pd.read_pickle(df_save_path_1)
-else:
-    if pre_defined_df_TF:
-        df_save_path_1 = df_defined_path
-        combined_df = pd.read_pickle(df_save_path_1)
-    else:
-        df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df_1.pkl")
+yn = ask_yes_no_gui("Do you already have combined_df_1.pkl?")
+if yn:
+    df_save_path_1 = ask_open_path_gui()
+    print(f"Loading data from: {df_save_path_1}")
+    combined_df = pd.read_pickle(df_save_path_1)
 
-if Do_without_asking == False:
-    yn1 = ask_yes_no_gui("Do you want to run the data preparation step?")
-    if (yn1 == False) and (yn == False):
-        raise Exception("dataframe is not loaded. You do not define it.")
 
-if (Do_without_asking == True) and (pre_defined_df_TF == True):
+yn1 = ask_yes_no_gui("Do you want to run the data preparation step?")
+if (yn1 == False) and (yn == False):
+    raise Exception("dataframe is not loaded. You do not define it.")
+
+if (pre_defined_df_TF == True):
     print("skipping data preparation step")
 
-elif (Do_without_asking == True) or (yn1 == True):  
+if yn1 == True:  
     combined_df = pd.DataFrame()
-    for one_of_filepath in one_of_filepath_list:
-        print(f"\n\n\n Processing ... \n\n{one_of_filepath}\n\n\n")
-        try:
-            temp_df = first_processing_for_flim_files(
-                one_of_filepath,
-                z_plus_minus,
-                ch_1or2,
-                pre_length = pre_length,
-                save_plot_TF = save_plot_TF,
-                save_tif_TF = save_tif_TF,
-                )
-            combined_df = pd.concat([combined_df, temp_df], ignore_index=True)
-        except Exception as e:
-            error_msg = str(e)
-            print(f"ERROR: Failed to process file {one_of_filepath}: {error_msg}")
-            print(f"Skipping this file and continuing with other files...")
-            continue
+    
+    try:
+        temp_df = first_processing_for_flim_files(
+            one_of_filepath,
+            z_plus_minus,
+            ch_1or2,
+            pre_length = pre_length,
+            save_plot_TF = save_plot_TF,
+            save_tif_TF = save_tif_TF,
+            )
+        combined_df = pd.concat([combined_df, temp_df], ignore_index=True)
+    except Exception as e:
+        error_msg = str(e)
+        print(f"ERROR: Failed to process file {one_of_filepath}: {error_msg}")
+        print(f"Skipping this file and continuing with other files...")
+    
 
 
-    if Do_without_asking == False:
-        send_slack_url_default(message = "finished data preparation step.")
-        print("define save path for combined_df")
-        df_save_path_1 = ask_save_path_gui()
-        if df_save_path_1[-4:] != ".pkl":
-            df_save_path_1 = df_save_path_1 + ".pkl"
-    else:
-        df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df.pkl")
+ 
+    send_slack_url_default(message = "finished data preparation step.")
+    print("define save path for combined_df")
+    df_save_path_1 = ask_save_path_gui()
+    if df_save_path_1[-4:] != ".pkl":
+        df_save_path_1 = df_save_path_1 + ".pkl"
+
     combined_df.to_pickle(df_save_path_1)
     combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
     print(f"saved combined_df to {df_save_path_1}")
-
+    
+    # Save rejection reasons to text file
+    rejection_log_path = df_save_path_1.replace(".pkl", "_rejection_reasons.txt")
+    with open(rejection_log_path, 'w', encoding='utf-8') as f:
+        f.write("=== REJECTED FILES AND REASONS ===\n\n")
+        
+        # Check if rejection columns exist
+        if "rejected" in combined_df.columns:
+            rejected_df = combined_df[combined_df["rejected"] == True]
+            if len(rejected_df) > 0:
+                # Group by filepath and set_label to avoid duplicates
+                if "filepath_without_number" in combined_df.columns and "nth_set_label" in combined_df.columns:
+                    rejected_groups = rejected_df.groupby(["filepath_without_number", "nth_set_label"]).first()
+                    for (filepath, set_label), row in rejected_groups.iterrows():
+                        reason = row.get("rejection_reason", "No reason specified")
+                        group = row.get("group", "Unknown")
+                        f.write(f"File: {filepath}\n")
+                        f.write(f"Group: {group}\n")
+                        f.write(f"Set Label: {set_label}\n")
+                        f.write(f"Reason: {reason}\n")
+                        f.write("-" * 60 + "\n\n")
+                else:
+                    # Fallback: write all rejected rows
+                    for idx, row in rejected_df.iterrows():
+                        filepath = row.get("file_path", "Unknown")
+                        reason = row.get("rejection_reason", "No reason specified")
+                        group = row.get("group", "Unknown")
+                        f.write(f"Row Index: {idx}\n")
+                        f.write(f"File: {filepath}\n")
+                        f.write(f"Group: {group}\n")
+                        f.write(f"Reason: {reason}\n")
+                        f.write("-" * 60 + "\n\n")
+                
+                f.write(f"\nTotal rejected entries: {len(rejected_df)}\n")
+            else:
+                f.write("No files were rejected.\n")
+        else:
+            f.write("Rejection tracking columns not found in combined_df.\n")
+    
+    print(f"saved rejection reasons to {rejection_log_path}")
 
 # %%
-do_roi_define_from_S = False
-
-if Do_without_asking == False:
-    if ask_yes_no_gui("Do you want to define ROI from S?"):
-        do_roi_define_from_S = True
-
-if Do_without_asking * roi_define_from_S_TF:
-    do_roi_define_from_S = True
-
-if do_roi_define_from_S:
-    save_deepd3_S_tif(df_save_path_1)
-    define_roi_from_S(df_save_path_1, save_path_suffix = "")
-    combined_df = pd.read_pickle(df_save_path_1)
-
-    print("define ROI from S finished")
-
-    # combined_df["reject"] = False
 
 
 # %%
 # Launch the new file selection GUI instead of the old loop
-if (Do_without_asking and skip_gui_TF) == False:
+if skip_gui_TF == False:
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)
@@ -173,11 +180,10 @@ if (Do_without_asking and skip_gui_TF) == False:
     combined_df = pd.read_pickle(df_save_path_1)
 
 # %%
-if Do_without_asking == False:
-    if ask_yes_no_gui("stop here?"):
-        assert False
-    
 
+if ask_yes_no_gui("stop here?"):
+    assert False
+    
 # %%
 # Simple small image and ROI mask plotting with INI timestamp checking
 print("\n" + "="*40)
