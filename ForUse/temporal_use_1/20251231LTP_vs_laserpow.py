@@ -7,8 +7,8 @@ import sys
 sys.path.append("../../")
 from FLIMageFileReader2 import FileReader
 
-combined_df_pkl_path = r"G:\ImagingData\Tetsuya\20251231\auto1\combined_df1.pkl"
-LTP_point_df_pkl_path = r"G:\ImagingData\Tetsuya\20251112\auto1\LTP_point_df.pkl"
+combined_df_pkl_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20251231\auto1\combined_df.pkl"
+LTP_point_df_pkl_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20251231\auto1\LTP_point_df.pkl"
 
 combined_df_df = pd.read_pickle(combined_df_pkl_path)
 LTP_point_df = pd.read_pickle(LTP_point_df_pkl_path)
@@ -38,8 +38,8 @@ print(LTP_point_df["position"].unique())
 
 # %%
 uncpow_dict = {
-    # 34: 2,
-    54: 3,
+    29: 2.8,
+    42: 4,
 }
 
 

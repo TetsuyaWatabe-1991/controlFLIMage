@@ -5,6 +5,7 @@ import numpy as np
 import subprocess
 import platform
 from datetime import datetime
+import tifffile
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
                             QWidget, QTableWidget, QTableWidgetItem, QPushButton,
                             QLabel, QHeaderView, QCheckBox, QMessageBox, QProgressBar,
@@ -732,9 +733,125 @@ class FileSelectionGUI(QMainWindow):
             
             self.combined_df.loc[mask, 'reject'] = state == Qt.Checked
             self.log_message(f"Reject status changed for {group_id}, Set {set_label}: {'Rejected' if state == Qt.Checked else 'Accepted'}")
+            
+            # If reject is checked and ROI is not selected, create a central rectangular ROI
+            if state == Qt.Checked:
+                self._create_central_roi_for_rejected(group_id, set_label, mask)
+            
             self.auto_save_dataframe()
         except Exception as e:
             print(f"Error handling reject change: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _create_central_roi_for_rejected(self, group_id, set_label, mask):
+        """Create a central rectangular ROI for rejected items when ROI is not selected"""
+        try:
+            # Import create_roi_mask_from_params from gui_integration
+            from gui_integration import create_roi_mask_from_params
+            
+            # Get group/set specific data
+            group_set_df = self.combined_df[mask]
+            
+            # Get TIFF path
+            tiff_path = ""
+            if 'after_align_save_path' in group_set_df.columns:
+                tiff_paths = group_set_df['after_align_save_path'].dropna()
+                if len(tiff_paths) > 0:
+                    tiff_path = tiff_paths.iloc[0]
+            
+            if not tiff_path or not os.path.exists(tiff_path):
+                self.log_message(f"Warning: TIFF file not found for {group_id}, Set {set_label}. Cannot create ROI.")
+                return
+            
+            # Load TIFF data to get image size
+            try:
+                after_align_tiff_data = tifffile.imread(tiff_path)
+                
+                # Get image shape (handle different dimensions)
+                if len(after_align_tiff_data.shape) == 4:
+                    # 4D data: (time, z, y, x) - use first time point and max projection over z
+                    image_shape = after_align_tiff_data[0].max(axis=0).shape  # (y, x)
+                elif len(after_align_tiff_data.shape) == 3:
+                    # 3D data: could be (time, y, x) or (z, y, x) - use max projection over first axis
+                    image_shape = after_align_tiff_data.max(axis=0).shape  # (y, x)
+                else:
+                    # 2D data: use as is
+                    image_shape = after_align_tiff_data.shape  # (y, x)
+                
+                height, width = image_shape
+                
+                # Calculate central ROI: half of each side length
+                roi_width = width // 2
+                roi_height = height // 2
+                roi_x = (width - roi_width) // 2
+                roi_y = (height - roi_height) // 2
+                
+                # Create ROI parameters for rectangle
+                roi_params = {
+                    'x': roi_x,
+                    'y': roi_y,
+                    'width': roi_width,
+                    'height': roi_height
+                }
+                
+                # Create ROI mask
+                roi_mask = create_roi_mask_from_params(roi_params, 'rectangle', image_shape)
+                
+                # Check ROI status for each type and create ROI if not defined
+                roi_types = ["Spine", "DendriticShaft", "Background"]
+                
+                for roi_type in roi_types:
+                    has_roi, _ = self.get_roi_status_and_date(group_set_df, roi_type)
+                    
+                    if not has_roi:
+                        # Filter to only include rows that were actually analyzed (nth_omit_induction >= 0)
+                        analysis_mask = mask & (self.combined_df['nth_omit_induction'] >= 0)
+                        analysis_filtered_df = self.combined_df[analysis_mask]
+                        
+                        if len(analysis_filtered_df) == 0:
+                            continue
+                        
+                        # Column names with header prefix
+                        roi_mask_col = f"{roi_type}_roi_mask"
+                        roi_shape_col = f"{roi_type}_roi_shape"
+                        roi_parameters_col = f"{roi_type}_roi_parameters"
+                        roi_analysis_timestamp_col = f"{roi_type}_roi_analysis_timestamp"
+                        
+                        # Ensure roi_mask column exists and is object type
+                        if roi_mask_col not in self.combined_df.columns:
+                            self.combined_df[roi_mask_col] = None
+                        self.combined_df[roi_mask_col] = self.combined_df[roi_mask_col].astype(object)
+                        
+                        # Save ROI mask for all analysis rows
+                        indices = analysis_filtered_df.index
+                        for df_idx in indices:
+                            try:
+                                row_pos = self.combined_df.index.get_loc(df_idx)
+                                col_pos = self.combined_df.columns.get_loc(roi_mask_col)
+                                self.combined_df.iat[row_pos, col_pos] = roi_mask.copy()
+                            except Exception as e:
+                                print(f"Warning: Error saving ROI mask for {roi_type} at index {df_idx}: {e}")
+                        
+                        # Save ROI shape and parameters
+                        self.combined_df.loc[indices, roi_shape_col] = 'rectangle'
+                        self.combined_df.loc[indices, roi_parameters_col] = str(roi_params)
+                        
+                        # Add timestamp
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        self.combined_df.loc[indices, roi_analysis_timestamp_col] = timestamp
+                        
+                        self.log_message(f"Created central rectangular ROI for {roi_type} (rejected): {roi_width}x{roi_height} at ({roi_x}, {roi_y})")
+                
+            except Exception as e:
+                self.log_message(f"Error creating central ROI for rejected item: {e}")
+                print(f"Error creating central ROI: {e}")
+                import traceback
+                traceback.print_exc()
+                
+        except Exception as e:
+            self.log_message(f"Error in _create_central_roi_for_rejected: {e}")
+            print(f"Error in _create_central_roi_for_rejected: {e}")
             import traceback
             traceback.print_exc()
     

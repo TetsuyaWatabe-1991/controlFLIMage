@@ -16,116 +16,29 @@ from gui_integration import shift_coords_small_to_full_for_each_rois, first_proc
 from gui_roi_analysis.file_selection_gui import launch_file_selection_gui
 from fitting.flim_lifetime_fitting import FLIMLifetimeFitter
 from FLIMageFileReader2 import FileReader
-from simple_dialog import ask_yes_no_gui, ask_save_path_gui, ask_open_path_gui, ask_save_folder_gui
+from simple_dialog import (
+    ask_yes_no_gui, ask_save_path_gui, 
+    ask_open_path_gui, ask_save_folder_gui)
 from plot_functions import draw_boundaries
 from utility.send_notification import send_slack_url_default
 from save_S_from_tzyx_2 import save_deepd3_S_tif
 from spine_roi_from_S import define_roi_from_S
-
-
-# %%
-# Simple INI-based timestamp checking functions
-
-def get_timestamp_ini_path(filepath_without_number):
-    """Get path for timestamp INI file for a filepath group"""
-    directory = os.path.dirname(filepath_without_number)
-    filename = os.path.basename(filepath_without_number)
-    ini_filename = f"{filename}_plot_timestamps.ini"
-    print(f"ini_save_path: {os.path.join(directory, ini_filename)}")
-    return os.path.join(directory, ini_filename)
-
-def save_plot_timestamp_to_ini(filepath_without_number, plot_type):
-    """Save current timestamp to INI file for this filepath group"""
-    ini_path = get_timestamp_ini_path(filepath_without_number)
-
-    config = configparser.ConfigParser()
-    if os.path.exists(ini_path):
-        config.read(ini_path)
-
-    if 'plot_timestamps' not in config:
-        config['plot_timestamps'] = {}
-
-    current_time = datetime.datetime.now().isoformat()
-    config['plot_timestamps'][f'{plot_type}_last_generated'] = current_time
-
-    with open(ini_path, 'w') as configfile:
-        config.write(configfile)
-
-    return ini_path
-
-def should_regenerate_group_plots(each_group_df, plot_type):
-    """Check if plots should be regenerated for this filepath group"""
-    filepath_without_number = each_group_df['filepath_without_number'].iloc[0]
-    ini_path = get_timestamp_ini_path(filepath_without_number)
-    print("start analyzing timestamp")
-    # If INI file doesn't exist, regenerate
-    if not os.path.exists(ini_path):
-        return True, "No timestamp INI file found"
-
-    try:
-        config = configparser.ConfigParser()
-        config.read(ini_path)
-
-        # Check if this plot type has been generated before
-        timestamp_key = f'{plot_type}_last_generated'
-        if 'plot_timestamps' not in config or timestamp_key not in config['plot_timestamps']:
-            return True, f"No {plot_type} timestamp found in INI"
-
-        # Get the last generation time
-        last_generated_str = config['plot_timestamps'][timestamp_key]
-        last_generated = datetime.datetime.fromisoformat(last_generated_str)
-
-        # Get the latest ROI analysis timestamp from this group
-        roi_timestamps = []
-        for roi_type in roi_types:
-            timestamp_col = f"{roi_type}_roi_analysis_timestamp"
-            if timestamp_col in each_group_df.columns:
-                valid_timestamps = each_group_df[timestamp_col].dropna()
-                if len(valid_timestamps) > 0:
-                    # Ensure all timestamps are datetime objects
-                    for ts in valid_timestamps:
-                        if isinstance(ts, str):
-                            roi_timestamps.append(datetime.datetime.fromisoformat(ts))
-                        elif isinstance(ts, datetime.datetime):
-                            roi_timestamps.append(ts)
-
-        if not roi_timestamps:
-            return False, "No ROI timestamps found - skipping"
-
-        # Find the latest ROI timestamp
-        latest_roi_timestamp = max(roi_timestamps)
-
-        print(f"  Latest ROI timestamp: {latest_roi_timestamp} (type: {type(latest_roi_timestamp)})")
-        print(f"  Last plot generated: {last_generated} (type: {type(last_generated)})")
-
-        # Compare timestamps (both are now datetime objects)
-        if latest_roi_timestamp > last_generated:
-            return True, f"ROI updated at {latest_roi_timestamp}, plots generated at {last_generated}"
-        else:
-            return False, f"ROI timestamps are up to date (latest: {latest_roi_timestamp}, plots: {last_generated})"
-
-    except Exception as e:
-        return True, f"Error reading INI file: {str(e)}"
-
-def print_simple_summary(total_groups, regenerated_groups, skipped_groups, plot_type):
-    """Print simple summary of what was processed"""
-    print(f"\n{plot_type.upper()} PLOT SUMMARY:")
-    print(f"Total groups: {total_groups}")
-    print(f"Regenerated: {regenerated_groups}")
-    print(f"Skipped: {skipped_groups}")
-    print("-" * 40)
+from plot_timestamp_utils import (
+    save_plot_timestamp_to_ini,
+    should_regenerate_group_plots,
+    print_simple_summary
+)
 # %%
 
-yn = ask_yes_no_gui("Do without asking?")
-Do_without_asking = yn
+Do_without_asking = False
 
 skip_gui_TF = False
 Do_lifetime_analysis_TF = False
-Do_GCaMP_analysis_TF = True
+Do_GCaMP_analysis_TF = False
 roi_define_from_S_TF = False
 
-pre_defined_df_TF = True
-df_defined_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20251231\auto1\combined_df.pkl"
+pre_defined_df_TF = False
+df_defined_path = r"C:\Users\WatabeT\Documents\Git\controlFLIMage\controlFLIMage\ForUse\temporal_use_1\20251231\auto1\combined_df.pkl"
 
 skip_plot_if_not_updated = True
 # Setup parameters
@@ -144,7 +57,8 @@ fixed_tau2 = 1.1
 pre_intensity_fold_exclude_threshold = 1.4
 
 one_of_filepath_list = [
-r"\\RY-LAB-WS04\ImagingData\Tetsuya\20251231\auto1\1_pos1__highmag_1_002.flim",
+r"Z:\User-Personal\Tetsuya_Zdrive\Data\202601\20260108_tw\auto1\1223_cnt_2_pos1__highmag_1_002.flim",
+r"Z:\User-Personal\Tetsuya_Zdrive\Data\202601\20260110\auto1\AP5_3_pos1__highmag_1_002.flim"
 # r"G:\ImagingData\Tetsuya\20251108\basal__highmag_7_081.flim"
 ]
 
@@ -182,15 +96,21 @@ elif (Do_without_asking == True) or (yn1 == True):
     combined_df = pd.DataFrame()
     for one_of_filepath in one_of_filepath_list:
         print(f"\n\n\n Processing ... \n\n{one_of_filepath}\n\n\n")
-        temp_df = first_processing_for_flim_files(
-            one_of_filepath,
-            z_plus_minus,
-            ch_1or2,
-            pre_length = pre_length,
-            save_plot_TF = save_plot_TF,
-            save_tif_TF = save_tif_TF,
-            )
-        combined_df = pd.concat([combined_df, temp_df], ignore_index=True)
+        try:
+            temp_df = first_processing_for_flim_files(
+                one_of_filepath,
+                z_plus_minus,
+                ch_1or2,
+                pre_length = pre_length,
+                save_plot_TF = save_plot_TF,
+                save_tif_TF = save_tif_TF,
+                )
+            combined_df = pd.concat([combined_df, temp_df], ignore_index=True)
+        except Exception as e:
+            error_msg = str(e)
+            print(f"ERROR: Failed to process file {one_of_filepath}: {error_msg}")
+            print(f"Skipping this file and continuing with other files...")
+            continue
 
 
     if Do_without_asking == False:
@@ -279,7 +199,7 @@ if yn2:
         total_groups += 1
 
         # Check if regeneration is needed BEFORE loading any images
-        should_regen, reason = should_regenerate_group_plots(each_group_df, "small")
+        should_regen, reason = should_regenerate_group_plots(each_group_df, "small", roi_types)
         if skip_plot_if_not_updated:
             if not should_regen:
                 print(f"Skipping group: {display_group} - {reason}")
@@ -417,7 +337,7 @@ if yn3:
         total_groups += 1
 
         # Check if regeneration is needed BEFORE loading any images
-        should_regen, reason = should_regenerate_group_plots(each_group_df, "fullsize")
+        should_regen, reason = should_regenerate_group_plots(each_group_df, "fullsize", roi_types)
 
         if skip_plot_if_not_updated:
             if not should_regen:

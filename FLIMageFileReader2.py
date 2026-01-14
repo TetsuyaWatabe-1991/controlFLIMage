@@ -4,13 +4,31 @@ Created on Tue Feb 12 09:39:42 2019
 This class provides fucntion to read files created by FLIMage! software and calculate lifetime, intensity and lifetimeMap.
 Detailed parameters are stored in FileReader.State
 
+Modified to support both libtiff and tifffile libraries.
+If libtiff is not available, tifffile will be used automatically.
+
 @author: Ryohei Yasuda
 """
 
-from libtiff import TIFF
-# pip install pylibtiff will install this. 
-# It may need LibTiff.dll in python directry. You can download a source and cmake it with VS.
-# The latest version is 4.5.0 as of May 2023, https://gitlab.com/libtiff/libtiff
+# Global variable to control which library to use
+# Set to True to use tifffile (default), False to use libtiff (if available)
+USE_TIFFFILE = True  # Default to tifffile for better portability
+
+# Try to import libtiff
+try:
+    from libtiff import TIFF
+    # pip install pylibtiff will install this. 
+    # It may need LibTiff.dll in python directry. You can download a source and cmake it with VS.
+    # The latest version is 4.5.0 as of May 2023, https://gitlab.com/libtiff/libtiff
+    LIBTIFF_AVAILABLE = True
+except ImportError:
+    LIBTIFF_AVAILABLE = False
+    TIFF = None  # Set to None if not available
+
+# Import tifffile (should always be available)
+import tifffile
+# pip install tifffile will install this.
+
 import os
 import numpy as np
 from datetime import datetime
@@ -94,7 +112,11 @@ class FileReader:
                         print(f"Error in decode_header: {eq}")
     
     def decode_header(self, header, new = True):
-        infos = header.decode('ASCII').split('\r\n')
+        # Handle both bytes and string
+        if isinstance(header, bytes):
+            infos = header.decode('ASCII').split('\r\n')
+        else:
+            infos = header.split('\r\n')
         for info in infos:
             info = info.replace(";", "")
             #eq1 = info.split(' = ')
@@ -173,7 +195,11 @@ class FileReader:
                     for i in range(0, self.nChannels):
                         offset2 = offset + self.height * self.width * self.n_time[i]
                         if self.n_time[i] > 0:
-                            imageC.append(np.reshape(flim_each[0, offset : offset2], (self.height, self.width,  self.n_time[i]), 'C'))
+                            # Handle both 1D and 2D arrays (tifffile may return 1D)
+                            if flim_each.ndim == 1:
+                                imageC.append(np.reshape(flim_each[offset : offset2], (self.height, self.width,  self.n_time[i]), 'C'))
+                            else:
+                                imageC.append(np.reshape(flim_each[0, offset : offset2], (self.height, self.width,  self.n_time[i]), 'C'))
                         else:
                             imageC.append(np.zeros(1)) #If not acquired, it return 0 value.
                         offset = offset2
@@ -188,33 +214,124 @@ class FileReader:
         self.filename = file_path
         self.n_images = 1
         self.acqTime = []
-        tif = TIFF.open(file_path, mode = 'r')
-        header = tif.GetField('ImageDescription')
-        self.decode_header(header)
         
-        if readImage:
-            if (os.path.splitext(file_path)[-1] == '.flim'):
-                flim = np.array(tif.read_image()).astype(np.ushort) #Sometimes image is stored in 8bit.
-                self.image.append(self.decode_FLIM(flim))
-                self.flim = True
+        # Use tifffile if USE_TIFFFILE is True or libtiff is not available
+        if USE_TIFFFILE or not LIBTIFF_AVAILABLE:
+            # Use tifffile
+            tif = tifffile.TiffFile(file_path)
+            
+            # Get header from first page
+            first_page = tif.pages[0]
+            header = None
+            if 'ImageDescription' in first_page.tags:
+                header = first_page.tags['ImageDescription'].value
+                # tifffile may return bytes or string
+                if isinstance(header, bytes):
+                    header = header.decode('ASCII', errors='ignore')
             else:
-                self.image.append(np.array(tif.read_image()))
-                self.flim = False
-                
-        self.currentPage += 1  
-        while tif.readdirectory():
-            header = tif.GetField('ImageDescription')
-            self.decode_header(header, False)
-
+                # Try to find ImageDescription in other tags
+                for tag in first_page.tags.values():
+                    if tag.name == 'ImageDescription':
+                        header = tag.value
+                        if isinstance(header, bytes):
+                            header = header.decode('ASCII', errors='ignore')
+                        break
+                    elif hasattr(tag, 'value'):
+                        tag_value = tag.value
+                        if isinstance(tag_value, (str, bytes)):
+                            tag_str = tag_value if isinstance(tag_value, str) else str(tag_value)
+                            if len(tag_str) > 500:
+                                header = tag_value
+                                if isinstance(header, bytes):
+                                    header = header.decode('ASCII', errors='ignore')
+                                break
+            
+            if header is None:
+                raise ValueError("Could not find ImageDescription tag in TIFF file")
+            
+            self.decode_header(header)
+            
             if readImage:
-                if self.flim:
-                    flim = np.array(tif.read_image()).astype(np.ushort) #Sometimes image is stored in 8bit.
-                    self.image.append(self.decode_FLIM(flim))            
+                if (os.path.splitext(file_path)[-1] == '.flim'):
+                    # Read first page image
+                    flim = np.array(first_page.asarray()).astype(np.ushort) #Sometimes image is stored in 8bit.
+                    self.image.append(self.decode_FLIM(flim))
+                    self.flim = True
                 else:
-                    self.image.append(tif.read_image())
+                    self.image.append(np.array(first_page.asarray()))
+                    self.flim = False
                     
-            self.currentPage += 1    
-            self.n_images = self.n_images + 1
+            self.currentPage += 1  
+            
+            # Process remaining pages
+            for page_idx in range(1, len(tif.pages)):
+                page = tif.pages[page_idx]
+                header = None
+                if 'ImageDescription' in page.tags:
+                    header = page.tags['ImageDescription'].value
+                    if isinstance(header, bytes):
+                        header = header.decode('ASCII', errors='ignore')
+                else:
+                    # Try to find ImageDescription in other tags
+                    for tag in page.tags.values():
+                        if tag.name == 'ImageDescription':
+                            header = tag.value
+                            if isinstance(header, bytes):
+                                header = header.decode('ASCII', errors='ignore')
+                            break
+                        elif hasattr(tag, 'value'):
+                            tag_value = tag.value
+                            if isinstance(tag_value, (str, bytes)):
+                                tag_str = tag_value if isinstance(tag_value, str) else str(tag_value)
+                                if len(tag_str) > 500:
+                                    header = tag_value
+                                    if isinstance(header, bytes):
+                                        header = header.decode('ASCII', errors='ignore')
+                                    break
+                
+                if header:
+                    self.decode_header(header, False)
+
+                if readImage:
+                    if self.flim:
+                        flim = np.array(page.asarray()).astype(np.ushort) #Sometimes image is stored in 8bit.
+                        self.image.append(self.decode_FLIM(flim))            
+                    else:
+                        self.image.append(page.asarray())
+                        
+                self.currentPage += 1    
+                self.n_images = self.n_images + 1
+            
+            tif.close()
+        else:
+            # Use libtiff
+            tif = TIFF.open(file_path, mode = 'r')
+            header = tif.GetField('ImageDescription')
+            self.decode_header(header)
+            
+            if readImage:
+                if (os.path.splitext(file_path)[-1] == '.flim'):
+                    flim = np.array(tif.read_image()).astype(np.ushort) #Sometimes image is stored in 8bit.
+                    self.image.append(self.decode_FLIM(flim))
+                    self.flim = True
+                else:
+                    self.image.append(np.array(tif.read_image()))
+                    self.flim = False
+                    
+            self.currentPage += 1  
+            while tif.readdirectory():
+                header = tif.GetField('ImageDescription')
+                self.decode_header(header, False)
+
+                if readImage:
+                    if self.flim:
+                        flim = np.array(tif.read_image()).astype(np.ushort) #Sometimes image is stored in 8bit.
+                        self.image.append(self.decode_FLIM(flim))            
+                    else:
+                        self.image.append(tif.read_image())
+                        
+                self.currentPage += 1    
+                self.n_images = self.n_images + 1
             
         self.currentPage = 0
         if self.flim:

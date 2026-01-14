@@ -45,6 +45,12 @@ def first_processing_for_flim_files(
 
     combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length)
     
+    # Initialize rejection tracking columns
+    if "rejected" not in combined_df.columns:
+        combined_df["rejected"] = False
+    if "rejection_reason" not in combined_df.columns:
+        combined_df["rejection_reason"] = ""
+    
     #for debug
     csv_savepath = os.path.join(os.path.dirname(one_of_filepath), "debug_combined_df.csv")  
     combined_df.to_csv(csv_savepath, index=False)
@@ -143,10 +149,19 @@ def first_processing_for_flim_files(
 
                 print("for debug, each_set_label\n", each_set_label)
                 print("for debug, each_set_df\n", each_set_df)
-                small_Tiff_MultiArray, small_Aligned_4d_array, corrected_positions, each_set_df = process_small_region(
-                        each_set_df, Aligned_4d_array
-                        )
-                print("for debug, corrected_positions\n", corrected_positions)
+                try:
+                    small_Tiff_MultiArray, small_Aligned_4d_array, corrected_positions, each_set_df = process_small_region(
+                            each_set_df, Aligned_4d_array
+                            )
+                    print("for debug, corrected_positions\n", corrected_positions)
+                except (ValueError, Exception) as e:
+                    error_msg = str(e)
+                    print(f"ERROR: Failed to process small region for set_label {each_set_label}, group {each_group}: {error_msg}")
+                    print(f"Skipping this set and continuing with other sets...")
+                    # Mark this set as rejected in combined_df
+                    combined_df.loc[each_set_df.index, "rejected"] = True
+                    combined_df.loc[each_set_df.index, "rejection_reason"] = f"Image misalignment too large: {error_msg}"
+                    continue
 
 
                 # Update combined_df with small region boundaries and small shifts
@@ -519,6 +534,13 @@ def process_small_region(
         small_y_from:small_y_to,
         small_x_from:small_x_to
     ]
+    
+    # Check if the extracted array has valid dimensions (no zero-sized dimensions)
+    if 0 in small_Tiff_MultiArray.shape:
+        error_msg = f"Invalid array shape {small_Tiff_MultiArray.shape} detected. Image misalignment too large. Skipping this set."
+        print(f"WARNING: {error_msg}")
+        raise ValueError(error_msg)
+    
     small_shifts, small_Aligned_4d_array = Align_4d_array(small_Tiff_MultiArray)
 
     # Store individual shift values for each frame
