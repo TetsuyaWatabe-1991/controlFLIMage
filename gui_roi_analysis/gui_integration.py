@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import tifffile
 from PyQt5.QtWidgets import QApplication
-from matplotlib import pyplot as plt
+from custom_plot import plt
 from typing import List, Tuple, Dict, Optional
 from AnalysisForFLIMage.get_annotation_unc_multiple import get_uncaging_pos_multiple
 from FLIMageAlignment import Align_4d_array, flim_files_to_nparray
@@ -23,12 +23,13 @@ def first_processing_for_flim_files(
     pre_length,
     save_plot_TF = True,
     save_tif_TF = True,
-    ignore_words = ["for_align"]
+    ignore_words = ["for_align"],
+    return_error_dict = False
     ) -> pd.DataFrame:
 
     # Load initial data
 
-
+    error_dict = {}
     one_of_file_list = glob.glob(
         os.path.join(
             os.path.dirname(one_of_filepath),
@@ -44,12 +45,6 @@ def first_processing_for_flim_files(
         os.makedirs(each_folder, exist_ok=True)
 
     combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length)
-    
-    # Initialize rejection tracking columns
-    if "rejected" not in combined_df.columns:
-        combined_df["rejected"] = False
-    if "rejection_reason" not in combined_df.columns:
-        combined_df["rejection_reason"] = ""
     
     #for debug
     csv_savepath = os.path.join(os.path.dirname(one_of_filepath), "debug_combined_df.csv")  
@@ -86,6 +81,7 @@ def first_processing_for_flim_files(
 
     print("=== END DATA VALIDATION ===\n")
 
+    combined_df["error_message"] = None
     # Process each group
     for each_filepath_without_number in combined_df['filepath_without_number'].unique():
         print("--------------------------------------------------------------\n"*5)
@@ -138,33 +134,33 @@ def first_processing_for_flim_files(
             # Process small regions
             for each_set_label in each_group_df["nth_set_label"].unique():
                 if each_set_label == -1:
+                    combined_df.loc[each_group_df.index, "error_message"] = "each_set_label == -1"
+                    error_dict[each_set_label] = "each_set_label == -1"
                     continue
 
                 each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
 
                 if len(each_set_df) < 3:
                     print(f"len(each_set_df): {len(each_set_df)}")
+                    combined_df.loc[each_group_df.index, "error_message"] = f"len(each_set_df) was {len(each_set_df)} < 3"
+                    error_dict[each_set_label] = f"len(each_set_df) was {len(each_set_df)} < 3"
                     print("do not analyze this")
-                    # Mark this set as rejected in combined_df
-                    combined_df.loc[each_set_df.index, "rejected"] = True
-                    combined_df.loc[each_set_df.index, "rejection_reason"] = f"Insufficient data: only {len(each_set_df)} rows found (minimum 3 required)"
                     continue
 
                 print("for debug, each_set_label\n", each_set_label)
-                print("for debug, each_set_df\n", each_set_df)
+                print("for debug, process_small_region")
+                print("Aligned_4d_array.shape\n", Aligned_4d_array.shape)
                 try:
                     small_Tiff_MultiArray, small_Aligned_4d_array, corrected_positions, each_set_df = process_small_region(
                             each_set_df, Aligned_4d_array
                             )
-                    print("for debug, corrected_positions\n", corrected_positions)
-                except (ValueError, Exception) as e:
-                    error_msg = str(e)
-                    print(f"ERROR: Failed to process small region for set_label {each_set_label}, group {each_group}: {error_msg}")
-                    print(f"Skipping this set and continuing with other sets...")
-                    # Mark this set as rejected in combined_df
-                    combined_df.loc[each_set_df.index, "rejected"] = True
-                    combined_df.loc[each_set_df.index, "rejection_reason"] = f"Image misalignment too large: {error_msg}"
+                except:
+                    print("error at process_small_region, continue")
+                    error_dict[each_set_label] = "error at process_small_region"
+                    combined_df.loc[each_group_df.index, "error_message"] = "error at process_small_region"
                     continue
+
+                print("for debug, corrected_positions\n", corrected_positions)
 
 
                 # Update combined_df with small region boundaries and small shifts
@@ -186,6 +182,7 @@ def first_processing_for_flim_files(
                     print(f"last_pre_frame[each_col]: {last_pre_frame[each_col]}")
                     combined_df.loc[each_set_df_unc_or_titration.index, each_col] = last_pre_frame[each_col]                
                 #### till here 20250707
+
 
                 list_of_save_path = save_small_region_plots(
                     small_Aligned_4d_array,
@@ -236,6 +233,8 @@ def first_processing_for_flim_files(
         for each_group in combined_df['group'].unique():
             each_group_df = combined_df[combined_df['group'] == each_group]
             for each_set_label in each_group_df["nth_set_label"].unique():
+                if each_group_df.loc[each_group_df["nth_set_label"] == each_set_label, "error_message"].values[0] is not None:
+                    continue
                 if each_set_label == -1:
                     continue
                 max_nth_omit_ind_before_unc = each_group_df[each_group_df["phase"] == "pre"]["nth_omit_induction"].max()
@@ -249,7 +248,10 @@ def first_processing_for_flim_files(
                 max_proj = after_align_tiff.max(axis=0)
                 plt.imshow(max_proj, cmap="gray")
                 plt.show()
-    return combined_df
+    if return_error_dict:
+        return combined_df, error_dict
+    else:
+        return combined_df
 
 
 def shift_coords_small_to_full_for_each_rois(combined_df, z_plus_minus,
@@ -536,13 +538,6 @@ def process_small_region(
         small_y_from:small_y_to,
         small_x_from:small_x_to
     ]
-    
-    # Check if the extracted array has valid dimensions (no zero-sized dimensions)
-    if 0 in small_Tiff_MultiArray.shape:
-        error_msg = f"Invalid array shape {small_Tiff_MultiArray.shape} detected. Image misalignment too large. Skipping this set."
-        print(f"WARNING: {error_msg}")
-        raise ValueError(error_msg)
-    
     small_shifts, small_Aligned_4d_array = Align_4d_array(small_Tiff_MultiArray)
 
     # Store individual shift values for each frame
