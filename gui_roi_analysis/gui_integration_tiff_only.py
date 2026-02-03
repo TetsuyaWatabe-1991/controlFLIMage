@@ -195,22 +195,40 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
 
     # Get uncaging position information from the filtered dataframe
     uncaging_info = {}
+    first_row = filtered_df.iloc[0]
+    
     if 'corrected_uncaging_x' in filtered_df.columns and 'corrected_uncaging_y' in filtered_df.columns:
         # Get uncaging position from the first row (same for all rows in a set)
-        first_row = filtered_df.iloc[0]
         if pd.notna(first_row.get('corrected_uncaging_x')) and pd.notna(first_row.get('corrected_uncaging_y')):
-            # These are already corrected to small region coordinates
-            small_x_from = first_row.get('small_x_from', 0)
-            small_y_from = first_row.get('small_y_from', 0)
-            corrected_uncaging_x = first_row.get('corrected_uncaging_x', 0)
-            corrected_uncaging_y = first_row.get('corrected_uncaging_y', 0)
-
-            # Convert to small region coordinates
+            # If uncaging_display_x/y are set (e.g. full-size ROI TIFF), use them directly; else convert to small region
+            if ('uncaging_display_x' in filtered_df.columns and 'uncaging_display_y' in filtered_df.columns and
+                    pd.notna(first_row.get('uncaging_display_x')) and pd.notna(first_row.get('uncaging_display_y'))):
+                uncaging_info = {
+                    'x': float(first_row.get('uncaging_display_x', 0)),
+                    'y': float(first_row.get('uncaging_display_y', 0)),
+                    'has_uncaging': True
+                }
+            else:
+                small_x_from = first_row.get('small_x_from', 0)
+                small_y_from = first_row.get('small_y_from', 0)
+                corrected_uncaging_x = first_row.get('corrected_uncaging_x', 0)
+                corrected_uncaging_y = first_row.get('corrected_uncaging_y', 0)
+                uncaging_info = {
+                    'x': corrected_uncaging_x - small_x_from,
+                    'y': corrected_uncaging_y - small_y_from,
+                    'has_uncaging': True
+                }
+        else:
+            uncaging_info = {'has_uncaging': False}
+    elif 'center_x' in filtered_df.columns and 'center_y' in filtered_df.columns:
+        # For transient data: use center_x / center_y directly (no small region cropping)
+        if pd.notna(first_row.get('center_x')) and pd.notna(first_row.get('center_y')):
             uncaging_info = {
-                'x': corrected_uncaging_x - small_x_from,
-                'y': corrected_uncaging_y - small_y_from,
+                'x': first_row.get('center_x', 0),
+                'y': first_row.get('center_y', 0),
                 'has_uncaging': True
             }
+            print(f"  Uncaging position: ({uncaging_info['x']:.1f}, {uncaging_info['y']:.1f}) pixels")
         else:
             uncaging_info = {'has_uncaging': False}
     else:

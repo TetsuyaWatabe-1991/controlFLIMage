@@ -31,15 +31,16 @@ from plot_timestamp_utils import save_plot_timestamp_to_ini, should_regenerate_g
 
 # %%
 
-yn = ask_yes_no_gui("Do without asking?")
-Do_without_asking = yn
+Do_without_asking = False
 
 skip_gui_TF = False
 Do_lifetime_analysis_TF = False
 Do_GCaMP_analysis_TF = True
 roi_define_from_S_TF = False
 
-pre_defined_df_TF = True
+flim_file_select_dialog_TF = True
+
+pre_defined_df_TF = False
 df_defined_path = r"G:\ImagingData\Tetsuya\20260110\auto1\combined_df.pkl"
 
 skip_plot_if_not_updated = True
@@ -58,10 +59,15 @@ fixed_tau1 = 2.6
 fixed_tau2 = 1.1
 pre_intensity_fold_exclude_threshold = 1.4
 
-one_of_filepath_list = [
-r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260110\test_auto1\1_pos1__highmag_1_002.flim",
-# r"G:\ImagingData\Tetsuya\20251108\basal__highmag_7_081.flim"
-]
+
+if flim_file_select_dialog_TF:
+    one_of_filepath = ask_open_path_gui(filetypes=[("FLIM files","*.flim")])
+    one_of_filepath_list = [one_of_filepath]
+else:
+    one_of_filepath_list = [
+        r"C:\Users\WatabeT\Desktop\20260110\auto1\AP5_3_pos1__highmag_1_002.flim",
+        # r"G:\ImagingData\Tetsuya\20251108\basal__highmag_7_081.flim"
+    ]
 
 save_plot_TF = True
 save_tif_TF = True
@@ -73,8 +79,8 @@ error_dict_combined = {}
 
 # if False:
 if Do_without_asking == False:
-    yn = ask_yes_no_gui("Do you already have combined_df_1.pkl?")
-    if yn:
+    yn_already_have_combined_df = ask_yes_no_gui("Do you already have combined_df_1.pkl?")
+    if yn_already_have_combined_df:
         df_save_path_1 = ask_open_path_gui()
         print(f"Loading data from: {df_save_path_1}")
         combined_df = pd.read_pickle(df_save_path_1)
@@ -85,15 +91,15 @@ else:
     else:
         df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df_1.pkl")
 
-if Do_without_asking == False:
+if yn_already_have_combined_df == False:
+    yn1 = True
+
+elif Do_without_asking == False: #keep this block for future use
     yn1 = ask_yes_no_gui("Do you want to run the data preparation step?")
-    if (yn1 == False) and (yn == False):
+    if (yn1 == False) and (yn_already_have_combined_df == False):
         raise Exception("dataframe is not loaded. You do not define it.")
 
-if (Do_without_asking == True) and (pre_defined_df_TF == True):
-    print("skipping data preparation step")
-
-elif (Do_without_asking == True) or (yn1 == True):  
+if (Do_without_asking == True) or (yn1 == True):  
     combined_df = pd.DataFrame()
     for one_of_filepath in one_of_filepath_list:
         print(f"\n\n\n Processing ... \n\n{one_of_filepath}\n\n\n")
@@ -221,7 +227,17 @@ if yn2:
             if each_set_label == -1:
                 continue
 
-            temp_tiff_path = each_group_df[(each_group_df['nth_set_label'] == each_set_label)]["after_align_save_path"].values[0]
+            filtered_df = each_group_df[each_group_df['nth_set_label'] == each_set_label]
+            if len(filtered_df) == 0:
+                continue
+            
+            temp_tiff_path = filtered_df["after_align_save_path"].values[0]
+            
+            # Check if temp_tiff_path is NaN or None
+            if pd.isna(temp_tiff_path) or not isinstance(temp_tiff_path, (str, bytes)):
+                print(f"Warning: Invalid or missing TIFF path for Set: {each_set_label}")
+                continue
+                
             if not os.path.exists(temp_tiff_path):
                 print(f"Warning: TIFF file not found: {temp_tiff_path}")
                 continue
@@ -338,7 +354,17 @@ for each_filepath in combined_df['filepath_without_number'].unique():
             continue
         
         # Get the original TIFF path
-        original_tiff_path = each_group_df[each_group_df['nth_set_label'] == each_set_label]["after_align_save_path"].values[0]
+        filtered_df = each_group_df[each_group_df['nth_set_label'] == each_set_label]
+        if len(filtered_df) == 0:
+            continue
+            
+        original_tiff_path = filtered_df["after_align_save_path"].values[0]
+        
+        # Check if original_tiff_path is NaN or None
+        if pd.isna(original_tiff_path) or not isinstance(original_tiff_path, (str, bytes)):
+            print(f"Warning: Invalid or missing TIFF path for Set: {each_set_label}")
+            continue
+        
         tiff_dir = os.path.dirname(original_tiff_path)
         tiff_basename = os.path.basename(original_tiff_path)
         tiff_basename_no_ext = os.path.splitext(tiff_basename)[0]

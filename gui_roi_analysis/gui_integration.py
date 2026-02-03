@@ -30,24 +30,30 @@ def first_processing_for_flim_files(
     # Load initial data
 
     error_dict = {}
+    folder = os.path.dirname(one_of_filepath)
     one_of_file_list = glob.glob(
-        os.path.join(
-            os.path.dirname(one_of_filepath),
-            "*_highmag_*002.flim"
-            )
-        )
+        os.path.join(folder, "*_highmag_*002.flim")
+    )
     one_of_file_list = [each_file for each_file in one_of_file_list if not any(ignore_word in each_file for ignore_word in ignore_words)]
+    # Ensure the selected file's group is included: add its group's 002 file if present (so e.g. for_align_*003.flim -> add for_align_*002.flim)
+    if one_of_filepath and one_of_filepath.endswith(".flim") and len(one_of_filepath) > 8:
+        base = one_of_filepath[:-8]  # strip _XXX.flim (e.g. _003.flim)
+        first_in_group = base + "002.flim"
+        if os.path.isfile(first_in_group) and first_in_group not in one_of_file_list:
+            one_of_file_list.append(first_in_group)
 
-    plot_savefolder = os.path.join(os.path.dirname(one_of_filepath), "png")
-    tif_savefolder = os.path.join(os.path.dirname(one_of_filepath), "tif")
-    roi_savefolder = os.path.join(os.path.dirname(one_of_filepath), "roi")
+    plot_savefolder = os.path.join(folder, "png")
+    tif_savefolder = os.path.join(folder, "tif")
+    roi_savefolder = os.path.join(folder, "roi")
     for each_folder in [plot_savefolder, tif_savefolder, roi_savefolder]:
         os.makedirs(each_folder, exist_ok=True)
 
     combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length)
-    
+    if len(combined_df) > 0 and "after_align_save_path" not in combined_df.columns:
+        combined_df["after_align_save_path"] = None
+
     #for debug
-    csv_savepath = os.path.join(os.path.dirname(one_of_filepath), "debug_combined_df.csv")  
+    csv_savepath = os.path.join(folder, "debug_combined_df.csv")  
     combined_df.to_csv(csv_savepath, index=False)
     # print(f"Saved combined_df to {csv_savepath}")
     # input("Press Enter to continue...")
@@ -900,9 +906,10 @@ def launch_roi_analysis_gui(combined_df, tiff_data_path, each_group, each_set_la
 
     # Get uncaging position information from the filtered dataframe
     uncaging_info = {}
+    first_row = filtered_df.iloc[0]
+    
     if 'corrected_uncaging_x' in filtered_df.columns and 'corrected_uncaging_y' in filtered_df.columns:
         # Get uncaging position from the first row (same for all rows in a set)
-        first_row = filtered_df.iloc[0]
         if pd.notna(first_row.get('corrected_uncaging_x')) and pd.notna(first_row.get('corrected_uncaging_y')):
             # These are already corrected to small region coordinates
             small_x_from = first_row.get('small_x_from', 0)
@@ -916,6 +923,17 @@ def launch_roi_analysis_gui(combined_df, tiff_data_path, each_group, each_set_la
                 'y': corrected_uncaging_y - small_y_from,
                 'has_uncaging': True
             }
+        else:
+            uncaging_info = {'has_uncaging': False}
+    elif 'center_x' in filtered_df.columns and 'center_y' in filtered_df.columns:
+        # For transient data: use center_x / center_y directly (no small region cropping)
+        if pd.notna(first_row.get('center_x')) and pd.notna(first_row.get('center_y')):
+            uncaging_info = {
+                'x': first_row.get('center_x', 0),
+                'y': first_row.get('center_y', 0),
+                'has_uncaging': True
+            }
+            print(f"  Uncaging position: ({uncaging_info['x']:.1f}, {uncaging_info['y']:.1f}) pixels")
         else:
             uncaging_info = {'has_uncaging': False}
     else:

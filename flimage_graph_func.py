@@ -9,7 +9,7 @@ import sys
 sys.path.append(r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLIMage")
 import os
 import numpy as np
-import matplotlib.pyplot as plt
+from custom_plot import plt
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 from skimage.draw import disk, polygon
@@ -185,7 +185,9 @@ def plot_max_proj_uncaging(
 def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0, 
                     from_Thorlab_to_coherent_factor = 1/3,
                     vmin = 1, vmax = 10, cmap='inferno', 
-                    acceptable_image_shape_0th_list = [4,32, 33,34]):
+                    GCaMP_intensity_threshold = 0,
+                    acceptable_image_shape_0th_list = [4,32, 33,34],
+                    plot_RFP_also = False):
     uncaging_iminfo = FileReader()
     uncaging_iminfo.read_imageFile(each_file, True) 
     
@@ -204,20 +206,23 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
     if imagearray.shape[0] in [4, 33, 34]:
         GCpre = imagearray[0,0,0,:,:,:].sum(axis=-1)
         GCunc = imagearray[3,0,0,:,:,:].sum(axis=-1)
+        RFPpre = imagearray[0, 0, 1, :, :, :].sum(axis=-1)
     elif imagearray.shape[0] in [32]:
         GCpre = imagearray[8*0 + 1 : 8*1, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
         GCunc = imagearray[8*3 + 1 : 8*4, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+        RFPpre = imagearray[8*0 + 1 : 8*1, 0, 1, :, :, :].sum(axis=-1).sum(axis=0)
     assert len(GCpre.shape) == 2 #Image should be 2D
 
- 
+
+
     GC_pre_med = median_filter(GCpre, size=3)
     GC_unc_med = median_filter(GCunc, size=3)
     
     GCF_F0 = (GC_unc_med/GC_pre_med)
-    GCF_F0[GC_pre_med == 0] = 0
+    GCF_F0[GC_pre_med <= GCaMP_intensity_threshold] = 0
        
     pow_mw = slope * uncaging_pow + intercept
-    pow_mw_coherent = pow_mw/3
+    pow_mw_coherent = pow_mw*from_Thorlab_to_coherent_factor
     pow_mw_round = round(pow_mw_coherent,1)
        
     plt.imshow(GCF_F0, cmap = cmap, vmin = vmin, vmax = vmax)
@@ -241,6 +246,17 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
     
     color_fue(savefolder = savefolder,
               vmin =vmin, vmax=vmax, cmap=cmap, label_text = "F/F0")
+    
+    if plot_RFP_also:        
+        plt.imshow(RFPpre, cmap='gray', vmin=0)
+        plt.plot(center_x, center_y, 'co', markersize=4)
+        plt.title("RFP")
+        plt.axis('off')
+        savepath = os.path.join(savefolder, basename[:-5] + "_RFP.png")
+        plt.savefig(savepath, dpi=150, bbox_inches = "tight")
+        print("RFP_savepath ", savepath)
+        plt.show()
+        plt.close(); plt.clf();plt.close("all");
 
 
 def plot_GCaMP_and_RFP(each_file, slope = 0, intercept = 0, 

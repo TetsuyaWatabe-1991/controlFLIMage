@@ -11,7 +11,7 @@ from datetime import datetime
 
 def get_uncaging_pos_multiple(one_of_file_list, 
                               pre_length = 1,
-                              uncaging_frame_num = [33,34, 35],
+                              uncaging_frame_num = [33, 34, 35, 55],  # 55 = common uncaging time-series length
                               titration_frame_num = [32]):
     combined_df = pd.DataFrame()
     for each_firstfilepath in one_of_file_list:

@@ -399,12 +399,26 @@ class FileSelectionGUI(QMainWindow):
                         (self.combined_df['nth_set_label'] == set_label)
                     ]
                     
-                    # Get TIFF path
+                    # Get TIFF path (from DataFrame, or infer from conventional paths if missing)
                     tiff_path = ""
                     if 'after_align_save_path' in group_set_df.columns:
                         tiff_paths = group_set_df['after_align_save_path'].dropna()
                         if len(tiff_paths) > 0:
-                            tiff_path = tiff_paths.iloc[0]
+                            tiff_path = str(tiff_paths.iloc[0])
+                    if not tiff_path and len(group_set_df) > 0:
+                        # Fallback: try conventional Z-stack or transient TIFF paths
+                        base_folder = ""
+                        if 'file_path' in group_set_df.columns:
+                            first_path = group_set_df['file_path'].iloc[0]
+                            if pd.notna(first_path) and str(first_path).strip():
+                                base_folder = os.path.dirname(str(first_path))
+                        if base_folder:
+                            path_z = os.path.join(base_folder, "tif", f"{display_group}_set{set_label}_after_align.tif")
+                            path_tr = os.path.join(base_folder, "tif_transient", f"{display_group}_set{set_label}.tif")
+                            if os.path.exists(path_z):
+                                tiff_path = path_z
+                            elif os.path.exists(path_tr):
+                                tiff_path = path_tr
                     
                     # Get full_plot_with_roi_path for View Plot button
                     plot_path = ""

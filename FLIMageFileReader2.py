@@ -109,6 +109,7 @@ class FileReader:
                     try:
                         exec('self.' + eq[0] + ' = ' + eq[1])
                     except:
+                        print("error 0203  eq",eq)
                         print(f"Error in decode_header: {eq}")
     
     def decode_header(self, header, new = True):
@@ -135,6 +136,7 @@ class FileReader:
             if "State." in info:
                 keyitem = info.split(' = ')
                 try:
+                    keyitem[1] = keyitem[1].replace('?','0')
                     if "[" in keyitem[1]:
                         keyitem[1] = ast.literal_eval(keyitem[1].replace('NaN','0'))
                     else:
@@ -702,7 +704,7 @@ if __name__ == "__main__":
     # FLIMageCont = Control_flimage()
     # FLIMageCont.flim.sendCommand(f"SetUncagingLocation, 50, 50")
     # file_path = r"G:\ImagingData\Tetsuya\20241204\test_uncaging_015.flim"
-    file_path = r"Z:\Users\Tony\jREXGECO\good\power7per\250528_JREXGECO_S1_CA3_c_power7002a.flim"
+    file_path = r"C:\Users\WatabeT\Desktop\temp2\BrUSGFP_7_pos1__highmag_1_002.flim"
     
     # for i in range(40):
     #     try:
