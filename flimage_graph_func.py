@@ -185,9 +185,14 @@ def plot_max_proj_uncaging(
 def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0, 
                     from_Thorlab_to_coherent_factor = 1/3,
                     vmin = 1, vmax = 10, cmap='inferno', 
+<<<<<<< HEAD
                     GCaMP_intensity_threshold = 0,
                     acceptable_image_shape_0th_list = [4,32, 33,34],
                     plot_RFP_also = False):
+=======
+                    acceptable_image_shape_0th_list = [4,32, 33,34],
+                    GCaMP_ch_1or2 = 1):
+>>>>>>> 02337473856801cc14b3969916012619cd065a9d
     uncaging_iminfo = FileReader()
     uncaging_iminfo.read_imageFile(each_file, True) 
     
@@ -204,6 +209,7 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
     center_x = imagearray.shape[-3] * uncaging_x_y_0to1[0]
     
     if imagearray.shape[0] in [4, 33, 34]:
+<<<<<<< HEAD
         GCpre = imagearray[0,0,0,:,:,:].sum(axis=-1)
         GCunc = imagearray[3,0,0,:,:,:].sum(axis=-1)
         RFPpre = imagearray[0, 0, 1, :, :, :].sum(axis=-1)
@@ -211,6 +217,13 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
         GCpre = imagearray[8*0 + 1 : 8*1, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
         GCunc = imagearray[8*3 + 1 : 8*4, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
         RFPpre = imagearray[8*0 + 1 : 8*1, 0, 1, :, :, :].sum(axis=-1).sum(axis=0)
+=======
+        GCpre = imagearray[0,0,GCaMP_ch_1or2-1,:,:,:].sum(axis=-1)
+        GCunc = imagearray[3,0,GCaMP_ch_1or2-1,:,:,:].sum(axis=-1)
+    elif imagearray.shape[0] in [32]:
+        GCpre = imagearray[8*0 + 1 : 8*1, 0,GCaMP_ch_1or2-1,:,:,:].sum(axis=-1).sum(axis=0)
+        GCunc = imagearray[8*3 + 1 : 8*4, 0,GCaMP_ch_1or2-1,:,:,:].sum(axis=-1).sum(axis=0)
+>>>>>>> 02337473856801cc14b3969916012619cd065a9d
     assert len(GCpre.shape) == 2 #Image should be 2D
 
 
