@@ -3,6 +3,7 @@ import sys
 sys.path.append('..\\')
 import os
 import glob
+from pathlib import Path
 import pandas as pd
 from FLIMageAlignment import get_flimfile_list, get_xyz_pixel_um
 from FLIMageFileReader2 import FileReader
@@ -15,13 +16,35 @@ def get_uncaging_pos_multiple(one_of_file_list,
                               titration_frame_num = [32]):
     combined_df = pd.DataFrame()
     for each_firstfilepath in one_of_file_list:
-        filelist= get_flimfile_list(each_firstfilepath)
-        First=True
+        filelist = get_flimfile_list(each_firstfilepath)
+        # Deduplicate by resolved path (Z:/a/x.flim and Z:\a\x.flim must become the same key on Windows)
+        seen_norm = {}
+        filelist_dedup = []
+        for p in filelist:
+            try:
+                key = str(Path(p).resolve())
+            except (OSError, RuntimeError):
+                key = os.path.normpath(os.path.abspath(p))
+            if key not in seen_norm:
+                seen_norm[key] = p
+                filelist_dedup.append(p)
+        filelist = filelist_dedup
+
+        First = True
         nth = -1
         nth_omit_induction = -1
         each_group_df = pd.DataFrame()
-    
+        seen_resolved_path = set()  # avoid duplicate rows for same file (e.g. path with / vs \\)
+
         for file_path in filelist:
+            try:
+                path_key = str(Path(file_path).resolve())
+            except (OSError, RuntimeError):
+                path_key = os.path.normpath(os.path.abspath(file_path))
+            if path_key in seen_resolved_path:
+                print(file_path, "<- skipped (duplicate resolved path)")
+                continue
+            seen_resolved_path.add(path_key)
             nth += 1
             iminfo = FileReader()
             print(file_path)
@@ -103,10 +126,9 @@ def get_uncaging_pos_multiple(one_of_file_list,
         titration_nth_list = each_group_df[each_group_df["titration_frame"]]["nth"].tolist()
         unknown_nth_list = each_group_df[each_group_df["unknown_frame"]]["nth"].tolist()
 
-        
-        all_nth = sorted(uncaging_nth_list + titration_nth_list)
-        boundary_nth_list = [all_nth[i] for i in range(len(all_nth)) if i == 0 or all_nth[i] != all_nth[i-1] + 1]
-
+        # One set per uncaging: boundary = pre_length frames before each uncaging;
+        # set spans [boundary, next boundary) so post = from after uncaging until next pre/unc.
+        boundary_nth_list = sorted(uncaging_nth_list)
         boundaries = [x - pre_length for x in boundary_nth_list]
         boundaries.append(len(each_group_df) + 1)
 

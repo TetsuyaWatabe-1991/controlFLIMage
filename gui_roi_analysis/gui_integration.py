@@ -1,6 +1,7 @@
 # %%
 import sys
 import os
+from pathlib import Path
 sys.path.append("..\\")
 sys.path.append(os.path.dirname(__file__))
 import glob
@@ -15,6 +16,28 @@ from FLIMageAlignment import Align_4d_array, flim_files_to_nparray
 from roi_analysis_gui import ROIAnalysisGUI
 
 SHIFT_DIRECTION = -1 # +1: shift to the right, -1: shift to the left
+
+
+def _filelist_dedup_by_resolved_path(file_path_series):
+    """Deduplicate file paths by resolved path (so / vs \\ do not create duplicates)."""
+    seen = set()
+    out = []
+    for p in file_path_series:
+        try:
+            key = str(Path(p).resolve())
+        except (OSError, RuntimeError):
+            key = os.path.normpath(os.path.abspath(p))
+        if key not in seen:
+            seen.add(key)
+            out.append(p)
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Bug hunting only: set True to print/save details when "Multiple uncaging rows"
+# occurs. Remove this block or set False when done.
+# -----------------------------------------------------------------------------
+DEBUG_MULTIPLE_UNCAGING = True
 
 def first_processing_for_flim_files(
     one_of_filepath,
@@ -98,7 +121,8 @@ def first_processing_for_flim_files(
         for each_group in each_filegroup_df['group'].unique():
             each_group_df = each_filegroup_df[each_filegroup_df['group'] == each_group]
 
-            filelist = each_group_df["file_path"].tolist()
+            # Use resolved path so duplicate rows (e.g. / vs \\) do not load the same file twice
+            filelist = _filelist_dedup_by_resolved_path(each_group_df["file_path"])
             # Load and align data
             Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=ch_1or2 - 1)
             print("for debug, load and align data, shifts\n", shifts)
@@ -411,9 +435,28 @@ def process_uncaging_positions(
             print(f"No uncaging data found for group {each_group_df['group'].iloc[0]}, set {each_set_label}")
             continue
         if len(each_set_unc_row) > 1:
-            print(f"for debug, each_set_label: {each_set_label}")
-            print(f"each_set_df\n", each_set_df)
-            assert False, "Multiple uncaging rows found for group {each_group_df['group'].iloc[0]}, set {each_set_label}"
+            grp = each_group_df["group"].iloc[0]
+            if DEBUG_MULTIPLE_UNCAGING:
+                print("\n" + "=" * 60)
+                print("DEBUG_MULTIPLE_UNCAGING: Multiple uncaging rows")
+                print("=" * 60)
+                print(f"group: {grp}")
+                print(f"nth_set_label: {each_set_label}")
+                print(f"number of uncaging rows: {len(each_set_unc_row)}")
+                if "file_path" in each_set_unc_row.columns:
+                    for i, (_, row) in enumerate(each_set_unc_row.iterrows()):
+                        print(f"  uncaging row[{i}]: nth={row.get('nth', '?')} file_path={row.get('file_path', '?')}")
+                # Save full sub-DataFrame to CSV so you can open it (no truncation)
+                safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in str(grp))[:40]
+                out_dir = os.path.dirname(each_set_unc_row["file_path"].iloc[0]) if "file_path" in each_set_unc_row.columns and len(each_set_unc_row) else "."
+                debug_csv = os.path.join(out_dir, f"debug_multiple_uncaging_{safe}_set{each_set_label}.csv")
+                try:
+                    each_set_df.to_csv(debug_csv, index=False)
+                    print(f"Saved: {debug_csv}")
+                except Exception as e:
+                    print(f"Could not save debug CSV: {e}")
+                print("=" * 60 + "\n")
+            assert False, f"Multiple uncaging rows found for group {grp}, set {each_set_label}"
 
         last_pre_frame = each_set_df[each_set_df["phase"] == "pre"].iloc[-1]
         nth_omit_induction_last_pre_frame = last_pre_frame["nth_omit_induction"]
@@ -712,7 +755,7 @@ def temp_add_align_info(
     # Process each group
     for each_group in combined_df['group'].unique():
         each_group_df = combined_df[combined_df['group'] == each_group]
-        filelist = each_group_df["file_path"].tolist()
+        filelist = _filelist_dedup_by_resolved_path(each_group_df["file_path"])
 
         # Load and align data
         Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=ch_1or2 - 1)
@@ -1543,7 +1586,7 @@ def create_roi_analysis_workflow(plot_savefolder, tif_savefolder, one_of_filepat
 
         # Get the group dataframe
         each_group_df = combined_df[combined_df['group'] == each_group]
-        filelist = each_group_df["file_path"].tolist()
+        filelist = _filelist_dedup_by_resolved_path(each_group_df["file_path"])
 
         # Load and align data
         Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=ch_1or2 - 1)

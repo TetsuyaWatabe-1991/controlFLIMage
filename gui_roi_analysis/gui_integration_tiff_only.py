@@ -21,7 +21,7 @@ def save_roi_mask_from_gui_to_tiff(gui_instance, save_path, header="ROI"):
     """Save ROI masks from GUI instance directly to a 3D 1-bit TIFF file.
     
     Args:
-        gui_instance: Instance of ROIAnalysisGUI containing ROI data
+        gui_instance: Instance of ROIAnalysisGUI or ROIAnalysisGUIWithViewMode containing ROI data
         save_path: Path where the TIFF file should be saved
         header: Header string used for column names (default: "ROI")
     
@@ -114,7 +114,7 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
     """
     from PyQt5.QtWidgets import QApplication
     from PyQt5.QtCore import Qt, QEventLoop
-    from roi_analysis_gui import ROIAnalysisGUI
+    from roi_analysis_gui_view_mode import ROIAnalysisGUIWithViewMode
     import sys
     
     # Load the TIFF data
@@ -251,6 +251,27 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
     # Add group and set information
     file_info['group'] = each_group
     file_info['set_label'] = each_set_label
+    # Pass TIFF path so GUI can check for existing ROI mask and start in View mode if present
+    file_info['tiff_data_path'] = tiff_data_path
+
+    # Load per-frame info from *_after_align_full_frame_info.csv if present (for per-frame display)
+    frame_info_path = os.path.join(
+        os.path.dirname(tiff_data_path),
+        os.path.splitext(os.path.basename(tiff_data_path))[0] + "_frame_info.csv"
+    )
+    if os.path.exists(frame_info_path):
+        try:
+            frame_info_df = pd.read_csv(frame_info_path)
+            required = ["frame", "filename", "phase"]
+            if all(c in frame_info_df.columns for c in required):
+                file_info["frame_info_df"] = frame_info_df
+            else:
+                file_info["frame_info_df"] = None
+        except Exception as e:
+            print(f"  Could not load frame_info CSV: {e}")
+            file_info["frame_info_df"] = None
+    else:
+        file_info["frame_info_df"] = None
 
     # Check if QApplication already exists
     app = QApplication.instance()
@@ -264,7 +285,7 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
         print("Using existing QApplication instance")
 
     # Create GUI window with additional information and header
-    window = ROIAnalysisGUI(filtered_df, after_align_tiff_data, max_proj_image, uncaging_info, file_info, header=header)
+    window = ROIAnalysisGUIWithViewMode(filtered_df, after_align_tiff_data, max_proj_image, uncaging_info, file_info, header=header)
 
     # Store the filtered dataframe in the GUI instance for verification during saving
     window.filtered_df = filtered_df

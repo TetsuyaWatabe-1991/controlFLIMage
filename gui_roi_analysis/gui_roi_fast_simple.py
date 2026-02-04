@@ -41,28 +41,20 @@ from gui_integration import (
     process_uncaging_positions,
 )
 from file_selection_gui_tiff_only import launch_file_selection_gui_tiff_only
-from simple_dialog import ask_yes_no_gui, ask_open_path_gui
+from simple_dialog import ask_yes_no_gui, ask_open_path_gui, ask_save_path_gui
 
 # -----------------------------------------------------------------------------
 # TEST CONFIG: fixed path, no predefined df, no dialogs
 # -----------------------------------------------------------------------------
-TEST_MODE = True
-TEST_FLIM_PATH = r"C:\Users\WatabeT\Desktop\temp2\mChGFP_1_pos1__highmag_1_002.flim"
+TEST_MODE = False
+TEST_FLIM_PATH = r"C:\Users\WatabeT\Desktop\temp2\BrUSGFP_7_pos1__highmag_1_002.flim"
 # first_processing uses glob "*_highmag_*002.flim" in the folder; if 002 is missing,
 # we pass the folder's first FLIM (e.g. 004) so get_uncaging_pos_multiple still gets
 # the full group via get_flimfile_list(004) -> 001,002,...,004.
 
-Do_without_asking = True if TEST_MODE else False
-# Set skip_gui_TF = True to run without opening GUI (e.g. quick test from terminal)
-skip_gui_TF = False
-pre_defined_df_TF = False
-df_defined_path = None
 
-ch_1or2 = 1
-z_plus_minus = 2
-pre_length = 1
-save_plot_TF = True
-save_tif_TF = True
+SAVE_PLOT_TF = True
+SAVE_TIF_TF = True
 
 TIFF_WITH_UNCAGING_SUFFIX = "_with_uncaging"
 ROI_MASK_RAW_SUFFIX = "_roi_mask_raw"
@@ -70,8 +62,6 @@ ROI_TYPES = ["Spine", "DendriticShaft", "Background"]
 
 # Lifetime fitting (transient_roi_analysis style)
 SYNC_RATE = 80e6  # Hz
-PHOTON_THRESHOLD = 15
-TOTAL_PHOTON_THRESHOLD = 1000
 
 
 def _parse_acq_time(acq_time_str: str) -> datetime:
@@ -649,8 +639,8 @@ def quantify_intensity_from_flim(
     z_plus_minus: int,
     output_csv_path: str,
     sync_rate: float = SYNC_RATE,
-    photon_threshold: int = PHOTON_THRESHOLD,
-    total_photon_threshold: int = TOTAL_PHOTON_THRESHOLD,
+    photon_threshold: int = 15,
+    total_photon_threshold: int = 1000,
 ):
     """
     Quantify intensity and lifetime from FLIM. Per FLIM file, per frame, per Ch, per ROI.
@@ -802,8 +792,33 @@ def quantify_intensity_from_flim(
     return out_df
 
 
-def main():
+def run_tiff_uncaging_roi(
+    ch_1or2 = 1,
+    z_plus_minus = 2,
+    pre_length = 2,
+    photon_threshold: int = 15,
+    total_photon_threshold: int = 1000,
+):
+    """
+    Run the full TIFF uncaging ROI workflow: first_processing, full-size stack build,
+    GUI for ROI definition, drift-corrected ROI masks, intensity/lifetime quantification.
+    Call from other modules with e.g. run_tiff_uncaging_roi(photon_threshold=20).
+    """
+    summary_str = ""
+    summary_str += datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n"
+    summary_str += f"ch_1or2: {ch_1or2}\n"
+    summary_str += f"z_plus_minus: {z_plus_minus}\n"
+    summary_str += f"pre_length: {pre_length}\n"
+    summary_str += f"SAVE_PLOT_TF: {SAVE_PLOT_TF}\n"
+    summary_str += f"SAVE_TIF_TF: {SAVE_TIF_TF}\n"
+    summary_str += f"SYNC_RATE: {SYNC_RATE}\n"
+    summary_str += f"photon_threshold: {photon_threshold}\n"
+    summary_str += f"total_photon_threshold: {total_photon_threshold}\n"
+    summary_str += "="*60+"\n"
+
     if TEST_MODE:
+        Do_without_asking = False
+        skip_gui_TF = False
         flim_file_select_dialog_TF = False
         # first_processing globs "*_highmag_*002.flim"; use 002 if present so the group is found
         base = TEST_FLIM_PATH[:-8]
@@ -832,9 +847,28 @@ def main():
             return
         one_of_filepath_list = [one_of_filepath]
 
+    summary_str += f"one_of_filepath: {one_of_filepath_list}\n"
+
     if not one_of_filepath_list:
         print("No FLIM path. Exiting.")
         return
+
+    # Deduplicate by group (filepath_without_number): keep one path per group so
+    # first_processing is not run twice for the same folder (avoids duplicate rows
+    # and "Multiple uncaging rows" / double file list).
+    seen_groups = {}
+    deduped = []
+    for p in one_of_filepath_list:
+        if len(p) > 8 and p.endswith(".flim"):
+            base = os.path.normpath(p[:-8])
+        else:
+            base = p
+        if base not in seen_groups:
+            seen_groups[base] = p
+            deduped.append(p)
+    if len(deduped) < len(one_of_filepath_list):
+        print(f"Deduplicated FLIM list: {len(one_of_filepath_list)} -> {len(deduped)} paths (one per group).")
+    one_of_filepath_list = deduped
 
     # No predefined df in test: always run first_processing
     df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df_1.pkl")
@@ -859,8 +893,8 @@ def main():
                     z_plus_minus,
                     ch_1or2,
                     pre_length=pre_length,
-                    save_plot_TF=save_plot_TF,
-                    save_tif_TF=save_tif_TF,
+                    save_plot_TF=SAVE_PLOT_TF,
+                    save_tif_TF=SAVE_TIF_TF,
                     return_error_dict=False,
                 )
                 combined_df = pd.concat([combined_df, temp_df], ignore_index=True)
@@ -869,8 +903,7 @@ def main():
                 import traceback
                 traceback.print_exc()
                 raise
-        if not Do_without_asking:
-            from simple_dialog import ask_save_path_gui
+        
             df_save_path_1 = ask_save_path_gui()
             if df_save_path_1 and (df_save_path_1[-4:] != ".pkl"):
                 df_save_path_1 = df_save_path_1 + ".pkl"
@@ -879,6 +912,9 @@ def main():
         combined_df.to_pickle(df_save_path_1)
         combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
         print(f"Saved: {df_save_path_1}")
+    
+    summary_str += f"df_save_path_1: {df_save_path_1}\n"
+    summary_str += f"df_save_path_1_csv: {df_save_path_1.replace(".pkl", ".csv")}\n"
 
     if combined_df is None or len(combined_df) == 0:
         print("No data. Exiting.")
@@ -903,7 +939,7 @@ def main():
         combined_df.to_pickle(df_save_path_1)
         combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
 
-    if not (Do_without_asking and skip_gui_TF) and df_save_path_1:
+    if df_save_path_1:
         app = QApplication.instance()
         if app is None:
             app = QApplication(sys.argv)
@@ -923,13 +959,36 @@ def main():
             combined_df.to_pickle(df_save_path_1)
             combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
 
-    if not Do_without_asking and ask_yes_no_gui("Stop here?"):
+    #stop here?
+    if ask_yes_no_gui("Stop here?"):
         return
-    if (Do_without_asking or ask_yes_no_gui("Quantify intensity from FLIM (per frame, Ch, ROI)?")) and df_save_path_1:
-        out_csv = df_save_path_1.replace(".pkl", "_intensity_from_flim.csv")
-        quantify_intensity_from_flim(combined_df, ch_1or2, z_plus_minus, out_csv)
+
+    print("Start intensity and lifetime quantification from .flim files")
+    out_csv_path = df_save_path_1.replace(".pkl", "_intensity_from_flim.csv")
+    quantify_intensity_from_flim(
+        combined_df, ch_1or2, z_plus_minus, out_csv_path,
+        photon_threshold=photon_threshold,
+        total_photon_threshold=total_photon_threshold,
+    )
+    summary_str += f"out_csv_path: {out_csv_path}\n"
+    summary_str += "="*60+"\n"
+    summary_str += "finished at "+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+"\n"
     print("Done.")
+
+    #save summary_str to a file
+    save_summary_str_path = os.path.join(os.path.dirname(df_save_path_1), "summary_str.txt")
+    with open(save_summary_str_path, "w") as f:
+        f.write(summary_str)
+
+    try:
+        display(datetime.now())
+    except:
+        pass
+    print(summary_str)
+    return df_save_path_1, out_csv_path
 
 
 if __name__ == "__main__":
-    main()
+    run_tiff_uncaging_roi(ch_1or2 = 1,
+            z_plus_minus = 2,
+            pre_length = 1)

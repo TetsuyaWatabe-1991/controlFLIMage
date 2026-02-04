@@ -40,8 +40,20 @@ def get_flimfile_list(one_file_path):
             return 0
     
     filelist = sorted(filelist, key=extract_number)
-    
-    # filelist=filelist[:-1]
+
+    # Deduplicate by resolved path (Z:/a/x.flim and Z:\a\x.flim must become the same key on Windows)
+    seen = {}
+    deduped = []
+    for p in filelist:
+        try:
+            key = str(Path(p).resolve())
+        except (OSError, RuntimeError):
+            key = os.path.normpath(os.path.abspath(p))
+        if key not in seen:
+            seen[key] = p
+            deduped.append(p)
+    filelist = deduped
+
     return filelist
 
 def CenterPosGet(Tiff_MultiArray,ratio=0.5):
