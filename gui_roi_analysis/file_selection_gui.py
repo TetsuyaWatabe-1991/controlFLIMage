@@ -27,9 +27,12 @@ class FileSelectionGUI(QMainWindow):
             self.df_save_path_2 = df_save_path_2  # Store the save path for auto-saving
             self.additional_columns = additional_columns or []  # Store additional columns to display
             self.save_auto = save_auto
-            # Initialize reject column if it doesn't exist
+            # Initialize reject column if it doesn't exist (0=accept, 1=reject)
             if 'reject' not in self.combined_df.columns:
-                self.combined_df['reject'] = False
+                self.combined_df['reject'] = 0
+            else:
+                # Normalize to 0/1 (in case it was saved as bool)
+                self.combined_df['reject'] = ((self.combined_df['reject'] == True) | (self.combined_df['reject'] == 1)).astype(int)
             
             # Initialize comment column if it doesn't exist
             if 'comment' not in self.combined_df.columns:
@@ -469,9 +472,9 @@ class FileSelectionGUI(QMainWindow):
                     
                     # Reject checkbox
                     reject_checkbox = QCheckBox()
-                    # Get current reject status for this group/set
-                    current_reject = group_set_df['reject'].iloc[0] if len(group_set_df) > 0 else False
-                    reject_checkbox.setChecked(current_reject)
+                    # Get current reject status for this group/set (0/1 or legacy bool)
+                    current_reject = group_set_df['reject'].iloc[0] if len(group_set_df) > 0 else 0
+                    reject_checkbox.setChecked(bool(current_reject))
                     reject_checkbox.stateChanged.connect(
                         lambda state, g=group_id, s=set_label: self.on_reject_changed(g, s, state)
                     )
@@ -745,7 +748,7 @@ class FileSelectionGUI(QMainWindow):
             else:
                 mask = (self.combined_df['group'] == group_id) & (self.combined_df['nth_set_label'] == set_label)
             
-            self.combined_df.loc[mask, 'reject'] = state == Qt.Checked
+            self.combined_df.loc[mask, 'reject'] = 1 if state == Qt.Checked else 0
             self.log_message(f"Reject status changed for {group_id}, Set {set_label}: {'Rejected' if state == Qt.Checked else 'Accepted'}")
             
             # If reject is checked and ROI is not selected, create a central rectangular ROI

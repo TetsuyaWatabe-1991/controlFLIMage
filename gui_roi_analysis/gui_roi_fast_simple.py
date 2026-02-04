@@ -647,6 +647,13 @@ def quantify_intensity_from_flim(
     Pre/post: Z-proj with z_plus_minus; time_sec=0. Uncaging: per-frame time_sec from FLIM metadata.
     Output CSV includes intensity, time_sec, total_photon, lifetime (Spine/DendriticShaft).
     """
+    def _is_rejected(set_df):
+        """Return True if this group/set is rejected (skip intensity/lifetime quantification)."""
+        if 'reject' not in set_df.columns or len(set_df) == 0:
+            return False
+        r = set_df['reject'].iloc[0]
+        return r == 1 or r is True
+
     total_items = 0
     for each_filepath_without_number in combined_df["filepath_without_number"].unique():
         each_filegroup_df = combined_df[combined_df["filepath_without_number"] == each_filepath_without_number]
@@ -656,6 +663,8 @@ def quantify_intensity_from_flim(
                 if each_set_label == -1:
                     continue
                 each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
+                if _is_rejected(each_set_df):
+                    continue
                 tiff_path = each_set_df["after_align_save_path"].iloc[0]
                 if pd.isna(tiff_path) or not os.path.exists(tiff_path):
                     continue
@@ -680,6 +689,8 @@ def quantify_intensity_from_flim(
                 if each_set_label == -1:
                     continue
                 each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
+                if _is_rejected(each_set_df):
+                    continue
                 tiff_path = each_set_df["after_align_save_path"].iloc[0]
                 if pd.isna(tiff_path) or not os.path.exists(tiff_path):
                     continue
@@ -963,8 +974,14 @@ def run_tiff_uncaging_roi(
     if ask_yes_no_gui("Stop here?"):
         return
 
+    # Ensure reject column is 0/1 (0=accept, 1=reject) for consistent filtering
+    if 'reject' in combined_df.columns:
+        combined_df['reject'] = ((combined_df['reject'] == True) | (combined_df['reject'] == 1)).astype(int)
+    else:
+        combined_df['reject'] = 0
+
     print("Start intensity and lifetime quantification from .flim files")
-    out_csv_path = df_save_path_1.replace(".pkl", "_intensity_from_flim.csv")
+    out_csv_path = df_save_path_1.replace(".pkl", "_intensity_lifetime_all_frames.csv")
     quantify_intensity_from_flim(
         combined_df, ch_1or2, z_plus_minus, out_csv_path,
         photon_threshold=photon_threshold,

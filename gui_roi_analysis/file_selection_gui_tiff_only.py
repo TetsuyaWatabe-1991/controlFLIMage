@@ -91,8 +91,8 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
             # Save reject status to file (file-based)
             self.save_reject_status_to_file(tiff_path, is_rejected)
             
-            # Also update dataframe for compatibility
-            self.combined_df.loc[mask, 'reject'] = is_rejected
+            # Also update dataframe (0=accept, 1=reject)
+            self.combined_df.loc[mask, 'reject'] = 1 if is_rejected else 0
             
             self.log_message(f"Reject status changed for {group_id}, Set {set_label}: {'Rejected' if is_rejected else 'Accepted'}")
             
@@ -223,8 +223,8 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
             
             migrated_count = 0
             
-            # Find rows where reject=True in DataFrame
-            rejected_rows = self.combined_df[self.combined_df['reject'] == True]
+            # Find rows where reject is set (1 or True) in DataFrame
+            rejected_rows = self.combined_df[(self.combined_df['reject'] == True) | (self.combined_df['reject'] == 1)]
             
             for idx, row in rejected_rows.iterrows():
                 tiff_path = row.get('after_align_save_path', None)
@@ -267,9 +267,9 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
                 # Check file-based reject status
                 is_rejected = self.get_reject_status_from_file(tiff_path)
                 
-                # Update DataFrame for rows with this TIFF path
+                # Update DataFrame for rows with this TIFF path (0=accept, 1=reject)
                 mask = self.combined_df['after_align_save_path'] == tiff_path
-                self.combined_df.loc[mask, 'reject'] = is_rejected
+                self.combined_df.loc[mask, 'reject'] = 1 if is_rejected else 0
             
             self.log_message("Synced reject status from flag files")
             
