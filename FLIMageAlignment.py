@@ -41,14 +41,11 @@ def get_flimfile_list(one_file_path):
     
     filelist = sorted(filelist, key=extract_number)
 
-    # Deduplicate by resolved path (Z:/a/x.flim and Z:\a\x.flim must become the same key on Windows)
+    # Deduplicate by normalized path (same key for //server/... and \\server\... on Windows)
     seen = {}
     deduped = []
     for p in filelist:
-        try:
-            key = str(Path(p).resolve())
-        except (OSError, RuntimeError):
-            key = os.path.normpath(os.path.abspath(p))
+        key = os.path.normpath(os.path.abspath(p)).lower()
         if key not in seen:
             seen[key] = p
             deduped.append(p)

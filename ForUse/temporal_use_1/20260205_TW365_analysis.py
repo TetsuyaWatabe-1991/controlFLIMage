@@ -40,19 +40,11 @@ phase_length_sec_dict = {
 }
 
 
-df_save_path_1 = r"Z:/User-Personal/Tetsuya_Zdrive/Data/202601/20260129/auto_XFPGFP/combined_df_1.pkl"
-out_csv_path = r"Z:/User-Personal/Tetsuya_Zdrive/Data/202601/20260129/auto_XFPGFP/combined_df_1_intensity_lifetime_all_frames.csv"
-
-df_save_path_2 = r"Z:\User-Personal\Tetsuya_Zdrive\Data\202601\20260130\auto1\combined_df_1.pkl"
-out_csv_path_2 = r"Z:\User-Personal\Tetsuya_Zdrive\Data\202601\20260130\auto1\combined_df_1_intensity_lifetime_all_frames.csv"
+df_save_path_1 = r"Z:\User-Personal\Tetsuya_Zdrive\Data\202601\20260130\tw365auto\combined_df_1.pkl"
+out_csv_path = r"Z:\User-Personal\Tetsuya_Zdrive\Data\202601\20260130\tw365auto\combined_df_1_intensity_lifetime_all_frames.csv"
 
 combined_df = pd.read_pickle(df_save_path_1)
 fulltimeseries_df = pd.read_csv(out_csv_path)
-combined_df_2 = pd.read_pickle(df_save_path_2)
-fulltimeseries_df_2 = pd.read_csv(out_csv_path_2)
-
-combined_df = pd.concat([combined_df, combined_df_2], ignore_index=True)
-fulltimeseries_df = pd.concat([fulltimeseries_df, fulltimeseries_df_2], ignore_index=True)
 
 # normalize the intensity by dividing the intensity by the number of summed frames
 fulltimeseries_df.loc[:,"Spine_Ch1_intensity_div_by_nAve"] = fulltimeseries_df.loc[:,"Spine_Ch1_intensity"] / fulltimeseries_df.loc[:,"nAveFrame"]
@@ -103,6 +95,26 @@ for each_group in fulltimeseries_df["group"].unique():
         each_summary_dict["group"] = each_group
         each_summary_dict["set_label"] = each_set_label
         each_summary_dict["group_set_id"] = group_set_id
+
+
+time_threshold = 5
+bin_percent_median = 0.99
+pre_df_all = fulltimeseries_df[fulltimeseries_df["phase"] == "pre"]
+post_df_all = fulltimeseries_df[fulltimeseries_df["phase"] == "post"]
+
+
+bin_sec = combined_df_reject_bad_data[combined_df_reject_bad_data['delta_sec']>time_threshold]['delta_sec'].median()*bin_percent_median
+bin_sec = 60*bin_sec//60
+combined_df_reject_bad_data["binned_sec"] = bin_sec*(combined_df_reject_bad_data["relative_time_sec"]//bin_sec)
+combined_df_reject_bad_data["binned_min"] = combined_df_reject_bad_data["binned_sec"]/60
+combined_df_reject_bad_data = combined_df_reject_bad_data[combined_df_reject_bad_data["binned_min"]!=0]
+# combined_df_reject_bad_data.dropna(subset=['label'])
+combined_df_reject_bad_data = combined_df_reject_bad_data[~combined_df_reject_bad_data["label"].isna()]
+
+savepath_for_combined_df_reject_bad_data = df_save_path_1.replace(".pkl", "_reject_bad_data.pkl")
+combined_df_reject_bad_data.to_pickle(savepath_for_combined_df_reject_bad_data)
+
+
 
         for each_ch in ['Ch1', 'Ch2']:
             for each_phase in ['pre', 'post']:

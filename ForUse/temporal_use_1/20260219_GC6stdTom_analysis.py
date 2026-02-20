@@ -11,7 +11,6 @@ matplotlib.rcParams["font.family"] = "sans-serif"
 matplotlib.rcParams["font.sans-serif"] = ["Arial"]
 from custom_plot import plt
 
-
 def format_p_value(p: float) -> str:
     """Format p-value for figure annotation (e.g. p = 0.02, p < 0.001)."""
     if p != p:  # NaN
@@ -29,42 +28,24 @@ unc_total_frame_first_unc_dict = {
 }
 
 group_header_dict = {
-    "mChGFP": "mCherry, GFP",
-    "BrUSGFP": "BrUSLEE, GFP",
-    "tdTomGFP": "tdTomato, GFP",
+    "0121": "0121",
+    "1203": "1203"
 }
 
-phase_length_sec_dict = {
-    "pre": 1,
-    "post": 1,
-}
-
-
-df_save_path_1 = r"Z:/User-Personal/Tetsuya_Zdrive/Data/202601/20260129/auto_XFPGFP/combined_df_1.pkl"
-out_csv_path = r"Z:/User-Personal/Tetsuya_Zdrive/Data/202601/20260129/auto_XFPGFP/combined_df_1_intensity_lifetime_all_frames.csv"
-
-df_save_path_2 = r"Z:\User-Personal\Tetsuya_Zdrive\Data\202601\20260130\auto1\combined_df_1.pkl"
-out_csv_path_2 = r"Z:\User-Personal\Tetsuya_Zdrive\Data\202601\20260130\auto1\combined_df_1_intensity_lifetime_all_frames.csv"
+df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260217/auto1\combined_df_1.pkl"
+out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260217/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
 
 combined_df = pd.read_pickle(df_save_path_1)
 fulltimeseries_df = pd.read_csv(out_csv_path)
-combined_df_2 = pd.read_pickle(df_save_path_2)
-fulltimeseries_df_2 = pd.read_csv(out_csv_path_2)
-
-combined_df = pd.concat([combined_df, combined_df_2], ignore_index=True)
-fulltimeseries_df = pd.concat([fulltimeseries_df, fulltimeseries_df_2], ignore_index=True)
 
 # normalize the intensity by dividing the intensity by the number of summed frames
 fulltimeseries_df.loc[:,"Spine_Ch1_intensity_div_by_nAve"] = fulltimeseries_df.loc[:,"Spine_Ch1_intensity"] / fulltimeseries_df.loc[:,"nAveFrame"]
-
+fulltimeseries_df.loc[:,"Spine_Ch2_intensity_div_by_nAve"] = fulltimeseries_df.loc[:,"Spine_Ch2_intensity"] / fulltimeseries_df.loc[:,"nAveFrame"]
 
 combined_df["dt"] = pd.to_datetime(combined_df["dt_str"])
 
 save_folder = os.path.join(os.path.dirname(df_save_path_1), "summary")
 os.makedirs(save_folder, exist_ok=True)
-
-
-
 
 
 #%% align the time_sec based on the uncaging timing
@@ -97,6 +78,8 @@ for each_group in fulltimeseries_df["group"].unique():
         #normalize the intensity, by dividing the intensity by the mean of the intensity of frames in pre phase and subtract 1
         pre_phase_intensity = each_df[each_df["phase"] == "pre"]["Spine_Ch1_intensity_div_by_nAve"].mean()
         fulltimeseries_df.loc[each_df.index, "Spine_Ch1_intensity_normalized"] = fulltimeseries_df.loc[each_df.index, "Spine_Ch1_intensity_div_by_nAve"] / pre_phase_intensity - 1
+        pre_phase_intensity_ch2 = each_df[each_df["phase"] == "pre"]["Spine_Ch2_intensity_div_by_nAve"].mean()
+        fulltimeseries_df.loc[each_df.index, "Spine_Ch2_intensity_normalized"] = fulltimeseries_df.loc[each_df.index, "Spine_Ch2_intensity_div_by_nAve"] / pre_phase_intensity_ch2 - 1
 
         #summary for each group_set_id
         each_summary_dict = {}
@@ -150,19 +133,22 @@ for each_group_set_id in fulltimeseries_df["group_set_id"].unique():
 
 # %% line plot
 #plot each data, with light thin color lines
-
-plot_info_dict = {"lifetime": {"ylabel": r"$\Delta$lifetime (ns)", "y": "Spine_Ch1_lifetime_normalized", "errorbar": "se"},
-                  "intensity": {"ylabel": r"$\Delta$spine volume (a.u.)", "y": "Spine_Ch1_intensity_normalized", "errorbar": "se"}}
-
+plot_info_dict = {
+    # "lifetime": {"ylabel": r"$\Delta$lifetime (ns)", "y": "Spine_Ch1_lifetime_normalized", "errorbar": "se"},
+    "intensity": {"ylabel": r"$\Delta$spine volume (a.u.)", 
+    "xlabel": "Time (sec)",
+    "x": "aligned_time_sec",
+    "y": "Spine_Ch2_intensity_normalized", "errorbar": "se"}
+    }
 
 for each_header, each_header_name in group_header_dict.items():
     eachgroup_df = fulltimeseries_df[fulltimeseries_df["group"].str.contains(each_header)]
     if len(eachgroup_df) == 0:
         continue
     for each_plot_type, each_plot_info in plot_info_dict.items():
-
         plt.figure(figsize=(5, 3))
-        g = sns.lineplot(x = "binned_time_sec",
+        g = sns.lineplot(
+                    x = each_plot_info["x"],
                     y = each_plot_info["y"], 
                     data = eachgroup_df, 
                     hue = "group_set_id", 
@@ -171,21 +157,19 @@ for each_header, each_header_name in group_header_dict.items():
                     palette = "tab10",
                     legend = False,
                     )
-        
         #greek delta lifetime
         plt.ylabel(each_plot_info["ylabel"])
-        plt.xlabel("Time (sec)")
+        plt.xlabel(each_plot_info["xlabel"])
         plt.title(each_header_name)
         
-
-        #plot mean with SEM
-        sns.lineplot(x = "binned_time_sec", 
-                    y = each_plot_info["y"],
-                    data = eachgroup_df,
-                    errorbar = each_plot_info["errorbar"],
-                    linewidth = 2,
-                    color = "r",
-                    )
+        # #plot mean with SEM
+        # sns.lineplot(x = each_plot_info["x"], 
+        #             y = each_plot_info["y"],
+        #             data = eachgroup_df,
+        #             errorbar = each_plot_info["errorbar"],
+        #             linewidth = 2,
+        #             color = "r",
+        #             )
 
         ylim = plt.gca().get_ylim()
         ninty_percent_ylim = ylim[0] + (ylim[1] - ylim[0]) * 0.9
@@ -201,9 +185,10 @@ for each_header, each_header_name in group_header_dict.items():
 
 # %% swarm plot
 
-plot_info_dict = {"lifetime": {"ylabel": r"$\Delta$lifetime (ns)",
-                                "y": "delta_lifetime",
-                                "ylim" : [-0.19, 0.29]},
+plot_info_dict = {
+    # "lifetime": {"ylabel": r"$\Delta$lifetime (ns)",
+    #                             "y": "delta_lifetime",
+    #                             "ylim" : [-0.19, 0.29]},
                   "intensity": {"ylabel": r"$\Delta$spine volume (a.u.)", 
                                 "y": "delta_FF0_intensity", 
                                 "ylim" : [-0.4, 5.9]}

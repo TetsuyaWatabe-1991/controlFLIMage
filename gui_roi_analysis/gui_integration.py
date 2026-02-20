@@ -47,7 +47,8 @@ def first_processing_for_flim_files(
     save_plot_TF = True,
     save_tif_TF = True,
     ignore_words = ["for_align"],
-    return_error_dict = False
+    return_error_dict = False,
+    uncaging_frame_num = [33, 34, 35, 55],
     ) -> pd.DataFrame:
 
     # Load initial data
@@ -65,13 +66,23 @@ def first_processing_for_flim_files(
         if os.path.isfile(first_in_group) and first_in_group not in one_of_file_list:
             one_of_file_list.append(first_in_group)
 
+    # Deduplicate by normalized path so same group is not processed twice (e.g. //server/... vs \\server\...)
+    _seen_key = {}
+    _deduped = []
+    for p in one_of_file_list:
+        key = os.path.normpath(os.path.abspath(p)).lower()
+        if key not in _seen_key:
+            _seen_key[key] = p
+            _deduped.append(p)
+    one_of_file_list = _deduped
+
     plot_savefolder = os.path.join(folder, "png")
     tif_savefolder = os.path.join(folder, "tif")
     roi_savefolder = os.path.join(folder, "roi")
     for each_folder in [plot_savefolder, tif_savefolder, roi_savefolder]:
         os.makedirs(each_folder, exist_ok=True)
 
-    combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length)
+    combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length, uncaging_frame_num=uncaging_frame_num)
     if len(combined_df) > 0 and "after_align_save_path" not in combined_df.columns:
         combined_df["after_align_save_path"] = None
 

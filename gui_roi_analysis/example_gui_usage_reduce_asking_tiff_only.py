@@ -43,9 +43,11 @@ flim_file_select_dialog_TF = True
 pre_defined_df_TF = False
 df_defined_path = r"G:\ImagingData\Tetsuya\20260110\auto1\combined_df.pkl"
 
+uncaging_frame_num = [16, 33, 34, 35, 55]
+
 skip_plot_if_not_updated = True
 # Setup parameters
-ch_1or2 = 2
+ch_1or2 = 1
 
 z_plus_minus = 2
 pre_length = 2
@@ -65,7 +67,7 @@ if flim_file_select_dialog_TF:
     one_of_filepath_list = [one_of_filepath]
 else:
     one_of_filepath_list = [
-        r"C:\Users\WatabeT\Desktop\20260110\auto1\AP5_3_pos1__highmag_1_002.flim",
+        r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260216\auto1\2_pos1__highmag_1_002.flim",
         # r"G:\ImagingData\Tetsuya\20251108\basal__highmag_7_081.flim"
     ]
 
@@ -111,6 +113,7 @@ if (Do_without_asking == True) or (yn1 == True):
             save_plot_TF = save_plot_TF,
             save_tif_TF = save_tif_TF,
             return_error_dict = True,
+            uncaging_frame_num =uncaging_frame_num,
             )
         error_dict_combined.update(error_dict)
         combined_df = pd.concat([combined_df, temp_df], ignore_index=True)

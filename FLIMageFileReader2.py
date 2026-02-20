@@ -7,7 +7,7 @@ Detailed parameters are stored in FileReader.State
 Modified to support both libtiff and tifffile libraries.
 If libtiff is not available, tifffile will be used automatically.
 
-@author: Ryohei Yasuda
+@author: Ryohei Yasuda, Tetsuya Watabe
 """
 
 # Global variable to control which library to use
@@ -16,6 +16,7 @@ USE_TIFFFILE = True  # Default to tifffile for better portability
 
 # Try to import libtiff
 try:
+    #You do not have to install libtiff. You can use tifffile instead.
     from libtiff import TIFF
     # pip install pylibtiff will install this. 
     # It may need LibTiff.dll in python directry. You can download a source and cmake it with VS.
@@ -697,34 +698,17 @@ class files_parameters:
 
 if __name__ == "__main__":
     
-    from time import sleep
     import matplotlib.pyplot as plt
-    import shutil
-    from controlflimage_threading import Control_flimage
-    # FLIMageCont = Control_flimage()
-    # FLIMageCont.flim.sendCommand(f"SetUncagingLocation, 50, 50")
-    # file_path = r"G:\ImagingData\Tetsuya\20241204\test_uncaging_015.flim"
-    file_path = r"C:\Users\WatabeT\Desktop\temp2\BrUSGFP_7_pos1__highmag_1_002.flim"
-    
-    # for i in range(40):
-    #     try:
-    #         shutil.copyfile(file_path, temp_path)
-    #         iminfo = FileReader()
-    #         iminfo.read_imageFile(temp_path, True)     
-    #         six_dim = np.array(iminfo.image)
-    #         print(np.array(iminfo.image).shape)
-    #         plt.imshow(six_dim[-1].sum(axis = 0).sum(axis = 0).sum(axis = -1))
-    #         plt.show()
-    #         unc_xy = 50 + -20 * (i%2)
-    #         FLIMageCont.flim.sendCommand(f"SetUncagingLocation, {unc_xy}, {unc_xy}")
-    #     except:
-    #         print("read error")
-    #     sleep(2)
+
+    file_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260129\auto1\5_pos1__highmag_9_005.flim"
     
     iminfo = FileReader()
     iminfo.read_imageFile(file_path, True)     
     six_dim = np.array(iminfo.image)
+
+    last_dim = six_dim.sum(axis = 0).sum(axis = 0).sum(axis =0).sum(axis =0).sum(axis =0)
+
     print(np.array(iminfo.image).shape)
-    plt.imshow(six_dim[-1].sum(axis = 0).sum(axis = 0).sum(axis = -1))
-    plt.show()
+    # plt.imshow(six_dim[-1].sum(axis = 0).sum(axis = 0).sum(axis = -1))
+    # plt.show()
     
