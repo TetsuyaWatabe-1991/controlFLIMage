@@ -54,7 +54,7 @@ fixed_tau2 = 1.1
 pre_intensity_fold_exclude_threshold = 1.4
 
 one_of_filepath_list = [
-r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260110\auto1\1_pos1__highmag_1_002.flim",
+r"C:\Users\WatabeT\Desktop\20260110\test_auto1\AP5_3_pos1__highmag_1_002.flim",
 # r"G:\ImagingData\Tetsuya\20251108\basal__highmag_7_081.flim"
 ]
 

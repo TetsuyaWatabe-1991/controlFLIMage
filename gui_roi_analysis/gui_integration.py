@@ -1,6 +1,7 @@
 # %%
 import sys
 import os
+from pathlib import Path
 sys.path.append("..\\")
 sys.path.append(os.path.dirname(__file__))
 import glob
@@ -16,6 +17,28 @@ from roi_analysis_gui import ROIAnalysisGUI
 
 SHIFT_DIRECTION = -1 # +1: shift to the right, -1: shift to the left
 
+
+def _filelist_dedup_by_resolved_path(file_path_series):
+    """Deduplicate file paths by resolved path (so / vs \\ do not create duplicates)."""
+    seen = set()
+    out = []
+    for p in file_path_series:
+        try:
+            key = str(Path(p).resolve())
+        except (OSError, RuntimeError):
+            key = os.path.normpath(os.path.abspath(p))
+        if key not in seen:
+            seen.add(key)
+            out.append(p)
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Bug hunting only: set True to print/save details when "Multiple uncaging rows"
+# occurs. Remove this block or set False when done.
+# -----------------------------------------------------------------------------
+DEBUG_MULTIPLE_UNCAGING = True
+
 def first_processing_for_flim_files(
     one_of_filepath,
     z_plus_minus,
@@ -24,30 +47,47 @@ def first_processing_for_flim_files(
     save_plot_TF = True,
     save_tif_TF = True,
     ignore_words = ["for_align"],
-    return_error_dict = False
+    return_error_dict = False,
+    uncaging_frame_num = [33, 34, 35, 55],
     ) -> pd.DataFrame:
 
     # Load initial data
 
     error_dict = {}
+    folder = os.path.dirname(one_of_filepath)
     one_of_file_list = glob.glob(
-        os.path.join(
-            os.path.dirname(one_of_filepath),
-            "*_highmag_*002.flim"
-            )
-        )
+        os.path.join(folder, "*_highmag_*002.flim")
+    )
     one_of_file_list = [each_file for each_file in one_of_file_list if not any(ignore_word in each_file for ignore_word in ignore_words)]
+    # Ensure the selected file's group is included: add its group's 002 file if present (so e.g. for_align_*003.flim -> add for_align_*002.flim)
+    if one_of_filepath and one_of_filepath.endswith(".flim") and len(one_of_filepath) > 8:
+        base = one_of_filepath[:-8]  # strip _XXX.flim (e.g. _003.flim)
+        first_in_group = base + "002.flim"
+        if os.path.isfile(first_in_group) and first_in_group not in one_of_file_list:
+            one_of_file_list.append(first_in_group)
 
-    plot_savefolder = os.path.join(os.path.dirname(one_of_filepath), "png")
-    tif_savefolder = os.path.join(os.path.dirname(one_of_filepath), "tif")
-    roi_savefolder = os.path.join(os.path.dirname(one_of_filepath), "roi")
+    # Deduplicate by normalized path so same group is not processed twice (e.g. //server/... vs \\server\...)
+    _seen_key = {}
+    _deduped = []
+    for p in one_of_file_list:
+        key = os.path.normpath(os.path.abspath(p)).lower()
+        if key not in _seen_key:
+            _seen_key[key] = p
+            _deduped.append(p)
+    one_of_file_list = _deduped
+
+    plot_savefolder = os.path.join(folder, "png")
+    tif_savefolder = os.path.join(folder, "tif")
+    roi_savefolder = os.path.join(folder, "roi")
     for each_folder in [plot_savefolder, tif_savefolder, roi_savefolder]:
         os.makedirs(each_folder, exist_ok=True)
 
-    combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length)
-    
+    combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length, uncaging_frame_num=uncaging_frame_num)
+    if len(combined_df) > 0 and "after_align_save_path" not in combined_df.columns:
+        combined_df["after_align_save_path"] = None
+
     #for debug
-    csv_savepath = os.path.join(os.path.dirname(one_of_filepath), "debug_combined_df.csv")  
+    csv_savepath = os.path.join(folder, "debug_combined_df.csv")  
     combined_df.to_csv(csv_savepath, index=False)
     # print(f"Saved combined_df to {csv_savepath}")
     # input("Press Enter to continue...")
@@ -92,7 +132,8 @@ def first_processing_for_flim_files(
         for each_group in each_filegroup_df['group'].unique():
             each_group_df = each_filegroup_df[each_filegroup_df['group'] == each_group]
 
-            filelist = each_group_df["file_path"].tolist()
+            # Use resolved path so duplicate rows (e.g. / vs \\) do not load the same file twice
+            filelist = _filelist_dedup_by_resolved_path(each_group_df["file_path"])
             # Load and align data
             Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=ch_1or2 - 1)
             print("for debug, load and align data, shifts\n", shifts)
@@ -405,9 +446,28 @@ def process_uncaging_positions(
             print(f"No uncaging data found for group {each_group_df['group'].iloc[0]}, set {each_set_label}")
             continue
         if len(each_set_unc_row) > 1:
-            print(f"for debug, each_set_label: {each_set_label}")
-            print(f"each_set_df\n", each_set_df)
-            assert False, "Multiple uncaging rows found for group {each_group_df['group'].iloc[0]}, set {each_set_label}"
+            grp = each_group_df["group"].iloc[0]
+            if DEBUG_MULTIPLE_UNCAGING:
+                print("\n" + "=" * 60)
+                print("DEBUG_MULTIPLE_UNCAGING: Multiple uncaging rows")
+                print("=" * 60)
+                print(f"group: {grp}")
+                print(f"nth_set_label: {each_set_label}")
+                print(f"number of uncaging rows: {len(each_set_unc_row)}")
+                if "file_path" in each_set_unc_row.columns:
+                    for i, (_, row) in enumerate(each_set_unc_row.iterrows()):
+                        print(f"  uncaging row[{i}]: nth={row.get('nth', '?')} file_path={row.get('file_path', '?')}")
+                # Save full sub-DataFrame to CSV so you can open it (no truncation)
+                safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in str(grp))[:40]
+                out_dir = os.path.dirname(each_set_unc_row["file_path"].iloc[0]) if "file_path" in each_set_unc_row.columns and len(each_set_unc_row) else "."
+                debug_csv = os.path.join(out_dir, f"debug_multiple_uncaging_{safe}_set{each_set_label}.csv")
+                try:
+                    each_set_df.to_csv(debug_csv, index=False)
+                    print(f"Saved: {debug_csv}")
+                except Exception as e:
+                    print(f"Could not save debug CSV: {e}")
+                print("=" * 60 + "\n")
+            assert False, f"Multiple uncaging rows found for group {grp}, set {each_set_label}"
 
         last_pre_frame = each_set_df[each_set_df["phase"] == "pre"].iloc[-1]
         nth_omit_induction_last_pre_frame = last_pre_frame["nth_omit_induction"]
@@ -706,7 +766,7 @@ def temp_add_align_info(
     # Process each group
     for each_group in combined_df['group'].unique():
         each_group_df = combined_df[combined_df['group'] == each_group]
-        filelist = each_group_df["file_path"].tolist()
+        filelist = _filelist_dedup_by_resolved_path(each_group_df["file_path"])
 
         # Load and align data
         Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=ch_1or2 - 1)
@@ -900,9 +960,10 @@ def launch_roi_analysis_gui(combined_df, tiff_data_path, each_group, each_set_la
 
     # Get uncaging position information from the filtered dataframe
     uncaging_info = {}
+    first_row = filtered_df.iloc[0]
+    
     if 'corrected_uncaging_x' in filtered_df.columns and 'corrected_uncaging_y' in filtered_df.columns:
         # Get uncaging position from the first row (same for all rows in a set)
-        first_row = filtered_df.iloc[0]
         if pd.notna(first_row.get('corrected_uncaging_x')) and pd.notna(first_row.get('corrected_uncaging_y')):
             # These are already corrected to small region coordinates
             small_x_from = first_row.get('small_x_from', 0)
@@ -916,6 +977,17 @@ def launch_roi_analysis_gui(combined_df, tiff_data_path, each_group, each_set_la
                 'y': corrected_uncaging_y - small_y_from,
                 'has_uncaging': True
             }
+        else:
+            uncaging_info = {'has_uncaging': False}
+    elif 'center_x' in filtered_df.columns and 'center_y' in filtered_df.columns:
+        # For transient data: use center_x / center_y directly (no small region cropping)
+        if pd.notna(first_row.get('center_x')) and pd.notna(first_row.get('center_y')):
+            uncaging_info = {
+                'x': first_row.get('center_x', 0),
+                'y': first_row.get('center_y', 0),
+                'has_uncaging': True
+            }
+            print(f"  Uncaging position: ({uncaging_info['x']:.1f}, {uncaging_info['y']:.1f}) pixels")
         else:
             uncaging_info = {'has_uncaging': False}
     else:
@@ -1525,7 +1597,7 @@ def create_roi_analysis_workflow(plot_savefolder, tif_savefolder, one_of_filepat
 
         # Get the group dataframe
         each_group_df = combined_df[combined_df['group'] == each_group]
-        filelist = each_group_df["file_path"].tolist()
+        filelist = _filelist_dedup_by_resolved_path(each_group_df["file_path"])
 
         # Load and align data
         Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=ch_1or2 - 1)

@@ -29,6 +29,7 @@ class ROIAnalysisGUI(QMainWindow):
         self.max_proj_image = max_proj_image
         self.uncaging_info = uncaging_info or {'has_uncaging': False}
         self.file_info = file_info or {'filename': 'Unknown', 'group': 'Unknown', 'set_label': 'Unknown'}
+        self.frame_info_df = self.file_info.get('frame_info_df')  # per-frame CSV if available
         self.header = header  # ROI analysis header for column names and display
         
         # Set matplotlib parameters for consistent thin lines
@@ -90,6 +91,10 @@ class ROIAnalysisGUI(QMainWindow):
         
         # ROI coordinate snapping option
         self.snap_to_integer = True  # New: Enable integer coordinate snapping
+        
+        # Display intensity: vmax scale in percent (100 = auto from 99th percentile)
+        self.vmax_scale = 100
+        self._current_base_vmax = None
         
         self.init_ui()
         self.setup_connections()
@@ -160,14 +165,30 @@ class ROIAnalysisGUI(QMainWindow):
         self.image_frame = QFrame()
         self.image_frame.setFrameStyle(QFrame.StyledPanel)
         
-        layout = QVBoxLayout(self.image_frame)
+        main_layout = QHBoxLayout(self.image_frame)
         
-        # Create matplotlib figure for image display
+        # Left: vmax (intensity) slider
+        slider_panel = QFrame()
+        slider_panel.setFixedWidth(56)
+        slider_layout = QVBoxLayout(slider_panel)
+        vmax_label = QLabel("vmax\n%")
+        vmax_label.setFont(QFont("Arial", 8))
+        vmax_label.setAlignment(Qt.AlignCenter)
+        slider_layout.addWidget(vmax_label)
+        self.vmax_slider = QSlider(Qt.Vertical)
+        self.vmax_slider.setRange(10, 200)
+        self.vmax_slider.setValue(100)
+        self.vmax_slider.setToolTip("Display intensity scale (percent of auto vmax)")
+        slider_layout.addWidget(self.vmax_slider, 1)
+        main_layout.addWidget(slider_panel)
+        
+        # Right: matplotlib figure for image display
+        layout = QVBoxLayout()
         self.image_figure = Figure(figsize=(8, 6))
         self.image_canvas = FigureCanvas(self.image_figure)
         self.image_ax = self.image_figure.add_subplot(111)
-        
         layout.addWidget(self.image_canvas)
+        main_layout.addLayout(layout, 1)
         
         # Display initial max projection image
         self.display_max_proj()
@@ -223,13 +244,15 @@ class ROIAnalysisGUI(QMainWindow):
         coord_snap_layout.addStretch()
         layout.addLayout(coord_snap_layout)
         
-        # ROI parameters display
+        # ROI parameters display (hidden per user request)
         params_label = QLabel("ROI Parameters:")
         params_label.setFont(QFont("Arial", 10, QFont.Bold))
         layout.addWidget(params_label)
+        params_label.setVisible(False)
         
         self.params_display = QLabel("No ROI defined")
         layout.addWidget(self.params_display)
+        self.params_display.setVisible(False)
         
         # Back to max proj button
         self.back_to_maxproj_button = QPushButton("Back to Max Proj")
@@ -241,22 +264,6 @@ class ROIAnalysisGUI(QMainWindow):
         self.complete_analysis_button.setEnabled(False)
         self.complete_analysis_button.setStyleSheet("QPushButton { background-color: lightgreen; }")
         layout.addWidget(self.complete_analysis_button)
-        
-        # ROI instructions
-        instructions_label = QLabel("Instructions:")
-        instructions_label.setFont(QFont("Arial", 9, QFont.Bold))
-        layout.addWidget(instructions_label)
-        
-        instructions_text = QLabel(
-            "1. Select ROI shape\n"
-            "2. Draw ROI on max proj\n"
-            "3. Move between frames\n"
-            "4. Adjust ROI per frame\n"
-            "5. Click 'Analysis Complete'"
-        )
-        instructions_text.setFont(QFont("Arial", 8))
-        instructions_text.setWordWrap(True)
-        layout.addWidget(instructions_text)
         
         # Intensity values display
         intensity_label = QLabel("Intensity Values:")
@@ -271,23 +278,64 @@ class ROIAnalysisGUI(QMainWindow):
         file_info_label.setFont(QFont("Arial", 10, QFont.Bold))
         layout.addWidget(file_info_label)
         
-        # Display file info with small font
-        filename = self.file_info.get('filename', 'Unknown')
-        group = self.file_info.get('group', 'Unknown')
-        set_label = self.file_info.get('set_label', 'Unknown')
-        
-        file_info_text = f"File: {filename}\nGroup: {group}\nSet: {set_label}"
+        # Display file info with small font (per-frame if frame_info_df available)
+        file_info_text = self._build_file_info_text_for_frame(0)
         self.file_info_display = QLabel(file_info_text)
         self.file_info_display.setFont(QFont("Arial", 8))
         self.file_info_display.setWordWrap(True)
         layout.addWidget(self.file_info_display)
         
         layout.addStretch()
-        
+
+    def _build_file_info_text_for_frame(self, frame_index):
+        """Build file info text for the right panel. Uses frame_info_df if available (per-frame)."""
+        group = self.file_info.get('group', 'Unknown')
+        set_label = self.file_info.get('set_label', 'Unknown')
+        if self.frame_info_df is None or frame_index < 0 or frame_index >= len(self.frame_info_df):
+            filename = self.file_info.get('filename', 'Unknown')
+            return f"File: {filename}\nGroup: {group}\nSet: {set_label}"
+        row = self.frame_info_df.iloc[frame_index]
+        lines = [
+            f"File: {row.get('filename', '') or '—'}",
+            f"Group: {group}",
+            f"Set: {set_label}",
+            f"Phase: {self._phase_display(row.get('phase', ''))}",
+        ]
+        if 'elapsed_time_sec' in self.frame_info_df.columns:
+            v = row.get('elapsed_time_sec')
+            if pd.isna(v):
+                lines.append("elapsed_time_sec: — sec")
+            else:
+                try:
+                    lines.append(f"elapsed_time_sec: {float(v):.2f} sec")
+                except (TypeError, ValueError):
+                    lines.append("elapsed_time_sec: — sec")
+        if 'Z_projection' in self.frame_info_df.columns and row.get('Z_projection') and 'z_from' in self.frame_info_df.columns and 'z_to' in self.frame_info_df.columns:
+            zf, zt = row.get('z_from'), row.get('z_to')
+            if not (pd.isna(zf) or pd.isna(zt)):
+                try:
+                    z_from = int(zf)
+                    z_to_last = int(zt) - 1  # Python slice z_from:z_to uses indices up to z_to-1
+                    lines.append(f"Z projection, slice {z_from} to {z_to_last}")
+                except (TypeError, ValueError):
+                    lines.append("Single slice")
+            else:
+                lines.append("Single slice")
+        else:
+            lines.append("Single slice")
+        return "\n".join(lines)
+
+    def _phase_display(self, phase):
+        """Display phase as pre / post / unc."""
+        if phase == 'uncaging':
+            return 'unc'
+        return phase if phase else '—'
+
     def create_plot_display(self):
         """Create the time series plot display."""
         self.plot_frame = QFrame()
         self.plot_frame.setFrameStyle(QFrame.StyledPanel)
+        self.plot_frame.setMinimumHeight(220)
         
         layout = QVBoxLayout(self.plot_frame)
         
@@ -300,6 +348,7 @@ class ROIAnalysisGUI(QMainWindow):
         
         # Set plot style
         self.setup_plot_style()
+        self.plot_figure.tight_layout()
         
     def create_navigation_panel(self):
         """Create the navigation panel."""
@@ -395,6 +444,21 @@ class ROIAnalysisGUI(QMainWindow):
         # Snap to pixels checkbox
         self.snap_checkbox.stateChanged.connect(self.on_snap_changed)
         
+        # vmax (intensity) slider
+        self.vmax_slider.valueChanged.connect(self.on_vmax_slider_changed)
+        
+    def on_vmax_slider_changed(self, value):
+        """Update display intensity scale from vmax slider (percent)."""
+        self.vmax_scale = value
+        self._refresh_image_display()
+    
+    def _refresh_image_display(self):
+        """Redraw current image (max proj or time-series frame) with current vmax scale."""
+        if self.is_defining_roi:
+            self.display_max_proj()
+        else:
+            self.display_time_series_frame(self.current_frame)
+        
     def setup_plot_style(self):
         """Setup the plot style for scientific appearance."""
         self.plot_ax.set_facecolor('white')
@@ -406,8 +470,14 @@ class ROIAnalysisGUI(QMainWindow):
         
     def display_max_proj(self):
         """Display the max projection image."""
+        img = np.asarray(self.max_proj_image).astype(float)
+        base = float(np.nanpercentile(img, 99)) if np.any(np.isfinite(img)) else 1.0
+        if base <= 0:
+            base = float(np.nanmax(img)) if np.any(np.isfinite(img)) else 1.0
+        self._current_base_vmax = base
+        vmax = self._current_base_vmax * self.vmax_scale / 100.0
         self.image_ax.clear()
-        self.image_ax.imshow(self.max_proj_image, cmap='gray')
+        self.image_ax.imshow(self.max_proj_image, cmap='gray', vmin=0, vmax=vmax)
         self.image_ax.set_title("Max Projection - ROI Definition")
         self.image_ax.axis('off')
         
@@ -464,8 +534,14 @@ class ROIAnalysisGUI(QMainWindow):
             while len(frame_2d.shape) > 2:
                 frame_2d = frame_2d.max(axis=0)
         
+        img = np.asarray(frame_2d).astype(float)
+        base = float(np.nanpercentile(img, 99)) if np.any(np.isfinite(img)) else 1.0
+        if base <= 0:
+            base = float(np.nanmax(img)) if np.any(np.isfinite(img)) else 1.0
+        self._current_base_vmax = base
+        vmax = self._current_base_vmax * self.vmax_scale / 100.0
         self.image_ax.clear()
-        self.image_ax.imshow(frame_2d, cmap='gray', aspect='equal')
+        self.image_ax.imshow(frame_2d, cmap='gray', aspect='equal', vmin=0, vmax=vmax)
         self.image_ax.set_title(f"Frame {frame_idx + 1}/{self.total_frames}")
         
         # Display ROI if available
@@ -856,7 +932,7 @@ class ROIAnalysisGUI(QMainWindow):
         self.plot_ax.set_ylabel('Intensity')
         self.plot_ax.set_title(f"Frame {self.current_frame + 1}/{self.total_frames}")
         self.plot_ax.grid(True, color='lightgray', linewidth=0.5)
-        
+        self.plot_figure.tight_layout(pad=0.5)
         self.plot_canvas.draw()
         
     def prev_frame(self):
@@ -898,6 +974,9 @@ class ROIAnalysisGUI(QMainWindow):
         self._updating_slider = False
         
         self.frame_info_label.setText(f"Frame {self.current_frame + 1}/{self.total_frames}")
+
+        if self.frame_info_df is not None and hasattr(self, 'file_info_display'):
+            self.file_info_display.setText(self._build_file_info_text_for_frame(self.current_frame))
         
         # Load ROI parameters for current frame (frame-specific mode always enabled)
         if self.current_frame in self.frame_roi_parameters:
