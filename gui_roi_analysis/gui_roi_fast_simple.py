@@ -809,6 +809,7 @@ def run_tiff_uncaging_roi(
     pre_length = 2,
     photon_threshold: int = 15,
     total_photon_threshold: int = 1000,
+    ask_stop_here_TF = False,
 ):
     """
     Run the full TIFF uncaging ROI workflow: first_processing, full-size stack build,
@@ -971,8 +972,9 @@ def run_tiff_uncaging_roi(
             combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
 
     #stop here?
-    if ask_yes_no_gui("Stop here?"):
-        return
+    if ask_stop_here_TF:
+        if ask_yes_no_gui("Stop here?"):
+            return
 
     # Ensure reject column is 0/1 (0=accept, 1=reject) for consistent filtering
     if 'reject' in combined_df.columns:
