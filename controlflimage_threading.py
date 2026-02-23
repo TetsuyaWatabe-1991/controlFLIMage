@@ -25,6 +25,10 @@ from skimage.measure import label, regionprops
 import configparser
 import threading
 from tkinter_textinfowindow import TextWindow
+from utility.send_notification import read_slack_webhook_url, send_slack_notification
+
+
+SLACK_WEBHOOK_TXT_PATH = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLIMage\utility\slack_webhook_url.txt"
 
 def long_axis_detection(props,HalfLen_c=0.35):
     y0, x0 = props.centroid
@@ -213,12 +217,11 @@ class Control_flimage():
         self.error_dict = {}
         self.max_error_num = 20
         self.XYsize_ini_path = r"XYsize.ini"
-        self.flimage_exe = r"C:\Program Files\FLIMage\FLIMage 4.0.30\FLIMage.exe"
+        self.flimage_exe = r"C:\Program Files\FLIMage\FLIMage 4.0.37\FLIMage.exe"
         self.error_log_path = os.path.join(os.path.dirname(ini_path), "error_log.log")
         self.debug_log_path = os.path.join(os.path.dirname(ini_path), "debug_log.log")
         self.debug_mode = debug_mode
         self.print_responses = debug_mode
-
         self.flim = FLIM_Com(debug_log_mode=self.debug_mode, debug_log_path=self.debug_log_path)
         self.flim.start()
         self.flim.print_responses = self.print_responses
@@ -748,6 +751,33 @@ class Control_flimage():
     def flim_connect_check(self):
         if self.flim.Connected==False:
             self.reconnect()
+        first = True
+        while True:
+            repeat_count = 0
+            pulse_rate = self.get_laser_pulse_rate()
+            if pulse_rate < 70*10**6:
+                if first:
+                    first = False
+                    print("pulse_rate", pulse_rate)
+                    #send email and slack message
+                    try:
+                        webhook_url = read_slack_webhook_url(SLACK_WEBHOOK_TXT_PATH)
+                        send_slack_notification(webhook_url, message = f"pulse_rate: {pulse_rate}")
+                    except:
+                        print("Error sending slack message")
+                    start_repeat_time = datetime.now()
+                    print()
+                else:
+                    print(".", end="")
+                    repeat_count += 1
+                if repeat_count% 100 == 0:
+                    print
+                    print("Second start_repeat_time", datetime.now() - start_repeat_time)
+                    break
+                sleep(1)
+            else:
+                break
+        return True
     
     def wait_while_grabbing(self,sleep_every_sec=1):
         sleep(self.expected_grab_duration_sec)

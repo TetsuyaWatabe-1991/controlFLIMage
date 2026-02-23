@@ -150,6 +150,7 @@ def color_fue(savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLI
 def plot_max_proj_uncaging(
                     each_file, ch_1or2, show_uncaging = False,
                     use_default_savefolder = True, savefolder = "",
+                    plot_text = "",
                     ):
     iminfo = FileReader()
     iminfo.read_imageFile(each_file, True) 
@@ -172,6 +173,12 @@ def plot_max_proj_uncaging(
         savefolder = os.path.join(folder,"plot_maxproj")
     else:
         savefolder = savefolder
+    if plot_text != "":
+        if type(plot_text) == str:
+            #plot text at the left top corner
+            plt.text(0.05, 0.95, plot_text, ha='left', va='top', fontsize=8, transform=plt.gca().transAxes,
+            color='yellow')
+            
     os.makedirs(savefolder, exist_ok=True)
     basename = os.path.basename(each_file)                
     savepath = os.path.join(savefolder, basename[:-5] + "_maxproj.png")
@@ -185,7 +192,7 @@ def plot_max_proj_uncaging(
 def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0, 
                     from_Thorlab_to_coherent_factor = 1/3,
                     vmin = 1, vmax = 10, cmap='inferno', 
-                    acceptable_image_shape_0th_list = [4,32, 33,34],
+                    acceptable_image_shape_0th_list = [4,32, 33,34,55],
                     GCaMP_ch_1or2 = 1):
     uncaging_iminfo = FileReader()
     uncaging_iminfo.read_imageFile(each_file, True) 
@@ -208,6 +215,9 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
     elif imagearray.shape[0] in [32]:
         GCpre = imagearray[8*0 + 1 : 8*1, 0,GCaMP_ch_1or2-1,:,:,:].sum(axis=-1).sum(axis=0)
         GCunc = imagearray[8*3 + 1 : 8*4, 0,GCaMP_ch_1or2-1,:,:,:].sum(axis=-1).sum(axis=0)
+    elif imagearray.shape[0] in [55]:
+        GCpre = imagearray[4,0,GCaMP_ch_1or2-1,:,:,:].sum(axis=-1)
+        GCunc = imagearray[6,0,GCaMP_ch_1or2-1,:,:,:].sum(axis=-1)
     assert len(GCpre.shape) == 2 #Image should be 2D
 
  

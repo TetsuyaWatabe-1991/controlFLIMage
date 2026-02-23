@@ -43,5 +43,5 @@ if __name__ == "__main__":
     webhook_url = read_slack_webhook_url()
     send_slack_notification(
         webhook_url = webhook_url,
-        message = "processing is done"
+        message = "test"
     )
