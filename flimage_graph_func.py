@@ -211,16 +211,16 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
     center_x = imagearray.shape[-3] * uncaging_x_y_0to1[0]
     
     if imagearray.shape[0] in [4, 33, 34]:
-        GCpre = imagearray[0,0,0,:,:,:].sum(axis=-1)
-        GCunc = imagearray[3,0,0,:,:,:].sum(axis=-1)
+        GCpre = imagearray[1,0,0,:,:,:].sum(axis=-1)
+        GCunc = imagearray[2,0,0,:,:,:].sum(axis=-1)
         RFPpre = imagearray[0, 0, 1, :, :, :].sum(axis=-1)
     elif imagearray.shape[0] in [32]:
-        GCpre = imagearray[8*0 + 1 : 8*1, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
-        GCunc = imagearray[8*3 + 1 : 8*4, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
-        RFPpre = imagearray[8*0 + 1 : 8*1, 0, 1, :, :, :].sum(axis=-1).sum(axis=0)
+        GCpre = imagearray[8*1 + 1 : 8*2, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+        GCunc = imagearray[8*2 + 1 : 8*3, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+        RFPpre = imagearray[8*1 + 1 : 8*2, 0, 1, :, :, :].sum(axis=-1).sum(axis=0)
     elif imagearray.shape[0] in [55]:
         GCpre = imagearray[4,0,0,:,:,:].sum(axis=-1)
-        GCunc = imagearray[6,0,0,:,:,:].sum(axis=-1)
+        GCunc = imagearray[5,0,0,:,:,:].sum(axis=-1)
     assert len(GCpre.shape) == 2 #Image should be 2D
 
 
@@ -296,11 +296,11 @@ def plot_GCaMP_and_RFP(each_file, slope = 0, intercept = 0,
     
     # Calculate GCaMP F/F0 (for left plot)
     if imagearray.shape[0] in [4, 33, 34]:
-        GCpre = imagearray[0,0,0,:,:,:].sum(axis=-1)
-        GCunc = imagearray[3,0,0,:,:,:].sum(axis=-1)
+        GCpre = imagearray[1,0,0,:,:,:].sum(axis=-1)
+        GCunc = imagearray[2,0,0,:,:,:].sum(axis=-1)
     elif imagearray.shape[0] in [32]:
-        GCpre = imagearray[8*0 + 1 : 8*1, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
-        GCunc = imagearray[8*3 + 1 : 8*4, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+        GCpre = imagearray[8*1 + 1 : 8*2, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+        GCunc = imagearray[8*2 + 1 : 8*3, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
     assert len(GCpre.shape) == 2 #Image should be 2D
 
     GC_pre_med = median_filter(GCpre, size=3)
@@ -409,11 +409,14 @@ def calc_spine_dend_GCaMP(
     imagearray=np.array(uncaging_iminfo.image)
     
     if imagearray.shape[0] in [4, 33, 34]:
-        GCpre = imagearray[0,0,0,:,:,:].sum(axis=-1)
-        GCunc = imagearray[3,0,0,:,:,:].sum(axis=-1)
+        GCpre = imagearray[1,0,0,:,:,:].sum(axis=-1)
+        GCunc = imagearray[2,0,0,:,:,:].sum(axis=-1)
     elif imagearray.shape[0] in [32]:
-        GCpre = imagearray[8*0 + 1 : 8*1, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
-        GCunc = imagearray[8*3 + 1 : 8*4, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+        GCpre = imagearray[8*1 + 1 : 8*2, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+        GCunc = imagearray[8*2 + 1 : 8*3, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+    else:
+        print("Image shape is not expected size.  ",imagearray.shape)
+        return -1, -1
     assert len(GCpre.shape) == 2 #Image should be 2D
 
     GC_pre_med = median_filter(GCpre, size=3)
@@ -486,9 +489,38 @@ def calc_spine_dend_GCaMP(
     
     
 if __name__ == "__main__":
-    each_file = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20251216\auto1\1_pos1__highmag_1_005.flim"
-    plot_GCaMP_and_RFP(each_file = each_file, ch1or2 = 2)
     
-    
-    
-    
+    import datetime
+    results = []
+    for each_header in ["1","2","3","4","5","6"]:
+        for highmag_num in range(1, 7):
+            nth_spine = 0
+            for each_acq_num in range(1, 50):
+                each_file = rf"G:\ImagingData\Tetsuya\20260225\auto1\{each_header}_pos1__highmag_{highmag_num}_00{each_acq_num}.flim"
+                if not os.path.exists(each_file):
+                    continue
+                #check date modified is more than 20 seconds before the current time
+                if datetime.datetime.fromtimestamp(os.path.getmtime(each_file)) > datetime.datetime.now() - datetime.timedelta(seconds=20):
+                    continue
+                else:
+                    print(f"Processing {each_file}")
+                    inipath = os.path.join(os.path.dirname(each_file), 
+                        os.path.basename(each_file)[:-9],
+                        os.path.basename(each_file)[:-9]+ f"_{nth_spine:03d}.ini")
+                    print("inipath ", inipath)
+                spineF_F0, shaftF_F0 = calc_spine_dend_GCaMP(each_file = each_file, 
+                        each_ini = inipath,save_img = True, save_suffix = f"_{nth_spine:03d}")
+                if spineF_F0 == -1:
+                    continue
+                print("spineF_F0 ", spineF_F0)
+                print("shaftF_F0 ", shaftF_F0)
+                nth_spine += 1
+                results.append({
+                    "file_path": each_file,
+                    "spineF_F0": spineF_F0,
+                    "shaftF_F0": shaftF_F0
+                })
+    save_csv_path = os.path.join(os.path.dirname(each_file), "plot", "result_F_F0.csv")
+    df = pd.DataFrame(results)
+    df.to_csv(save_csv_path, index=False)
+    print("saved as ", save_csv_path)
