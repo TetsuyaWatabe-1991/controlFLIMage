@@ -128,6 +128,12 @@ class ROIAnalysisGUIWithViewMode(ROIAnalysisGUI):
                 self.view_mode_checkbox.setChecked(True)
                 self.view_mode_checkbox.setEnabled(True)
                 self.view_mode_checkbox.blockSignals(False)
+            # Refresh immediately so the initial title/label also shows Review Mode.
+            if hasattr(self, "frame_info_label"):
+                self.frame_info_label.setText(f"Review Mode Frame {self.current_frame + 1}/{self.total_frames}")
+                self.frame_info_label.setStyleSheet("color: red; font-weight: bold;")
+            self.display_time_series_frame(self.current_frame)
+            self.update_plot()
         except Exception as e:
             print(f"Could not load existing ROI for View mode: {e}")
 
@@ -144,7 +150,7 @@ class ROIAnalysisGUIWithViewMode(ROIAnalysisGUI):
         mode_label = QLabel("Mode:")
         mode_label.setFont(QFont("Arial", 10, QFont.Bold))
         mode_layout.addWidget(mode_label)
-        self.view_mode_checkbox = QCheckBox("View mode (read-only)")
+        self.view_mode_checkbox = QCheckBox("Review mode (read-only)")
         self.view_mode_checkbox.setChecked(False)
         self.view_mode_checkbox.setToolTip(
             "When checked: only view ROI on each frame; cannot move or draw ROI. "
@@ -152,8 +158,16 @@ class ROIAnalysisGUIWithViewMode(ROIAnalysisGUI):
         )
         self.view_mode_checkbox.setEnabled(self._has_roi_defined())
         self.view_mode_checkbox.stateChanged.connect(self._on_view_mode_toggled)
+
+        # Place Reject button outside the mode frame (above it) to avoid accidental clicks.
+        if hasattr(self, "reject_button") and self.reject_button is not None:
+            try:
+                layout.removeWidget(self.reject_button)
+            except Exception:
+                pass
+            layout.insertWidget(0, self.reject_button)
         mode_layout.addWidget(self.view_mode_checkbox)
-        layout.insertWidget(0, mode_frame)
+        layout.insertWidget(1, mode_frame)
 
     def _on_view_mode_toggled(self, state):
         """Handle View mode checkbox: allow only if ROI is defined."""
@@ -169,8 +183,12 @@ class ROIAnalysisGUIWithViewMode(ROIAnalysisGUI):
                 )
                 return
             self.view_mode = True
+            if hasattr(self, "frame_info_label"):
+                self.frame_info_label.setStyleSheet("color: red; font-weight: bold;")
         else:
             self.view_mode = False
+            if hasattr(self, "frame_info_label"):
+                self.frame_info_label.setStyleSheet("")
 
     def enable_time_series_mode(self):
         """Enable time series mode and enable View mode checkbox when ROI is defined."""
@@ -191,6 +209,8 @@ class ROIAnalysisGUIWithViewMode(ROIAnalysisGUI):
         self.frame_slider.setValue(self.current_frame)
         self._updating_slider = False
         self.frame_info_label.setText(f"Frame {self.current_frame + 1}/{self.total_frames}")
+        if self.view_mode:
+            self.frame_info_label.setText(f"Review Mode Frame {self.current_frame + 1}/{self.total_frames}")
         if self.frame_info_df is not None and hasattr(self, "file_info_display"):
             self.file_info_display.setText(self._build_file_info_text_for_frame(self.current_frame))
         if self.current_frame in self.frame_roi_parameters:
@@ -220,3 +240,14 @@ class ROIAnalysisGUIWithViewMode(ROIAnalysisGUI):
         if self.view_mode:
             return
         super().on_mouse_move(event)
+
+    def display_time_series_frame(self, frame_idx):
+        """Override title in review mode; keep base rendering."""
+        super().display_time_series_frame(frame_idx)
+        if self.view_mode:
+            self.image_ax.set_title(
+                f"Review Mode Frame {frame_idx + 1}/{self.total_frames}",
+                color="red",
+                fontweight="bold",
+            )
+            self.image_canvas.draw_idle()

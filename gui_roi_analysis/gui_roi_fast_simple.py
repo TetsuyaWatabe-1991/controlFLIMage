@@ -60,8 +60,49 @@ TIFF_WITH_UNCAGING_SUFFIX = "_with_uncaging"
 ROI_MASK_RAW_SUFFIX = "_roi_mask_raw"
 ROI_TYPES = ["Spine", "DendriticShaft", "Background"]
 
+# Default ROI geometry (same as calc_spine_dend_GCaMP in flimage_graph_func.py)
+DEFAULT_CIRCLE_RADIUS = 3
+DEFAULT_RECT_LENGTH = 10
+DEFAULT_RECT_HEIGHT = 2
+DEFAULT_BG_PERCENTILE = 10
+
 # Lifetime fitting (transient_roi_analysis style)
 SYNC_RATE = 80e6  # Hz
+
+
+def _low_intensity_largest_mask_2d(image: np.ndarray, percentile: float = 10) -> np.ndarray:
+    """
+    Build a 2D boolean mask for the largest connected region of low-intensity pixels.
+    Same logic as spine_roi_from_S.low_intensity_largest_mask but returns mask and no matplotlib.
+    Used for auto Background ROI in create_initial_roi_masks_from_ini.
+    """
+    from scipy.ndimage import label, median_filter, binary_opening, binary_closing
+    threshold = np.percentile(image, percentile)
+    image_smooth = median_filter(image, size=5)
+    low_mask = image_smooth <= threshold
+    low_mask = binary_opening(low_mask, structure=np.ones((3, 3)))
+    low_mask = binary_closing(low_mask, structure=np.ones((3, 3)))
+    h, w = image.shape
+    margin_y, margin_x = max(1, h // 20), max(1, w // 20)
+    low_mask[:margin_y, :] = False
+    low_mask[:, :margin_x] = False
+    low_mask[:, -margin_x:] = False
+    low_mask[-margin_y:, :] = False
+    labeled, num_features = label(low_mask)
+    if num_features == 0:
+        out = np.zeros_like(image, dtype=bool)
+        out[10:20, 10:20] = True
+        return out
+    sizes = np.bincount(labeled.ravel())
+    sizes[0] = 0
+    largest_label = np.argmax(sizes)
+    if sizes[largest_label] == 0:
+        out = np.zeros_like(image, dtype=bool)
+        out[10:20, 10:20] = True
+        return out
+    out = np.zeros_like(image, dtype=bool)
+    out[labeled == largest_label] = True
+    return out
 
 
 def _parse_acq_time(acq_time_str: str) -> datetime:
@@ -452,6 +493,201 @@ def rebuild_tiff_full_size_for_roi(combined_df: pd.DataFrame, ch: int, z_plus_mi
     return combined_df
 
 
+def _rebuild_tiff_uncaging_only_for_roi(combined_df: pd.DataFrame, ch: int, z_plus_minus: int):
+    """
+    Build full-size stack per set containing only uncaging frames (no pre/post, no alignment).
+    Saves to after_align_full_save_path and after_align_save_path.
+    Sets n_pre_frames=0, n_post_frames=0, n_unc_frames=N. Unc drift is set to 0.
+    Used by run_tiff_uncaging_roi_no_zstack.
+    """
+    required = ["corrected_uncaging_z", "corrected_uncaging_x", "corrected_uncaging_y"]
+    if not all(c in combined_df.columns for c in required):
+        print("Warning: combined_df missing required columns. Skipping uncaging-only build.")
+        return combined_df
+
+    for each_filepath_without_number in combined_df["filepath_without_number"].unique():
+        each_filegroup_df = combined_df[combined_df["filepath_without_number"] == each_filepath_without_number]
+        folder = os.path.dirname(each_filepath_without_number)
+        tif_savefolder = os.path.join(folder, "tif")
+        os.makedirs(tif_savefolder, exist_ok=True)
+
+        for each_group in each_filegroup_df["group"].unique():
+            each_group_df = each_filegroup_df[each_filegroup_df["group"] == each_group]
+
+            for each_set_label in each_group_df["nth_set_label"].unique():
+                if each_set_label == -1:
+                    continue
+                each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
+                uncaging_rows = each_set_df[each_set_df["phase"] == "unc"]
+                if len(uncaging_rows) == 0:
+                    continue
+                unc_path = uncaging_rows.iloc[0]["file_path"]
+                if not os.path.exists(unc_path):
+                    continue
+
+                try:
+                    unc_frames_full = _load_uncaging_full(unc_path, ch)
+                except Exception as e:
+                    print(f"  Set {each_set_label}: _load_uncaging_full failed: {e}")
+                    continue
+                if not unc_frames_full:
+                    continue
+                unc_stack = np.stack(unc_frames_full, axis=0)
+
+                unc_row_idx = each_set_df[each_set_df["phase"] == "unc"].index[0]
+                combined_df.loc[unc_row_idx, "unc_drift_y"] = 0.0
+                combined_df.loc[unc_row_idx, "unc_drift_x"] = 0.0
+
+                base_name = f"{each_group}_{each_set_label}_unc_only"
+                new_tiff_path = os.path.join(tif_savefolder, base_name + ".tif")
+                tifffile.imwrite(new_tiff_path, unc_stack.astype(np.float32))
+                combined_df.loc[each_set_df.index, "after_align_full_save_path"] = new_tiff_path
+                combined_df.loc[each_set_df.index, "after_align_save_path"] = new_tiff_path
+                combined_df.loc[each_set_df.index, "n_pre_frames"] = 0
+                combined_df.loc[each_set_df.index, "n_unc_frames"] = unc_stack.shape[0]
+                combined_df.loc[each_set_df.index, "n_post_frames"] = 0
+                print(f"  Set {each_set_label}: saved {base_name}.tif (Unc only: {unc_stack.shape[0]} frames)")
+
+    return combined_df
+
+
+def _build_initial_roi_masks_for_set(
+    inipath: str,
+    unc_stack: np.ndarray,
+    tiff_dir: str,
+    base_name: str,
+    circle_radius: int = DEFAULT_CIRCLE_RADIUS,
+    rect_length: int = DEFAULT_RECT_LENGTH,
+    rect_height: int = DEFAULT_RECT_HEIGHT,
+    bg_percentile: float = DEFAULT_BG_PERCENTILE,
+) -> None:
+    """
+    Create Spine, DendriticShaft, and Background ROI mask TIFFs for one set.
+    Same geometry as calc_spine_dend_GCaMP (circle for spine, rectangle for shaft, low-intensity for bg).
+    Writes {base_name}_Spine_roi_mask.tif, _DendriticShaft_roi_mask.tif, _Background_roi_mask.tif.
+    If inipath is None or empty, only Background is created.
+    """
+    import sys
+    _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if _root not in sys.path:
+        sys.path.insert(0, _root)
+    _foruse = os.path.join(_root, "ForUse", "temporal_use_1")
+    if _foruse not in sys.path:
+        sys.path.insert(0, _foruse)
+    from multidim_tiff_viewer import read_xyz_single
+    from skimage.draw import disk, polygon
+
+    n_frames, h, w = unc_stack.shape
+    max_proj = unc_stack.max(axis=0)
+    spine_mask_2d = None
+    shaft_mask_2d = None
+    if inipath and os.path.exists(inipath):
+        try:
+            from flimage_graph_func import calc_point_on_line_close_to_xy
+            spine_zyx, dend_slope, dend_intercept, _ = read_xyz_single(inipath, return_excluded=True)
+            spine_x, spine_y = float(spine_zyx[2]), float(spine_zyx[1])
+            y_c, x_c = calc_point_on_line_close_to_xy(spine_x, spine_y, dend_slope, dend_intercept)
+            rr_circ, cc_circ = disk((spine_y, spine_x), circle_radius, shape=(h, w))
+            spine_mask_2d = np.zeros((h, w), dtype=bool)
+            spine_mask_2d[rr_circ, cc_circ] = True
+            theta = np.arctan(dend_slope)
+            dx, dy = (rect_length / 2) * np.cos(theta), (rect_length / 2) * np.sin(theta)
+            px, py = (rect_height / 2) * -np.sin(theta), (rect_height / 2) * np.cos(theta)
+            corners_x = [x_c - dx - px, x_c - dx + px, x_c + dx + px, x_c + dx - px]
+            corners_y = [y_c - dy - py, y_c - dy + py, y_c + dy + py, y_c + dy - py]
+            rr_rect, cc_rect = polygon(corners_y, corners_x, shape=(h, w))
+            shaft_mask_2d = np.zeros((h, w), dtype=bool)
+            shaft_mask_2d[rr_rect, cc_rect] = True
+        except Exception as e:
+            print(f"    INI ROI build failed: {e}")
+            spine_mask_2d = shaft_mask_2d = None
+    bg_mask_2d = _low_intensity_largest_mask_2d(max_proj, bg_percentile)
+    for roi_type, mask_2d in [("Spine", spine_mask_2d), ("DendriticShaft", shaft_mask_2d), ("Background", bg_mask_2d)]:
+        if mask_2d is None:
+            continue
+        path = os.path.join(tiff_dir, f"{base_name}_{roi_type}_roi_mask.tif")
+        tifffile.imwrite(path, np.stack([mask_2d.astype(np.uint8)] * n_frames, axis=0), photometric="minisblack")
+        print(f"    {base_name}: saved {roi_type} ROI -> {os.path.basename(path)}")
+
+
+def create_initial_roi_masks_from_ini(
+    combined_df: pd.DataFrame,
+    max_distance_pix: float = 20.0,
+    circle_radius: int = DEFAULT_CIRCLE_RADIUS,
+    rect_length: int = DEFAULT_RECT_LENGTH,
+    rect_height: int = DEFAULT_RECT_HEIGHT,
+    bg_percentile: float = DEFAULT_BG_PERCENTILE,
+) -> None:
+    """
+    Standalone: build Spine / DendriticShaft / Background ROI mask TIFFs from INI for all sets in combined_df.
+    Uses combined_df to get file paths (after_align_save_path, file_path for unc row), finds matching INI
+    per set via flim_ini_match_by_uncaging_pos.get_matching_ini_for_flim, then writes *_roi_mask.tif
+    next to each set's TIFF. Fully independent of run_tiff_uncaging_roi_no_zstack.
+
+    Example:
+        combined_df = pd.read_pickle(r"path/to/combined_df_1.pkl")
+        create_initial_roi_masks_from_ini(combined_df, max_distance_pix=20)
+    """
+    required = ["filepath_without_number", "group", "nth_set_label", "phase", "file_path", "after_align_save_path"]
+    missing = [c for c in required if c not in combined_df.columns]
+    if missing:
+        print(f"create_initial_roi_masks_from_ini: combined_df missing columns: {missing}. Skipping.")
+        return
+    import sys
+    _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if _root not in sys.path:
+        sys.path.insert(0, _root)
+    _foruse = os.path.join(_root, "ForUse", "temporal_use_1")
+    if _foruse not in sys.path:
+        sys.path.insert(0, _foruse)
+    try:
+        from flim_ini_match_by_uncaging_pos import get_matching_ini_for_flim
+    except ImportError as e:
+        print(f"create_initial_roi_masks_from_ini: import failed: {e}. Skipping.")
+        return
+    print("Creating initial ROI masks from INI (Spine, DendriticShaft, Background)...")
+    for each_filepath_without_number in combined_df["filepath_without_number"].unique():
+        each_filegroup_df = combined_df[combined_df["filepath_without_number"] == each_filepath_without_number]
+        for each_group in each_filegroup_df["group"].unique():
+            each_group_df = each_filegroup_df[each_filegroup_df["group"] == each_group]
+            for each_set_label in each_group_df["nth_set_label"].unique():
+                if each_set_label == -1:
+                    continue
+                each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
+                tiff_path = each_set_df["after_align_save_path"].iloc[0]
+                if pd.isna(tiff_path) or not os.path.exists(tiff_path):
+                    print(f"  Set {each_group}_{each_set_label}: TIFF not found, skip")
+                    continue
+                unc_rows = each_set_df[each_set_df["phase"] == "unc"]
+                if len(unc_rows) == 0:
+                    print(f"  Set {each_group}_{each_set_label}: no unc row, skip")
+                    continue
+                unc_path = unc_rows.iloc[0]["file_path"]
+                if not os.path.exists(unc_path):
+                    print(f"  Set {each_group}_{each_set_label}: unc FLIM not found, skip")
+                    continue
+                inipath = get_matching_ini_for_flim(unc_path, max_distance_pix=max_distance_pix)
+                if inipath is None:
+                    print(f"  Set {each_group}_{each_set_label}: no matching INI (max_dist={max_distance_pix} px), Background only")
+                try:
+                    unc_stack = tifffile.imread(tiff_path)
+                    if unc_stack.ndim == 2:
+                        unc_stack = unc_stack[np.newaxis, ...]
+                    _build_initial_roi_masks_for_set(
+                        inipath=inipath or "",
+                        unc_stack=unc_stack,
+                        tiff_dir=os.path.dirname(tiff_path),
+                        base_name=os.path.splitext(os.path.basename(tiff_path))[0],
+                        circle_radius=circle_radius,
+                        rect_length=rect_length,
+                        rect_height=rect_height,
+                        bg_percentile=bg_percentile,
+                    )
+                except Exception as e:
+                    print(f"  Set {each_group}_{each_set_label}: failed: {e}")
+    print("create_initial_roi_masks_from_ini: done.")
+
+
 def _get_shift_per_stack_frame(each_set_df: pd.DataFrame, n_pre: int, n_unc: int, n_post: int):
     """
     Return list of (shift_y, shift_x) for each stack frame index 0..n_pre+n_unc+n_post-1.
@@ -701,8 +937,11 @@ def quantify_intensity_from_flim(
                 tiff_dir = os.path.dirname(tiff_path)
                 tiff_basename = os.path.splitext(os.path.basename(tiff_path))[0]
                 roi_raw = {}
+                unc_only = n_pre == 0 and n_post == 0
                 for roi_type in ROI_TYPES:
                     raw_path = os.path.join(tiff_dir, f"{tiff_basename}_{roi_type}{ROI_MASK_RAW_SUFFIX}.tif")
+                    if not os.path.exists(raw_path) and unc_only:
+                        raw_path = os.path.join(tiff_dir, f"{tiff_basename}_{roi_type}_roi_mask.tif")
                     if not os.path.exists(raw_path):
                         continue
                     roi_raw[roi_type] = tifffile.imread(raw_path)
@@ -773,6 +1012,11 @@ def quantify_intensity_from_flim(
     if total_items > 0 and processed > 0:
         print(f"  Progress: 100% ({processed}/{total_items} frames)")
     out_df = pd.DataFrame(all_rows)
+    if len(out_df) == 0 and total_items > 0:
+        print("WARNING: No rows were produced. CSV not saved. Check that *_roi_mask_raw.tif files exist")
+        print("  (e.g. Spine_roi_mask_raw.tif, DendriticShaft_roi_mask_raw.tif, Background_roi_mask_raw.tif)")
+        print("  in the same folder as each set's uncaging TIFF. They are created by save_drift_corrected_roi_masks")
+        print("  after ROI definition. If you skipped ROI definition or closed without saving, run the ROI GUI again.")
     if len(out_df) > 0:
         # frame: per-set sequential index (0, 1, 2, ...) in order pre -> unc -> post (same as frame_info)
         out_df["frame"] = out_df.groupby(["set_label", "group"]).cumcount()
@@ -886,12 +1130,14 @@ def run_tiff_uncaging_roi(
     df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df_1.pkl")
     combined_df = None
 
+    loaded_existing_combined_df = False
     if not TEST_MODE:
         yn_already_have_combined_df = ask_yes_no_gui("Do you already have combined_df_1.pkl?")
         if yn_already_have_combined_df:
             df_save_path_1 = ask_open_path_gui()
             if df_save_path_1 and os.path.exists(df_save_path_1):
                 combined_df = pd.read_pickle(df_save_path_1)
+                loaded_existing_combined_df = True
                 print(f"Loaded: {df_save_path_1}")
 
     if combined_df is None:
@@ -932,10 +1178,18 @@ def run_tiff_uncaging_roi(
         print("No data. Exiting.")
         return
 
-    print("\n" + "=" * 60)
-    print("Building full-size stacks for ROI definition (Pre + Uncaging + Post)")
-    print("=" * 60)
-    combined_df = rebuild_tiff_full_size_for_roi(combined_df, ch_1or2, z_plus_minus)
+    skip_full_size_build = False
+    if loaded_existing_combined_df:
+        skip_full_size_build = ask_yes_no_gui(
+            "Skip 'Building full-size stacks for ROI definition' and use existing stack paths?"
+        )
+    if skip_full_size_build:
+        print("Skipped building full-size stacks for ROI definition.")
+    else:
+        print("\n" + "=" * 60)
+        print("Building full-size stacks for ROI definition (Pre + Uncaging + Post)")
+        print("=" * 60)
+        combined_df = rebuild_tiff_full_size_for_roi(combined_df, ch_1or2, z_plus_minus)
     if df_save_path_1:
         combined_df.to_pickle(df_save_path_1)
         combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
@@ -943,10 +1197,22 @@ def run_tiff_uncaging_roi(
     # Use full-size TIFF for ROI definition so user draws on full image
     if "after_align_full_save_path" in combined_df.columns:
         combined_df["after_align_save_path"] = combined_df["after_align_full_save_path"].fillna(combined_df["after_align_save_path"])
-        # Red dot: use full image coords (corrected_uncaging_x/y) when displaying full-size TIFF
+        # For full-size TIFF, uncaging frames are aligned with unc_drift (query->ref shift).
+        # So display coordinate should follow uncaging raw center + unc_drift.
         full_mask = combined_df["after_align_full_save_path"].notna()
         combined_df.loc[full_mask, "uncaging_display_x"] = combined_df.loc[full_mask, "corrected_uncaging_x"]
         combined_df.loc[full_mask, "uncaging_display_y"] = combined_df.loc[full_mask, "corrected_uncaging_y"]
+        if all(c in combined_df.columns for c in ["center_x", "center_y", "unc_drift_x", "unc_drift_y"]):
+            key_cols = ["filepath_without_number", "group", "nth_set_label"]
+            for _, each_set_df in combined_df[full_mask].groupby(key_cols, sort=False):
+                unc_rows = each_set_df[each_set_df["phase"] == "unc"]
+                if len(unc_rows) == 0:
+                    continue
+                unc_row = unc_rows.iloc[0]
+                display_x = float(unc_row.get("center_x", 0) or 0) + float(unc_row.get("unc_drift_x", 0) or 0)
+                display_y = float(unc_row.get("center_y", 0) or 0) + float(unc_row.get("unc_drift_y", 0) or 0)
+                combined_df.loc[each_set_df.index, "uncaging_display_x"] = display_x
+                combined_df.loc[each_set_df.index, "uncaging_display_y"] = display_y
     if df_save_path_1:
         combined_df.to_pickle(df_save_path_1)
         combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
@@ -1002,6 +1268,184 @@ def run_tiff_uncaging_roi(
     try:
         display(datetime.now())
     except:
+        pass
+    print(summary_str)
+    return df_save_path_1, out_csv_path
+
+
+def run_tiff_uncaging_roi_no_zstack(
+    ch_1or2=1,
+    z_plus_minus=2,
+    pre_length=2,
+    photon_threshold: int = 15,
+    total_photon_threshold: int = 1000,
+    ask_stop_here_TF=False,
+    uncaging_frame_num=None,
+    titration_frame_num=None,
+):
+    """
+    Same workflow as run_tiff_uncaging_roi, but builds only uncaging-frame stacks for ROI
+    (no pre/post, no alignment). Phase detection (pre/unc/post) is unchanged; only the
+    TIFF used for ROI definition and the frame counts (n_pre=0, n_post=0) differ.
+    Quantification runs on uncaging frames only.
+    """
+    summary_str = ""
+    summary_str += datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n"
+    summary_str += "run_tiff_uncaging_roi_no_zstack (uncaging-only stacks)\n"
+    summary_str += f"ch_1or2: {ch_1or2}\n"
+    summary_str += f"z_plus_minus: {z_plus_minus}\n"
+    summary_str += f"pre_length: {pre_length}\n"
+    summary_str += f"photon_threshold: {photon_threshold}\n"
+    summary_str += f"total_photon_threshold: {total_photon_threshold}\n"
+    summary_str += "=" * 60 + "\n"
+
+    if TEST_MODE:
+        one_of_filepath_list = [TEST_FLIM_PATH] if not os.path.isfile(TEST_FLIM_PATH[:-8] + "002.flim") else [TEST_FLIM_PATH[:-8] + "002.flim"]
+        print("TEST MODE: using", one_of_filepath_list[0])
+    else:
+        one_of_filepath = ask_open_path_gui(filetypes=[("FLIM files", "*.flim")])
+        if not one_of_filepath:
+            print("No file selected. Exiting.")
+            return
+        one_of_filepath_list = [one_of_filepath]
+
+    if not one_of_filepath_list:
+        print("No FLIM path. Exiting.")
+        return
+
+    seen_groups = {}
+    deduped = []
+    for p in one_of_filepath_list:
+        base = os.path.normpath(p[:-8]) if len(p) > 8 and p.endswith(".flim") else p
+        if base not in seen_groups:
+            seen_groups[base] = p
+            deduped.append(p)
+    one_of_filepath_list = deduped
+
+    df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df_1.pkl")
+    combined_df = None
+
+    if not TEST_MODE:
+        yn_already_have_combined_df = ask_yes_no_gui("Do you already have combined_df_1.pkl?")
+        if yn_already_have_combined_df:
+            df_save_path_1 = ask_open_path_gui()
+            if df_save_path_1 and os.path.exists(df_save_path_1):
+                combined_df = pd.read_pickle(df_save_path_1)
+                print(f"Loaded: {df_save_path_1}")
+
+    if combined_df is None:
+        combined_df = pd.DataFrame()
+        for one_of_filepath in one_of_filepath_list:
+            print(f"\nProcessing ... {one_of_filepath}\n")
+            try:
+                fp_kwargs = dict(
+                    one_of_filepath=one_of_filepath,
+                    z_plus_minus=z_plus_minus,
+                    ch_1or2=ch_1or2,
+                    pre_length=pre_length,
+                    save_plot_TF=SAVE_PLOT_TF,
+                    save_tif_TF=SAVE_TIF_TF,
+                    return_error_dict=False,
+                )
+                if uncaging_frame_num is not None:
+                    fp_kwargs["uncaging_frame_num"] = uncaging_frame_num
+                if titration_frame_num is not None:
+                    fp_kwargs["titration_frame_num"] = titration_frame_num
+                temp_df = first_processing_for_flim_files(**fp_kwargs)
+                combined_df = pd.concat([combined_df, temp_df], ignore_index=True)
+            except Exception as e:
+                print(f"first_processing failed: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
+        df_save_path_1 = ask_save_path_gui()
+        if df_save_path_1 and (df_save_path_1[-4:] != ".pkl"):
+            df_save_path_1 = df_save_path_1 + ".pkl"
+        else:
+            df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df_1.pkl")
+        combined_df.to_pickle(df_save_path_1)
+        combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
+        print(f"Saved: {df_save_path_1}")
+
+    if combined_df is None or len(combined_df) == 0:
+        print("No data. Exiting.")
+        return
+
+    print("\n" + "=" * 60)
+    print("Building uncaging-only stacks for ROI definition (no pre/post alignment)")
+    print("=" * 60)
+    combined_df = _rebuild_tiff_uncaging_only_for_roi(combined_df, ch_1or2, z_plus_minus)
+    if df_save_path_1:
+        combined_df.to_pickle(df_save_path_1)
+        combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
+
+    if "after_align_full_save_path" in combined_df.columns:
+        combined_df["after_align_save_path"] = combined_df["after_align_full_save_path"].fillna(combined_df["after_align_save_path"])
+        full_mask = combined_df["after_align_full_save_path"].notna()
+        combined_df.loc[full_mask, "uncaging_display_x"] = combined_df.loc[full_mask, "corrected_uncaging_x"]
+        combined_df.loc[full_mask, "uncaging_display_y"] = combined_df.loc[full_mask, "corrected_uncaging_y"]
+        if all(c in combined_df.columns for c in ["center_x", "center_y", "unc_drift_x", "unc_drift_y"]):
+            key_cols = ["filepath_without_number", "group", "nth_set_label"]
+            for _, each_set_df in combined_df[full_mask].groupby(key_cols, sort=False):
+                unc_rows = each_set_df[each_set_df["phase"] == "unc"]
+                if len(unc_rows) == 0:
+                    continue
+                unc_row = unc_rows.iloc[0]
+                display_x = float(unc_row.get("center_x", 0) or 0) + float(unc_row.get("unc_drift_x", 0) or 0)
+                display_y = float(unc_row.get("center_y", 0) or 0) + float(unc_row.get("unc_drift_y", 0) or 0)
+                combined_df.loc[each_set_df.index, "uncaging_display_x"] = display_x
+                combined_df.loc[each_set_df.index, "uncaging_display_y"] = display_y
+    if df_save_path_1:
+        combined_df.to_pickle(df_save_path_1)
+        combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
+
+    if df_save_path_1:
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(sys.argv)
+        file_selection_gui = launch_file_selection_gui_tiff_only(
+            combined_df,
+            df_save_path_1,
+            additional_columns=["dt"],
+            save_auto=False,
+        )
+        app.exec_()
+        print("ROI definition (uncaging-only) finished.")
+        if os.path.exists(df_save_path_1):
+            combined_df = pd.read_pickle(df_save_path_1)
+        print("\nSaving drift-corrected ROI masks (Type B: raw FLIM coordinates)...")
+        save_drift_corrected_roi_masks(combined_df)
+        if df_save_path_1:
+            combined_df.to_pickle(df_save_path_1)
+            combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
+
+    if ask_stop_here_TF:
+        if ask_yes_no_gui("Stop here?"):
+            return
+
+    if "reject" in combined_df.columns:
+        combined_df["reject"] = ((combined_df["reject"] == True) | (combined_df["reject"] == 1)).astype(int)
+    else:
+        combined_df["reject"] = 0
+
+    print("Start intensity and lifetime quantification from .flim files (uncaging only)")
+    out_csv_path = df_save_path_1.replace(".pkl", "_intensity_lifetime_all_frames.csv")
+    quantify_intensity_from_flim(
+        combined_df, ch_1or2, z_plus_minus, out_csv_path,
+        photon_threshold=photon_threshold,
+        total_photon_threshold=total_photon_threshold,
+    )
+    summary_str += f"out_csv_path: {out_csv_path}\n"
+    summary_str += "=" * 60 + "\n"
+    summary_str += "finished at " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n"
+    print("Done.")
+
+    save_summary_str_path = os.path.join(os.path.dirname(df_save_path_1), "summary_str_no_zstack.txt")
+    with open(save_summary_str_path, "w") as f:
+        f.write(summary_str)
+    try:
+        display(datetime.now())
+    except Exception:
         pass
     print(summary_str)
     return df_save_path_1, out_csv_path

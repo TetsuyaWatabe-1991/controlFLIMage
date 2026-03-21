@@ -12,7 +12,7 @@ import matplotlib.patches as patches
 import time
 
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QPushButton, QSlider, QLabel, QButtonGroup,
     QFrame, QSplitter, QSizePolicy, QCheckBox
 )
@@ -87,6 +87,7 @@ class ROIAnalysisGUI(QMainWindow):
         
         # Analysis state
         self.analysis_completed = False
+        self.rejected_by_user = False
         self.roi_moved_in_current_frame = False
         
         # ROI coordinate snapping option
@@ -265,6 +266,11 @@ class ROIAnalysisGUI(QMainWindow):
         self.complete_analysis_button.setStyleSheet("QPushButton { background-color: lightgreen; }")
         layout.addWidget(self.complete_analysis_button)
         
+        # Reject button (kept near completion controls to minimize UI changes)
+        self.reject_button = QPushButton("Reject")
+        self.reject_button.setStyleSheet("QPushButton { background-color: #ffcccc; }")
+        layout.addWidget(self.reject_button)
+        
         # Intensity values display
         intensity_label = QLabel("Intensity Values:")
         intensity_label.setFont(QFont("Arial", 10, QFont.Bold))
@@ -440,6 +446,7 @@ class ROIAnalysisGUI(QMainWindow):
         # Control buttons
         self.back_to_maxproj_button.clicked.connect(self.back_to_max_proj)
         self.complete_analysis_button.clicked.connect(self.complete_analysis)
+        self.reject_button.clicked.connect(self.reject_analysis)
         
         # Snap to pixels checkbox
         self.snap_checkbox.stateChanged.connect(self.on_snap_changed)
@@ -1044,6 +1051,8 @@ class ROIAnalysisGUI(QMainWindow):
         self.is_defining_roi = True
         self.current_roi = None
         self.roi_parameters = {}
+        # Clear previously cached per-frame ROIs so re-definition starts cleanly.
+        self.frame_roi_parameters = {}
         self.polygon_points = []
         
         self.prev_button.setEnabled(False)
@@ -1341,6 +1350,13 @@ class ROIAnalysisGUI(QMainWindow):
             self.close()
         else:
             print("Cannot complete analysis - no ROI defined")
+    
+    def reject_analysis(self):
+        """Mark this set as rejected and close the window immediately."""
+        self.rejected_by_user = True
+        self.analysis_completed = False
+        print(f"Rejected by user for {self.header}")
+        self.close()
 
     def update_current_frame_intensity(self):
         """Update intensity for current frame only (for frame-specific ROI mode)."""

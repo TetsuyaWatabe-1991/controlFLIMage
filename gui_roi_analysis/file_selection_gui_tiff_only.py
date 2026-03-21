@@ -337,6 +337,7 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
             from gui_integration_tiff_only import launch_roi_analysis_gui_tiff_only
             
             roi_types = ["Spine", "DendriticShaft", "Background"]
+            rejected_during_run = False
             for roi_type in roi_types:
                 self.log_message(f"Launching {roi_type} ROI analysis for {group}, Set {set_label}")
                 
@@ -349,7 +350,7 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
                 tiff_save_path = os.path.join(tiff_dir, f"{tiff_basename_no_ext}_{roi_type}_roi_mask.tif")
                 self.log_message(f"ROI mask will be saved to: {tiff_save_path}")
                 
-                launch_roi_analysis_gui_tiff_only(
+                launch_result = launch_roi_analysis_gui_tiff_only(
                     self.combined_df, 
                     tiff_path, 
                     group, 
@@ -357,6 +358,19 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
                     header=roi_type,
                     save_tiff_path=tiff_save_path
                 )
+                if isinstance(launch_result, dict) and launch_result.get("rejected", False):
+                    # Mark rejected and stop launching remaining ROI windows.
+                    self.log_message(f"Rejected during {roi_type} ROI analysis. Stopping remaining ROI windows.")
+                    if 'filepath_without_number' in self.combined_df.columns:
+                        mask = (self.combined_df['filepath_without_number'] == group) & (self.combined_df['nth_set_label'] == set_label)
+                    else:
+                        mask = (self.combined_df['group'] == group) & (self.combined_df['nth_set_label'] == set_label)
+                    self.combined_df.loc[mask, 'reject'] = 1
+                    self.save_reject_status_to_file(tiff_path, True)
+                    self._create_central_roi_for_rejected(group, set_label, mask)
+                    self.auto_save_dataframe()
+                    rejected_during_run = True
+                    break
                 self.roi_analysis_completed.emit(group, set_label, roi_type)
             
             # Note: No dataframe auto-save in TIFF-only mode
@@ -371,9 +385,14 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
                 # Fallback to full refresh if row not found
                 self.refresh_table()
             
-            self.status_label.setText("ROI analysis completed (TIFF saved)")
-            self.status_label.setStyleSheet("color: green; font-weight: bold;")
-            self.log_message(f"All ROI analysis completed for {group}, Set {set_label}")
+            if rejected_during_run:
+                self.status_label.setText("ROI analysis rejected")
+                self.status_label.setStyleSheet("color: orange; font-weight: bold;")
+                self.log_message(f"ROI analysis rejected for {group}, Set {set_label}")
+            else:
+                self.status_label.setText("ROI analysis completed (TIFF saved)")
+                self.status_label.setStyleSheet("color: green; font-weight: bold;")
+                self.log_message(f"All ROI analysis completed for {group}, Set {set_label}")
             
         except Exception as e:
             error_msg = f"Failed to launch ROI analysis: {str(e)}"
@@ -406,7 +425,7 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
             tiff_save_path = os.path.join(tiff_dir, f"{tiff_basename_no_ext}_{roi_type}_roi_mask.tif")
             self.log_message(f"ROI mask will be saved to: {tiff_save_path}")
             
-            launch_roi_analysis_gui_tiff_only(
+            launch_result = launch_roi_analysis_gui_tiff_only(
                 self.combined_df, 
                 tiff_path, 
                 group, 
@@ -414,6 +433,24 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
                 header=roi_type,
                 save_tiff_path=tiff_save_path
             )
+            if isinstance(launch_result, dict) and launch_result.get("rejected", False):
+                if 'filepath_without_number' in self.combined_df.columns:
+                    mask = (self.combined_df['filepath_without_number'] == group) & (self.combined_df['nth_set_label'] == set_label)
+                else:
+                    mask = (self.combined_df['group'] == group) & (self.combined_df['nth_set_label'] == set_label)
+                self.combined_df.loc[mask, 'reject'] = 1
+                self.save_reject_status_to_file(tiff_path, True)
+                self._create_central_roi_for_rejected(group, set_label, mask)
+                self.auto_save_dataframe()
+                self.log_message(f"{roi_type} ROI analysis was rejected for {group}, Set {set_label}")
+                self.status_label.setText(f"{roi_type} ROI analysis rejected")
+                self.status_label.setStyleSheet("color: orange; font-weight: bold;")
+                row_idx = self._find_row_by_tiff_path(tiff_path)
+                if row_idx >= 0:
+                    self.update_single_row_roi_status(row_idx, tiff_path)
+                else:
+                    self.refresh_table()
+                return
             self.roi_analysis_completed.emit(group, set_label, roi_type)
             
             # Note: No dataframe auto-save in TIFF-only mode

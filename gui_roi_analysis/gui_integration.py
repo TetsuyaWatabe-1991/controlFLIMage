@@ -49,6 +49,7 @@ def first_processing_for_flim_files(
     ignore_words = ["for_align"],
     return_error_dict = False,
     uncaging_frame_num = [33, 34, 35, 55],
+    titration_frame_num = None,
     ) -> pd.DataFrame:
 
     # Load initial data
@@ -82,7 +83,10 @@ def first_processing_for_flim_files(
     for each_folder in [plot_savefolder, tif_savefolder, roi_savefolder]:
         os.makedirs(each_folder, exist_ok=True)
 
-    combined_df = get_uncaging_pos_multiple(one_of_file_list, pre_length=pre_length, uncaging_frame_num=uncaging_frame_num)
+    kwargs = {"pre_length": pre_length, "uncaging_frame_num": uncaging_frame_num}
+    if titration_frame_num is not None:
+        kwargs["titration_frame_num"] = titration_frame_num
+    combined_df = get_uncaging_pos_multiple(one_of_file_list, **kwargs)
     if len(combined_df) > 0 and "after_align_save_path" not in combined_df.columns:
         combined_df["after_align_save_path"] = None
 

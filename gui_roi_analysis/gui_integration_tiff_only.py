@@ -110,7 +110,11 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
         save_tiff_path: If provided, save ROI masks to TIFF file at this path (default: None)
     
     Returns:
-        int: Result code (0 for success, 1 for error)
+        dict: {
+            "result": int (0 success, 1 error),
+            "analysis_completed": bool,
+            "rejected": bool,
+        }
     """
     from PyQt5.QtWidgets import QApplication
     from PyQt5.QtCore import Qt, QEventLoop
@@ -122,7 +126,7 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
         after_align_tiff_data = tifffile.imread(tiff_data_path)
     else:
         print(f"Error: TIFF file not found at {tiff_data_path}")
-        return None
+        return {"result": 1, "analysis_completed": False, "rejected": False}
 
     # Create max projection properly handling different data dimensions
     print(f"TIFF data shape: {after_align_tiff_data.shape}")
@@ -189,7 +193,7 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
         if 'filepath_without_number' in combined_df.columns:
             print(f"Available groups in 'filepath_without_number' column: {combined_df['filepath_without_number'].unique()}")
         print(f"Available set_labels: {combined_df['nth_set_label'].unique()}")
-        return None
+        return {"result": 1, "analysis_completed": False, "rejected": False}
 
     print(f"Successfully filtered data: {len(filtered_df)} rows found")
 
@@ -344,7 +348,9 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
             result = 1
 
     # Save ROI data if analysis was completed
-    if hasattr(window, 'analysis_completed') and window.analysis_completed:
+    rejected = bool(getattr(window, "rejected_by_user", False))
+    analysis_completed = bool(getattr(window, "analysis_completed", False))
+    if analysis_completed and not rejected:
         print("=== ROI DATA SAVING (TIFF ONLY) ===")
         
         # Save to TIFF file if path is provided
@@ -382,7 +388,7 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
     except Exception as e:
         print(f"Warning: Error during cleanup: {e}")
 
-    return result
+    return {"result": result, "analysis_completed": analysis_completed, "rejected": rejected}
 
 
 def load_roi_mask_from_tiff_and_create_shifted_mask(combined_df, tiff_path, each_group, each_set_label, 
