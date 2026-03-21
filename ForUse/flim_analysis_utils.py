@@ -70,13 +70,13 @@ def process_flim_image(each_file, power_slope, power_intercept,
     center_x = imagearray.shape[-3] * uncaging_x_y_0to1[0]
 
     if imagearray.shape[0] in [4, 33, 34]:
-        GCpre = imagearray[0,0,0,:,:,:].sum(axis=-1)
-        GCunc = imagearray[3,0,0,:,:,:].sum(axis=-1)
+        GCpre = imagearray[1,0,0,:,:,:].sum(axis=-1)
+        GCunc = imagearray[2,0,0,:,:,:].sum(axis=-1)
         Tdpre = imagearray[0,0,1,:,:,:].sum(axis=-1)
     elif imagearray.shape[0] in [32]:
-        GCpre = imagearray[8*0 + 1 : 8*1, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
-        GCunc = imagearray[8*3 + 1 : 8*4, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
-        Tdpre = imagearray[8*0 + 1 : 8*1, 0,1,:,:,:].sum(axis=-1).sum(axis=0)
+        GCpre = imagearray[8*1 + 1 : 8*2, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+        GCunc = imagearray[8*2 + 1 : 8*3, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+        Tdpre = imagearray[8*1 + 1 : 8*2, 0,1,:,:,:].sum(axis=-1).sum(axis=0)
     assert len(GCpre.shape) == 2 #Image should be 2D
 
     # Apply median filter

@@ -12,20 +12,22 @@ import math
 import subprocess
 from time import sleep
 from datetime import datetime
+import numpy as np
+import cv2
+import configparser
+import threading
+import pyautogui
+import psutil
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
+from skimage.measure import label, regionprops
+from tkinter_textinfowindow import TextWindow
+from utility.send_notification import read_slack_webhook_url, send_slack_notification
 from FLIMageAlignment import flim_files_to_nparray,Align_4d_array,Align_3d_array,get_xyz_pixel_um,single_plane_align_with3dstack_flimfile, get_flimfile_list
 from FLIM_pipeClient import FLIM_Com,FLIM_message_received
 from find_close_remotecontrol import close_remote_control, window_exists_startswith
 from find_yes_overwrite_warning import close_overwrite_warning
-import matplotlib.pyplot as plt
-from matplotlib.ticker import MaxNLocator
 from multidim_tiff_viewer import threeD_array_click, read_xyz_single
-import numpy as np
-import cv2
-from skimage.measure import label, regionprops
-import configparser
-import threading
-from tkinter_textinfowindow import TextWindow
-from utility.send_notification import read_slack_webhook_url, send_slack_notification
 
 
 SLACK_WEBHOOK_TXT_PATH = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLIMage\utility\slack_webhook_url.txt"
@@ -208,6 +210,25 @@ class Timecounter():
         else:
             return diff
 
+def kill_process(target_name = "FLIMage.exe"):
+    for proc in psutil.process_iter(["pid", "name"]):
+        name = proc.info["name"]
+        if name and name.lower() == target_name.lower():
+            try:
+                # Try graceful termination first
+                proc.terminate()
+                proc.wait(timeout=3)
+                print(f"Gracefully terminated {name}")
+            except psutil.TimeoutExpired:
+                # Force kill if process does not exit
+                proc.kill()
+                print(f"Forcibly terminated {name}")
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                print(f"Could not terminate {name}")
+                pass
+    print("Done")
+
+
 
 class Control_flimage():
 
@@ -217,11 +238,12 @@ class Control_flimage():
         self.error_dict = {}
         self.max_error_num = 20
         self.XYsize_ini_path = r"XYsize.ini"
-        self.flimage_exe = r"C:\Program Files\FLIMage\FLIMage 4.0.37\FLIMage.exe"
+        self.flimage_exe = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\FLIMage2\bin\Debug\FLIMage.exe"
         self.error_log_path = os.path.join(os.path.dirname(ini_path), "error_log.log")
         self.debug_log_path = os.path.join(os.path.dirname(ini_path), "debug_log.log")
         self.debug_mode = debug_mode
         self.print_responses = debug_mode
+        self.check_pulse_rate = True
         self.flim = FLIM_Com(debug_log_mode=self.debug_mode, debug_log_path=self.debug_log_path)
         self.flim.start()
         self.flim.print_responses = self.print_responses
@@ -229,6 +251,7 @@ class Control_flimage():
         if self.flim.Connected:
             print("Good Connection")
             self.flim.messageReceived += FLIM_message_received #Add your function to  handle.
+            self.flim.sendCommand('SetOverwriteWarningOff')
         else:
             self.reconnect()
         
@@ -558,6 +581,7 @@ class Control_flimage():
         self.flim.messageReceived += FLIM_message_received
         if self.flim.Connected:
             print("\n  Reconnected.  Good Connection now.\n")
+            self.flim.sendCommand('SetOverwriteWarningOff')
         else:
             print("ERROR 101 - - - - - - ")
             print("Is FLIMage open?? ")
@@ -754,35 +778,46 @@ class Control_flimage():
         first = True
         while True:
             repeat_count = 0
-            pulse_rate = self.get_laser_pulse_rate()
-            if pulse_rate < 70*10**6:
-                if first:
-                    first = False
-                    print("pulse_rate", pulse_rate)
-                    #send email and slack message
-                    try:
-                        webhook_url = read_slack_webhook_url(SLACK_WEBHOOK_TXT_PATH)
-                        send_slack_notification(webhook_url, message = f"pulse_rate: {pulse_rate}")
-                    except:
-                        print("Error sending slack message")
-                    start_repeat_time = datetime.now()
-                    print()
-                else:
-                    print(".", end="")
-                    repeat_count += 1
-                if repeat_count% 100 == 0:
-                    print
-                    print("Second start_repeat_time", datetime.now() - start_repeat_time)
-                    break
-                sleep(1)
-            else:
+            if self.check_pulse_rate == False:
                 break
+            else:
+                pulse_rate = self.get_laser_pulse_rate()
+                if pulse_rate < 70*10**6:
+                    if first:
+                        first = False
+                        print("pulse_rate", pulse_rate)
+                        #send email and slack message
+                        try:
+                            webhook_url = read_slack_webhook_url(SLACK_WEBHOOK_TXT_PATH)
+                            send_slack_notification(webhook_url, message = f"pulse_rate: {pulse_rate}")
+                        except:
+                            print("Error sending slack message")
+                        start_repeat_time = datetime.now()
+                        print()
+                    else:
+                        print(".", end="")
+                        repeat_count += 1
+                    if repeat_count% 100 == 0:
+                        print
+                        print("Second start_repeat_time", datetime.now() - start_repeat_time)
+                        break
+                    sleep(1)
+                else:
+                    break
         return True
     
-    def wait_while_grabbing(self,sleep_every_sec=1):
+    def wait_while_grabbing(self,sleep_every_sec=1, max_waiting_sec = 300):
         sleep(self.expected_grab_duration_sec)
         error_count = 0
+        now = datetime.now()
         for i in range(int(self.interval_sec/sleep_every_sec)):
+            if (datetime.now() - now).total_seconds() > max_waiting_sec:
+                print("Max waiting time reached. Breaking...")
+                # take screenshot of the screen
+                pyautogui.hotkey("winleft", "printscreen")
+                kill_process(target_name = "FLIMage.exe")
+                self.reconnect()
+                return False
             try:
                 if self.get_01_sendCommand('IsGrabbing')==0:
                     print("BREAK wait_while_grabbing")
@@ -1546,7 +1581,7 @@ if __name__ == "__main__":
     if False:
         FLIMageCont.flim.sendCommand(f'LoadSetting, {Zstack_ini}')
         FLIMageCont.flim.sendCommand(f'SetDIOPanel, 1, 1')
-
+    FLIMageCont.flim.sendCommand('SetOverwriteWarningOff')
     # def get_realtime_value(FLIMageCont):
     #     res = FLIMageCont.flim.sendCommand("GetRealtimeValue")
     #     realtime_value = res.split(", ")[-1]
