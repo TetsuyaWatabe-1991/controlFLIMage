@@ -95,7 +95,15 @@ def save_roi_mask_from_gui_to_tiff(gui_instance, save_path, header="ROI"):
         return None
 
 
-def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, each_set_label, header="ROI", save_tiff_path=None):
+def launch_roi_analysis_gui_tiff_only(
+    combined_df,
+    tiff_data_path,
+    each_group,
+    each_set_label,
+    header="ROI",
+    save_tiff_path=None,
+    shortcut_host=None,
+):
     """Launch the ROI analysis GUI with TIFF-only saving option.
     
     This function is a wrapper around the original launch_roi_analysis_gui that adds
@@ -114,6 +122,7 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
             "result": int (0 success, 1 error),
             "analysis_completed": bool,
             "rejected": bool,
+            "exit_kind": str,
         }
     """
     from PyQt5.QtWidgets import QApplication
@@ -126,7 +135,7 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
         after_align_tiff_data = tifffile.imread(tiff_data_path)
     else:
         print(f"Error: TIFF file not found at {tiff_data_path}")
-        return {"result": 1, "analysis_completed": False, "rejected": False}
+        return {"result": 1, "analysis_completed": False, "rejected": False, "exit_kind": "cancel"}
 
     # Create max projection properly handling different data dimensions
     print(f"TIFF data shape: {after_align_tiff_data.shape}")
@@ -193,7 +202,7 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
         if 'filepath_without_number' in combined_df.columns:
             print(f"Available groups in 'filepath_without_number' column: {combined_df['filepath_without_number'].unique()}")
         print(f"Available set_labels: {combined_df['nth_set_label'].unique()}")
-        return {"result": 1, "analysis_completed": False, "rejected": False}
+        return {"result": 1, "analysis_completed": False, "rejected": False, "exit_kind": "cancel"}
 
     print(f"Successfully filtered data: {len(filtered_df)} rows found")
 
@@ -293,6 +302,7 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
 
     # Store the filtered dataframe in the GUI instance for verification during saving
     window.filtered_df = filtered_df
+    window.shortcut_host = shortcut_host
 
     # Set window flags to ensure proper cleanup
     window.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -350,6 +360,14 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
     # Save ROI data if analysis was completed
     rejected = bool(getattr(window, "rejected_by_user", False))
     analysis_completed = bool(getattr(window, "analysis_completed", False))
+    exit_kind = getattr(window, "exit_kind", None)
+    if exit_kind is None:
+        if analysis_completed:
+            exit_kind = "complete"
+        elif rejected:
+            exit_kind = "reject"
+        else:
+            exit_kind = "cancel"
     if analysis_completed and not rejected:
         print("=== ROI DATA SAVING (TIFF ONLY) ===")
         
@@ -388,7 +406,12 @@ def launch_roi_analysis_gui_tiff_only(combined_df, tiff_data_path, each_group, e
     except Exception as e:
         print(f"Warning: Error during cleanup: {e}")
 
-    return {"result": result, "analysis_completed": analysis_completed, "rejected": rejected}
+    return {
+        "result": result,
+        "analysis_completed": analysis_completed,
+        "rejected": rejected,
+        "exit_kind": exit_kind,
+    }
 
 
 def load_roi_mask_from_tiff_and_create_shifted_mask(combined_df, tiff_path, each_group, each_set_label, 

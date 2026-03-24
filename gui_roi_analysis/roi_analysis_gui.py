@@ -14,10 +14,10 @@ import time
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QPushButton, QSlider, QLabel, QButtonGroup,
-    QFrame, QSplitter, QSizePolicy, QCheckBox
+    QFrame, QSplitter, QSizePolicy, QCheckBox, QShortcut,
 )
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QKeySequence
 
 class ROIAnalysisGUI(QMainWindow):
     """Main GUI application for ROI analysis with time series data."""
@@ -89,6 +89,10 @@ class ROIAnalysisGUI(QMainWindow):
         self.analysis_completed = False
         self.rejected_by_user = False
         self.roi_moved_in_current_frame = False
+        # How the ROI window closed: set by shortcuts / complete / reject; closeEvent fills if still None
+        self.exit_kind = None
+        # File-selection GUI (optional): chain sets, shortcuts help, navigation
+        self.shortcut_host = None
         
         # ROI coordinate snapping option
         self.snap_to_integer = True  # New: Enable integer coordinate snapping
@@ -99,6 +103,7 @@ class ROIAnalysisGUI(QMainWindow):
         
         self.init_ui()
         self.setup_connections()
+        self._install_roi_keyboard_shortcuts()
         
     def init_ui(self):
         """Initialize the user interface."""
@@ -266,10 +271,18 @@ class ROIAnalysisGUI(QMainWindow):
         self.complete_analysis_button.setStyleSheet("QPushButton { background-color: lightgreen; }")
         layout.addWidget(self.complete_analysis_button)
         
-        # Reject button (kept near completion controls to minimize UI changes)
+        # Reject + shortcuts help (half width each)
+        self.roi_action_row = QWidget()
+        action_row_layout = QHBoxLayout(self.roi_action_row)
+        action_row_layout.setContentsMargins(0, 0, 0, 0)
         self.reject_button = QPushButton("Reject")
         self.reject_button.setStyleSheet("QPushButton { background-color: #ffcccc; }")
-        layout.addWidget(self.reject_button)
+        self.shortcuts_help_button = QPushButton("Shortcuts")
+        self.shortcuts_help_button.setToolTip("Show keyboard shortcuts (stays open)")
+        self.shortcuts_help_button.clicked.connect(self._on_shortcuts_help_clicked)
+        action_row_layout.addWidget(self.reject_button, 1)
+        action_row_layout.addWidget(self.shortcuts_help_button, 1)
+        layout.addWidget(self.roi_action_row)
         
         # Intensity values display
         intensity_label = QLabel("Intensity Values:")
@@ -1338,6 +1351,7 @@ class ROIAnalysisGUI(QMainWindow):
             
             # Set analysis completed flag
             self.analysis_completed = True
+            self.exit_kind = "complete"
             
             # Final intensity calculation to ensure all data is up to date
             self.calculate_all_intensities()
@@ -1355,8 +1369,146 @@ class ROIAnalysisGUI(QMainWindow):
         """Mark this set as rejected and close the window immediately."""
         self.rejected_by_user = True
         self.analysis_completed = False
+        self.exit_kind = "reject"
         print(f"Rejected by user for {self.header}")
         self.close()
+
+    def closeEvent(self, event):
+        """Normalize exit_kind for the TIFF launcher when the user closes without a shortcut."""
+        if self.exit_kind is None:
+            if self.analysis_completed:
+                self.exit_kind = "complete"
+            elif self.rejected_by_user:
+                self.exit_kind = "reject"
+            else:
+                self.exit_kind = "cancel"
+        super().closeEvent(event)
+
+    def _on_shortcuts_help_clicked(self):
+        host = getattr(self, "shortcut_host", None)
+        if host is not None and hasattr(host, "show_roi_shortcuts_help"):
+            host.show_roi_shortcuts_help()
+
+    def _install_roi_keyboard_shortcuts(self):
+        """Global shortcuts while this ROI window exists (F-keys, Esc, arrows)."""
+        def bind(key, fn):
+            sc = QShortcut(QKeySequence(key), self)
+            sc.setContext(Qt.ApplicationShortcut)
+            sc.activated.connect(fn)
+
+        bind(Qt.Key_F1, self._shortcut_analysis_complete)
+        bind(Qt.Key_F2, self.prev_frame)
+        bind(Qt.Key_F3, self.next_frame)
+        bind(Qt.Key_F4, self._shortcut_toggle_review_mode)
+        bind(Qt.Key_F6, self._shortcut_prev_set_launch_all)
+        bind(Qt.Key_F8, self._shortcut_next_set_launch_all)
+        bind(Qt.Key_F9, self._shortcut_reject_and_next_set)
+        bind(Qt.Key_Escape, self._shortcut_esc_cancel)
+        bind(Qt.Key_Left, lambda: self.nudge_roi_by_pixels(-1, 0))
+        bind(Qt.Key_Right, lambda: self.nudge_roi_by_pixels(1, 0))
+        bind(Qt.Key_Up, lambda: self.nudge_roi_by_pixels(0, -1))
+        bind(Qt.Key_Down, lambda: self.nudge_roi_by_pixels(0, 1))
+
+    def _shortcut_analysis_complete(self):
+        self.complete_analysis()
+
+    def _shortcut_toggle_review_mode(self):
+        if hasattr(self, "view_mode_checkbox") and self.view_mode_checkbox.isEnabled():
+            self.view_mode_checkbox.setChecked(not self.view_mode_checkbox.isChecked())
+
+    def _shortcut_prev_set_launch_all(self):
+        if not self.shortcut_host:
+            return
+        self.exit_kind = "prev_set_launch_all"
+        if hasattr(self.shortcut_host, "note_roi_navigation_cancel_chain"):
+            self.shortcut_host.note_roi_navigation_cancel_chain()
+        self.close()
+
+    def _shortcut_next_set_launch_all(self):
+        if not self.shortcut_host:
+            return
+        self.exit_kind = "next_set_launch_all"
+        if hasattr(self.shortcut_host, "note_roi_navigation_cancel_chain"):
+            self.shortcut_host.note_roi_navigation_cancel_chain()
+        self.close()
+
+    def _shortcut_reject_and_next_set(self):
+        self.rejected_by_user = True
+        self.analysis_completed = False
+        self.exit_kind = "reject_next_launch_all"
+        self.close()
+
+    def _shortcut_esc_cancel(self):
+        self.exit_kind = "cancel"
+        if self.shortcut_host and hasattr(self.shortcut_host, "note_roi_esc_cancel"):
+            self.shortcut_host.note_roi_esc_cancel()
+        self.close()
+
+    def _image_hw_for_roi(self):
+        """Current display (y, x) size for boundary checks."""
+        if self.is_defining_roi:
+            shp = np.asarray(self.max_proj_image).shape
+            return int(shp[0]), int(shp[1])
+        frame_data = self.after_align_tiff_data[self.current_frame]
+        if len(frame_data.shape) == 3:
+            frame_2d = frame_data.max(axis=0)
+        elif len(frame_data.shape) == 2:
+            frame_2d = frame_data
+        else:
+            frame_2d = frame_data
+            while len(frame_2d.shape) > 2:
+                frame_2d = frame_2d.max(axis=0)
+        return int(frame_2d.shape[0]), int(frame_2d.shape[1])
+
+    def nudge_roi_by_pixels(self, dx: int, dy: int):
+        """Move ROI by 1 pixel in Define mode only (not Review mode)."""
+        if getattr(self, "view_mode", False):
+            return
+        if not self.roi_parameters:
+            return
+        h, w = self._image_hw_for_roi()
+
+        if self.roi_shape == "rectangle":
+            x = float(self.roi_parameters.get("x", 0)) + dx
+            y = float(self.roi_parameters.get("y", 0)) + dy
+            rw = float(self.roi_parameters.get("width", 1))
+            rh = float(self.roi_parameters.get("height", 1))
+            x = max(0, min(x, w - rw))
+            y = max(0, min(y, h - rh))
+            self.roi_parameters["x"] = x
+            self.roi_parameters["y"] = y
+        elif self.roi_shape == "ellipse":
+            cx = float(self.roi_parameters.get("center_x", 0)) + dx
+            cy = float(self.roi_parameters.get("center_y", 0)) + dy
+            ew = float(self.roi_parameters.get("width", 2))
+            eh = float(self.roi_parameters.get("height", 2))
+            hw, hh = ew / 2.0, eh / 2.0
+            cx = max(hw, min(cx, w - hw))
+            cy = max(hh, min(cy, h - hh))
+            self.roi_parameters["center_x"] = cx
+            self.roi_parameters["center_y"] = cy
+        elif self.roi_shape == "polygon" and "points" in self.roi_parameters:
+            pts = []
+            for px, py in self.roi_parameters["points"]:
+                nx = max(0, min(float(px) + dx, w - 1))
+                ny = max(0, min(float(py) + dy, h - 1))
+                pts.append((nx, ny))
+            self.roi_parameters["points"] = pts
+        else:
+            return
+
+        if not self.is_defining_roi:
+            self.frame_roi_parameters[self.current_frame] = self.roi_parameters.copy()
+        self.recreate_roi_from_parameters()
+        if self.is_defining_roi:
+            self.display_max_proj()
+        else:
+            self.display_time_series_frame(self.current_frame)
+        self.update_roi_display_params()
+        if not self.is_defining_roi:
+            self.update_current_frame_intensity()
+            self.update_intensity_display()
+            self.update_plot()
 
     def update_current_frame_intensity(self):
         """Update intensity for current frame only (for frame-specific ROI mode)."""

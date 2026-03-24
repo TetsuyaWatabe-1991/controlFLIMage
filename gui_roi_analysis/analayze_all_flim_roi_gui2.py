@@ -6,9 +6,13 @@ ch_1or2 = 2
 z_plus_minus = 2
 pre_length = 2    # uncaging_at_nth + 1
 
+
 df_save_path_1, out_csv_path = run_tiff_uncaging_roi(ch_1or2 = ch_1or2,
                                     z_plus_minus = z_plus_minus,
-                                    pre_length = pre_length)
+                                    pre_length = pre_length,
+                                    # predefined_df_path=r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260318\auto1\combined_df_1.pkl",
+                                    # skip_roi_gui=True
+                                    )
 
 # %%
 display("  ")

@@ -90,26 +90,17 @@ def reshape_axes_to_2d(axes: Any, n_rows: int, n_cols: int) -> np.ndarray:
 
 
 group_header_dict = {
-    "B2": "Rolipram",
-    "B3": "Forskolin"
+    "A3": "Feb23",
+    "A5": "Feb11"
 }
 
 
 LTP_data_point_after_min_between = [25,35]
 
-# Exclude sets where pre-phase intensity is unstable:
-# if max(pre) / min(pre) exceeds this threshold, the set is skipped.
-pre_instability_max_min_ratio_threshold = 1.4  # 40%
-pre_instability_check_roi = "Spine"
-pre_instability_check_ch = "Ch2"
-
 acquisiton_start_datetime_str = "2026-03-17T21:00:00.000"
 
-# df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260318/auto1/combined_df_1.pkl"
-# out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260318/auto1/combined_df_1_intensity_lifetime_all_frames.csv"
-
-df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260318/auto1/combined_df_1.pkl"
-out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260318/auto1/combined_df_1_intensity_lifetime_all_frames.csv"
+df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260317/auto1\combined_df_1.pkl"
+out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260317/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
 
 #%% parameters usually common to all files
 powermeter_folder= r"//RY-LAB-WS04/Users/yasudalab/Documents/Tetsuya_Imaging/powermeter"
@@ -311,18 +302,6 @@ for each_group in fulltimeseries_df["group"].unique():
         each_summary_dict["delta_FF0_intensity_ch2"] = each_summary_dict["Ch2_post_intensity"] / each_summary_dict["Ch2_pre_intensity"] - 1
         each_summary_dict["acq_time_str"] = each_df["acq_time_str"].unique()[0]
 
-        # Pre-phase intensity stability: max/min ratio for each ROI x channel
-        pre_df_phase = each_df[each_df["phase"] == "pre"]
-        for each_ROI_name in ROI_name_list:
-            for each_ch in ["Ch1", "Ch2"]:
-                col = f"{each_ROI_name}_{each_ch}_intensity_div_by_nAve"
-                pre_vals = pre_df_phase[col].dropna() if col in pre_df_phase.columns else pd.Series(dtype=float)
-                if len(pre_vals) >= 2 and pre_vals.min() > 0:
-                    ratio = pre_vals.max() / pre_vals.min()
-                else:
-                    ratio = np.nan
-                each_summary_dict[f"pre_max_min_ratio_{each_ROI_name}_{each_ch}"] = ratio
-
         summary_df = pd.concat([summary_df, pd.DataFrame([each_summary_dict])], ignore_index=True)
 
 # %%
@@ -365,22 +344,6 @@ for each_group_set_id in fulltimeseries_df["group_set_id"].unique():
     summary_df.loc[summary_df["group_set_id"] == each_group_set_id, "uncaging_power_coherent_mW"] = uncaging_power_coherent_mW
 
 
-summary_df.to_csv(os.path.join(save_folder, "summary_df.csv"), index=False)
-
-# Print pre-phase stability summary
-ratio_cols = [c for c in summary_df.columns if c.startswith("pre_max_min_ratio_")]
-print("Pre-phase intensity stability (max/min ratio):")
-print(summary_df[["group_set_id"] + ratio_cols].to_string(index=False))
-
-
-# Optional: filter out unstable sets by threshold.
-# Uncomment and adjust as needed.
-ratio_cols_to_check = [c for c in ratio_cols if "Ch2" in c]  # e.g. Ch2 only
-unstable_mask = summary_df[ratio_cols_to_check].gt(pre_instability_max_min_ratio_threshold).any(axis=1)
-unstable_ids = summary_df.loc[unstable_mask, "group_set_id"].tolist()
-print(f"Excluded sets (pre instability > {pre_instability_max_min_ratio_threshold}): {unstable_ids}")
-summary_df = summary_df[~unstable_mask].reset_index(drop=True)
-fulltimeseries_df = fulltimeseries_df[~fulltimeseries_df["group_set_id"].isin(unstable_ids)].reset_index(drop=True)
 
 # %% line plot
 #plot each data, with light thin color lines
@@ -1004,6 +967,150 @@ if len(sorted_uncaging_powers) > 0 and len(valid_group_headers) > 0:
         plt.savefig(savepath, dpi=150, bbox_inches="tight")
         plt.show()
 
+# %% layout test for uncaging_power labels on tiled transient line plot
+# This section draws the same GCaMP transient Spine line plot with different label layouts
+sorted_uncaging_powers = sorted(fulltimeseries_df["uncaging_power_coherent_mW"].dropna().unique())
+valid_group_headers = []
+for each_header, each_header_name in group_header_dict.items():
+    if not fulltimeseries_df[fulltimeseries_df["group"].str.contains(each_header)].empty:
+        valid_group_headers.append((each_header, each_header_name))
+
+layout_variants = ["案1_offset_points", "案2_fig_text_row_labels", "案3_title_includes_power"]
+
+if len(sorted_uncaging_powers) > 0 and len(valid_group_headers) > 0:
+    # Use only GCaMP_transient_Spine_intensity for layout comparison
+    layout_plot_key = "GCaMP_transient_Spine_intensity"
+    layout_plot_info = {
+        "ylabel": r"GCaMP F/F0",
+        "xlabel": "Time (sec)",
+        "x": "aligned_time_sec",
+        "y": "transient_Spine_Ch1_intensity",
+        "ylim": [
+            fulltimeseries_df["transient_Spine_Ch1_intensity"].min() - 0.1,
+            25,
+        ],
+    }
+
+    for layout_name in layout_variants:
+        n_rows = len(sorted_uncaging_powers)
+        n_cols = len(valid_group_headers)
+        fig, axes = plt.subplots(
+            n_rows,
+            n_cols,
+            figsize=(6 * n_cols, 3 * n_rows),
+            sharex=True,
+            sharey=True,
+        )
+
+        axes = reshape_axes_to_2d(axes, n_rows, n_cols)
+
+        for col_idx, (each_header, each_header_name) in enumerate(valid_group_headers):
+            eachgroup_df = fulltimeseries_df[fulltimeseries_df["group"].str.contains(each_header)]
+            for row_idx, each_uncaging_power_coherent_mW in enumerate(sorted_uncaging_powers):
+                ax = axes[row_idx, col_idx]
+                each_group_same_unc_pow_df = eachgroup_df[
+                    eachgroup_df["uncaging_power_coherent_mW"] == each_uncaging_power_coherent_mW
+                ]
+                plot_df = each_group_same_unc_pow_df[each_group_same_unc_pow_df["phase"] == "unc"]
+                if plot_df.empty:
+                    ax.axis("off")
+                    continue
+
+                sns.lineplot(
+                    x=layout_plot_info["x"],
+                    y=layout_plot_info["y"],
+                    data=plot_df,
+                    hue="group_set_id",
+                    linewidth=0.5,
+                    alpha=0.5,
+                    palette="tab10",
+                    legend=False,
+                    marker="o",
+                    markersize=4,
+                    ax=ax,
+                )
+
+                ax.set_ylim(layout_plot_info["ylim"])
+
+                if row_idx == n_rows - 1:
+                    ax.set_xlabel(layout_plot_info["xlabel"])
+                else:
+                    ax.set_xlabel("")
+
+                if col_idx == 0:
+                    ax.set_ylabel(layout_plot_info["ylabel"])
+                else:
+                    ax.set_ylabel("")
+
+                ylim = ax.get_ylim()
+                ninty_percent_ylim = ylim[0] + (ylim[1] - ylim[0]) * 0.9
+                ax.plot([0, 2.048 * 29], [ninty_percent_ylim, ninty_percent_ylim], "k-")
+                ax.text(0, ninty_percent_ylim * 1.005, "uncaging", ha="left", va="bottom")
+
+                # Column titles: group header
+                if row_idx == 0:
+                    if layout_name == "案3_title_includes_power":
+                        ax.set_title(f"{each_header_name}, {each_uncaging_power_coherent_mW} mW")
+                    else:
+                        ax.set_title(each_header_name)
+                elif layout_name == "案3_title_includes_power":
+                    ax.set_title(f"{each_header_name}, {each_uncaging_power_coherent_mW} mW")
+                else:
+                    ax.set_title("")
+
+                # Layout-specific uncaging_power labels
+                if layout_name == "案1_offset_points":
+                    if col_idx == 0:
+                        ax.annotate(
+                            f"{each_uncaging_power_coherent_mW} mW",
+                            xy=(0, 0.5),
+                            xycoords="axes fraction",
+                            xytext=(-55, 0),
+                            textcoords="offset points",
+                            ha="right",
+                            va="center",
+                        )
+                elif layout_name == "案2_fig_text_row_labels":
+                    # Labels are added after loop using fig.text
+                    pass
+                elif layout_name == "案3_title_includes_power":
+                    # Already included in title
+                    pass
+
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
+
+        if "案2" in layout_name:
+            for row_idx, each_uncaging_power_coherent_mW in enumerate(sorted_uncaging_powers):
+                row_center = (n_rows - row_idx - 0.5) / n_rows
+                fig.text(
+                    0.04,
+                    row_center,
+                    f"{each_uncaging_power_coherent_mW} mW",
+                    ha="right",
+                    va="center",
+                )
+
+        # Large background label for variant name
+        fig.text(
+            0.5,
+            0.5,
+            layout_name,
+            fontsize=60,
+            color="gray",
+            alpha=0.12,
+            ha="center",
+            va="center",
+            rotation=25,
+        )
+
+        fig.subplots_adjust(left=0.24, right=0.98, top=0.9, bottom=0.16)
+        savepath = os.path.join(
+            save_folder,
+            f"layout_test_transient_Spine_{layout_name}.png",
+        )
+        plt.savefig(savepath, dpi=150, bbox_inches="tight")
+        plt.show()
 
 
 # %% scatter plot

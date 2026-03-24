@@ -159,6 +159,25 @@ def _load_uncaging_full(unc_path: str, ch: int):
     return frames
 
 
+def _load_flim_zproj_full(file_path: str, ch: int, z_from: int, z_to: int):
+    """
+    Load one FLIM file and return full-size Z-projection image for channel `ch`.
+    Uses T=0 and max projection over z_from:z_to.
+    """
+    iminfo = FileReader()
+    iminfo.read_imageFile(file_path, True)
+    imagearray = np.array(iminfo.image)
+    intensity = (12 * np.sum(imagearray, axis=-1)) / getattr(iminfo.State.Acq, "nAveFrame", 1)
+    # Keep axis handling consistent with quantification (_row_from_flim_data):
+    # axis-0 is treated as the projection axis for pre/post frames.
+    intensity_raw = intensity.astype(np.float32)  # (axis0, axis1, C, Y, X)
+    axis0_len = intensity_raw.shape[0]
+    z0 = max(0, min(int(z_from), axis0_len - 1))
+    z1 = min(axis0_len, int(z_to))
+    z1 = max(z1, z0 + 1)
+    return intensity_raw[z0:z1, 0, ch - 1, :, :].max(axis=0)
+
+
 def _load_uncaging_crop(unc_path: str, ch: int,
                         small_x_from: int, small_x_to: int,
                         small_y_from: int, small_y_to: int,
@@ -328,11 +347,22 @@ def rebuild_tiff_with_uncaging_3d(combined_df: pd.DataFrame, ch: int):
     return combined_df
 
 
-def rebuild_tiff_full_size_for_roi(combined_df: pd.DataFrame, ch: int, z_plus_minus: int):
+def rebuild_tiff_full_size_for_roi(
+    combined_df: pd.DataFrame,
+    ch: int,
+    z_plus_minus: int,
+    skip_tiff_if_exists: bool = False,
+):
     """
     Build full-size stack per set for ROI definition: Pre Z-proj (full) + Uncaging
     (full, drift applied to last pre) + Post Z-proj (full). Saves to after_align_full_save_path.
     Stores unc_drift_y, unc_drift_x on the uncaging row for later raw-ROI generation.
+
+    Args:
+        skip_tiff_if_exists: If True, skip writing TIFF files that already exist on disk.
+            Alignment (load_and_align_data) is always run to regenerate frame_info.csv with
+            correct runtime shifts. This is faster when TIFFs are already built but
+            frame_info.csv needs to be refreshed.
     """
     required = ["corrected_uncaging_z", "small_x_from", "small_x_to"]
     if not all(c in combined_df.columns for c in required):
@@ -359,6 +389,18 @@ def rebuild_tiff_full_size_for_roi(combined_df: pd.DataFrame, ch: int, z_plus_mi
             _, Z_full, Y_full, X_full = Aligned_4d_array.shape
             # Map file_path -> index in Aligned_4d_array (filelist order); needed when group has multiple sets
             file_path_to_array_idx = {path: i for i, path in enumerate(filelist)}
+            # Runtime alignment shifts from load_and_align_data (same order as filelist):
+            # shifts[:, 1] = shift_y, shifts[:, 2] = shift_x
+            runtime_shift_map = {}
+            try:
+                for i, path in enumerate(filelist):
+                    if i < len(shifts):
+                        runtime_shift_map[path] = (
+                            float(shifts[i][1]) if len(shifts[i]) > 1 else 0.0,
+                            float(shifts[i][2]) if len(shifts[i]) > 2 else 0.0,
+                        )
+            except Exception:
+                runtime_shift_map = {}
 
             for each_set_label in each_group_df["nth_set_label"].unique():
                 if each_set_label == -1:
@@ -377,8 +419,10 @@ def rebuild_tiff_full_size_for_roi(combined_df: pd.DataFrame, ch: int, z_plus_mi
 
                 # Use each row's file_path -> array index so pre/post order matches group filelist (time series)
                 pre_list = []
+                pre_raw_list = []
                 pre_filenames = []
                 pre_file_paths = []
+                pre_shifts = []
                 for _, row in each_set_df[each_set_df["phase"] == "pre"].sort_values("nth_omit_induction").iterrows():
                     fp = row["file_path"]
                     if fp not in file_path_to_array_idx:
@@ -388,11 +432,22 @@ def rebuild_tiff_full_size_for_roi(combined_df: pd.DataFrame, ch: int, z_plus_mi
                     pre_list.append(zproj)
                     pre_filenames.append(os.path.basename(fp))
                     pre_file_paths.append(fp)
+                    if fp in runtime_shift_map:
+                        pre_shifts.append(runtime_shift_map[fp])
+                    else:
+                        pre_shifts.append((float(row.get("shift_y", 0) or 0), float(row.get("shift_x", 0) or 0)))
+                    try:
+                        pre_raw_list.append(_load_flim_zproj_full(fp, ch, z_from, z_to))
+                    except Exception:
+                        pre_raw_list.append(zproj.copy())
                 pre_stack = np.stack(pre_list, axis=0) if pre_list else np.empty((0, Y_full, X_full), dtype=np.float32)
+                pre_raw_stack = np.stack(pre_raw_list, axis=0) if pre_raw_list else np.empty((0, Y_full, X_full), dtype=np.float32)
 
                 post_list = []
+                post_raw_list = []
                 post_filenames = []
                 post_file_paths = []
+                post_shifts = []
                 for _, row in each_set_df[each_set_df["phase"] == "post"].sort_values("nth_omit_induction").iterrows():
                     fp = row["file_path"]
                     if fp not in file_path_to_array_idx:
@@ -402,7 +457,16 @@ def rebuild_tiff_full_size_for_roi(combined_df: pd.DataFrame, ch: int, z_plus_mi
                     post_list.append(zproj)
                     post_filenames.append(os.path.basename(fp))
                     post_file_paths.append(fp)
+                    if fp in runtime_shift_map:
+                        post_shifts.append(runtime_shift_map[fp])
+                    else:
+                        post_shifts.append((float(row.get("shift_y", 0) or 0), float(row.get("shift_x", 0) or 0)))
+                    try:
+                        post_raw_list.append(_load_flim_zproj_full(fp, ch, z_from, z_to))
+                    except Exception:
+                        post_raw_list.append(zproj.copy())
                 post_stack = np.stack(post_list, axis=0) if post_list else np.empty((0, Y_full, X_full), dtype=np.float32)
+                post_raw_stack = np.stack(post_raw_list, axis=0) if post_raw_list else np.empty((0, Y_full, X_full), dtype=np.float32)
 
                 try:
                     unc_frames_full = _load_uncaging_full(unc_path, ch)
@@ -444,12 +508,24 @@ def rebuild_tiff_full_size_for_roi(combined_df: pd.DataFrame, ch: int, z_plus_mi
                 new_stack = np.concatenate([pre_stack, unc_stack, post_stack], axis=0)
                 base_name = f"{each_group}_{each_set_label}_after_align_full"
                 new_tiff_path = os.path.join(tif_savefolder, base_name + ".tif")
-                tifffile.imwrite(new_tiff_path, new_stack.astype(np.float32))
+                if not skip_tiff_if_exists or not os.path.exists(new_tiff_path):
+                    tifffile.imwrite(new_tiff_path, new_stack.astype(np.float32))
+                    print(f"  Set {each_set_label}: saved full-size {base_name}.tif (Pre {pre_stack.shape[0]} + Unc {unc_stack.shape[0]} + Post {post_stack.shape[0]})")
+                else:
+                    print(f"  Set {each_set_label}: {base_name}.tif already exists, skipping write (skip_tiff_if_exists=True)")
                 combined_df.loc[each_set_df.index, "after_align_full_save_path"] = new_tiff_path
+                before_stack = np.concatenate([pre_raw_stack, np.stack(unc_frames_full, axis=0), post_raw_stack], axis=0)
+                before_base_name = f"{each_group}_{each_set_label}_before_align_full"
+                before_tiff_path = os.path.join(tif_savefolder, before_base_name + ".tif")
+                if not skip_tiff_if_exists or not os.path.exists(before_tiff_path):
+                    tifffile.imwrite(before_tiff_path, before_stack.astype(np.float32))
+                    print(f"  Set {each_set_label}: saved full-size {before_base_name}.tif (non-aligned)")
+                else:
+                    print(f"  Set {each_set_label}: {before_base_name}.tif already exists, skipping write")
+                combined_df.loc[each_set_df.index, "before_align_full_save_path"] = before_tiff_path
                 combined_df.loc[each_set_df.index, "n_pre_frames"] = pre_stack.shape[0]
                 combined_df.loc[each_set_df.index, "n_unc_frames"] = unc_stack.shape[0]
                 combined_df.loc[each_set_df.index, "n_post_frames"] = post_stack.shape[0]
-                print(f"  Set {each_set_label}: saved full-size {base_name}.tif (Pre {pre_stack.shape[0]} + Unc {unc_stack.shape[0]} + Post {post_stack.shape[0]})")
                 # Frame order for verification: 0..n_pre-1=pre, n_pre..n_pre+n_unc-1=uncaging, then post
                 print(f"    Frame order: 0-{pre_stack.shape[0]-1}=pre, {pre_stack.shape[0]}-{pre_stack.shape[0]+unc_stack.shape[0]-1}=uncaging, {pre_stack.shape[0]+unc_stack.shape[0]}-{new_stack.shape[0]-1}=post")
                 # Per-frame source CSV for easy verification (test use); include acq_time_str and elapsed_time_sec
@@ -460,15 +536,17 @@ def rebuild_tiff_full_size_for_roi(combined_df: pd.DataFrame, ch: int, z_plus_mi
                 frame_info_rows = []
                 for i in range(pre_stack.shape[0]):
                     acq_str = _get_acq_time_str(pre_file_paths[i], 0) if i < len(pre_file_paths) else ""
-                    frame_info_rows.append({"frame": i, "Z_projection": True, "nth_slice": "", "filename": pre_filenames[i] if i < len(pre_filenames) else "", "phase": "pre", "acq_time_str": acq_str, "z_from": z_from, "z_to": z_to})
+                    sy, sx = pre_shifts[i] if i < len(pre_shifts) else (np.nan, np.nan)
+                    frame_info_rows.append({"frame": i, "Z_projection": True, "nth_slice": "", "filename": pre_filenames[i] if i < len(pre_filenames) else "", "phase": "pre", "acq_time_str": acq_str, "z_from": z_from, "z_to": z_to, "shift_y": sy, "shift_x": sx})
                 for k in range(unc_stack.shape[0]):
                     acq_str = acq_time_unc[k] if k < len(acq_time_unc) else ""
                     if acq_str:
                         acq_str = str(acq_str).strip()
-                    frame_info_rows.append({"frame": pre_stack.shape[0] + k, "Z_projection": False, "nth_slice": k, "filename": unc_basename, "phase": "uncaging", "acq_time_str": acq_str, "z_from": np.nan, "z_to": np.nan})
+                    frame_info_rows.append({"frame": pre_stack.shape[0] + k, "Z_projection": False, "nth_slice": k, "filename": unc_basename, "phase": "uncaging", "acq_time_str": acq_str, "z_from": np.nan, "z_to": np.nan, "shift_y": unc_drift_y, "shift_x": unc_drift_x})
                 for i in range(post_stack.shape[0]):
                     acq_str = _get_acq_time_str(post_file_paths[i], 0) if i < len(post_file_paths) else ""
-                    frame_info_rows.append({"frame": pre_stack.shape[0] + unc_stack.shape[0] + i, "Z_projection": True, "nth_slice": "", "filename": post_filenames[i] if i < len(post_filenames) else "", "phase": "post", "acq_time_str": acq_str, "z_from": z_from, "z_to": z_to})
+                    sy, sx = post_shifts[i] if i < len(post_shifts) else (np.nan, np.nan)
+                    frame_info_rows.append({"frame": pre_stack.shape[0] + unc_stack.shape[0] + i, "Z_projection": True, "nth_slice": "", "filename": post_filenames[i] if i < len(post_filenames) else "", "phase": "post", "acq_time_str": acq_str, "z_from": z_from, "z_to": z_to, "shift_y": sy, "shift_x": sx})
                 # elapsed_time_sec: per set, seconds from first moment (min parsed acq time = 0)
                 datetimes_list = []
                 for r in frame_info_rows:
@@ -720,6 +798,69 @@ def save_drift_corrected_roi_masks(combined_df: pd.DataFrame):
     """
     from scipy.ndimage import shift as ndimage_shift
 
+    def _mask_stats(mask_2d: np.ndarray):
+        """Return (nonzero_count, centroid_y, centroid_x) for binary-like mask."""
+        ys, xs = np.where(mask_2d > 0.5)
+        if ys.size == 0:
+            return 0, np.nan, np.nan
+        return int(ys.size), float(np.mean(ys)), float(np.mean(xs))
+
+    def _build_shift_list_from_frame_info(each_set_df: pd.DataFrame, frame_info_df: pd.DataFrame, n_total: int):
+        """
+        Build per-frame (shift_y, shift_x) using actual frame order in frame_info.
+        Priority:
+          1) frame_info has shift_y/shift_x columns -> use directly.
+          2) frame_info phase order -> map pre/post by sorted nth_omit_induction, uncaging by unc_drift.
+        """
+        if frame_info_df is None or len(frame_info_df) < n_total:
+            return None
+        # 1) direct use when available
+        if "shift_y" in frame_info_df.columns and "shift_x" in frame_info_df.columns:
+            try:
+                out = []
+                for i in range(n_total):
+                    sy = float(frame_info_df.iloc[i].get("shift_y", 0) or 0)
+                    sx = float(frame_info_df.iloc[i].get("shift_x", 0) or 0)
+                    out.append((sy, sx))
+                return out
+            except Exception:
+                pass
+        # 2) infer by frame_info phase sequence
+        if "phase" not in frame_info_df.columns:
+            return None
+        pre_df = each_set_df[each_set_df["phase"] == "pre"].sort_values("nth_omit_induction").reset_index(drop=True)
+        post_df = each_set_df[each_set_df["phase"] == "post"].sort_values("nth_omit_induction").reset_index(drop=True)
+        unc_rows = each_set_df[each_set_df["phase"] == "unc"]
+        unc_drift_y, unc_drift_x = 0.0, 0.0
+        if len(unc_rows) > 0:
+            unc_drift_y = float(unc_rows.iloc[0].get("unc_drift_y", 0) or 0)
+            unc_drift_x = float(unc_rows.iloc[0].get("unc_drift_x", 0) or 0)
+        out = []
+        pre_i = 0
+        post_i = 0
+        for i in range(n_total):
+            phase = str(frame_info_df.iloc[i].get("phase", "")).lower()
+            if phase == "pre":
+                if pre_i < len(pre_df):
+                    sy = float(pre_df.iloc[pre_i].get("shift_y", 0) or 0)
+                    sx = float(pre_df.iloc[pre_i].get("shift_x", 0) or 0)
+                    pre_i += 1
+                else:
+                    sy, sx = 0.0, 0.0
+            elif phase in ("uncaging", "unc"):
+                sy, sx = unc_drift_y, unc_drift_x
+            elif phase == "post":
+                if post_i < len(post_df):
+                    sy = float(post_df.iloc[post_i].get("shift_y", 0) or 0)
+                    sx = float(post_df.iloc[post_i].get("shift_x", 0) or 0)
+                    post_i += 1
+                else:
+                    sy, sx = 0.0, 0.0
+            else:
+                sy, sx = 0.0, 0.0
+            out.append((sy, sx))
+        return out
+
     for each_filepath_without_number in combined_df["filepath_without_number"].unique():
         each_filegroup_df = combined_df[combined_df["filepath_without_number"] == each_filepath_without_number]
         for each_group in each_filegroup_df["group"].unique():
@@ -742,6 +883,19 @@ def save_drift_corrected_roi_masks(combined_df: pd.DataFrame):
                     continue
                 tiff_dir = os.path.dirname(tiff_path)
                 tiff_basename = os.path.splitext(os.path.basename(tiff_path))[0]
+                frame_info_path = os.path.join(tiff_dir, f"{tiff_basename}_frame_info.csv")
+                frame_info_df = None
+                shift_list_frameinfo = None
+                if os.path.exists(frame_info_path):
+                    try:
+                        frame_info_df = pd.read_csv(frame_info_path)
+                        shift_list_frameinfo = _build_shift_list_from_frame_info(each_set_df, frame_info_df, n_total)
+                    except Exception:
+                        frame_info_df = None
+                        shift_list_frameinfo = None
+                if shift_list_frameinfo is not None:
+                    shift_list = shift_list_frameinfo
+                debug_rows = []
                 for roi_type in ROI_TYPES:
                     roi_path = os.path.join(tiff_dir, f"{tiff_basename}_{roi_type}_roi_mask.tif")
                     if not os.path.exists(roi_path):
@@ -754,7 +908,39 @@ def save_drift_corrected_roi_masks(combined_df: pd.DataFrame):
                         for i in range(min(roi_aligned.shape[0], n_total)):
                             sy, sx = shift_list[i]
                             roi_frame = roi_aligned[i].astype(np.float32)
+                            # Candidate A (current implementation): inverse drift
                             roi_raw = ndimage_shift(roi_frame, (-sy, -sx), order=0, mode="constant", cval=0)
+                            # Candidate B (debug only): opposite sign
+                            roi_raw_plus = ndimage_shift(roi_frame, (sy, sx), order=0, mode="constant", cval=0)
+
+                            aligned_n, aligned_cy, aligned_cx = _mask_stats(roi_frame)
+                            raw_minus_n, raw_minus_cy, raw_minus_cx = _mask_stats(roi_raw)
+                            raw_plus_n, raw_plus_cy, raw_plus_cx = _mask_stats(roi_raw_plus)
+
+                            phase_name = ""
+                            source_name = ""
+                            if frame_info_df is not None and i < len(frame_info_df):
+                                phase_name = str(frame_info_df.iloc[i].get("phase", ""))
+                                source_name = str(frame_info_df.iloc[i].get("filename", ""))
+                            debug_rows.append({
+                                "set_label": each_set_label,
+                                "group": each_group,
+                                "roi_type": roi_type,
+                                "frame": i,
+                                "phase": phase_name,
+                                "source_filename": source_name,
+                                "shift_y": float(sy),
+                                "shift_x": float(sx),
+                                "aligned_nonzero": aligned_n,
+                                "aligned_centroid_y": aligned_cy,
+                                "aligned_centroid_x": aligned_cx,
+                                "raw_minus_nonzero": raw_minus_n,
+                                "raw_minus_centroid_y": raw_minus_cy,
+                                "raw_minus_centroid_x": raw_minus_cx,
+                                "raw_plus_nonzero": raw_plus_n,
+                                "raw_plus_centroid_y": raw_plus_cy,
+                                "raw_plus_centroid_x": raw_plus_cx,
+                            })
                             raw_stack.append((roi_raw > 0.5).astype(np.uint8))
                         raw_stack = np.stack(raw_stack, axis=0)
                         raw_path = os.path.join(tiff_dir, f"{tiff_basename}_{roi_type}{ROI_MASK_RAW_SUFFIX}.tif")
@@ -762,6 +948,13 @@ def save_drift_corrected_roi_masks(combined_df: pd.DataFrame):
                         print(f"  Set {each_set_label}: saved {roi_type} raw ROI -> {os.path.basename(raw_path)}")
                     except Exception as e:
                         print(f"  Set {each_set_label}: {roi_type} raw ROI failed: {e}")
+                if debug_rows:
+                    debug_csv_path = os.path.join(tiff_dir, f"{tiff_basename}_roi_shift_debug.csv")
+                    try:
+                        pd.DataFrame(debug_rows).to_csv(debug_csv_path, index=False)
+                        print(f"  Set {each_set_label}: saved ROI shift debug CSV -> {os.path.basename(debug_csv_path)}")
+                    except Exception as e:
+                        print(f"  Set {each_set_label}: failed to save ROI shift debug CSV: {e}")
 
     return combined_df
 
@@ -791,7 +984,11 @@ def _row_from_flim_data(
     Uncaging: single frame at frame_idx; lifetime = fit on histogram over ROI.
     """
     n_ave_frame = int(getattr(iminfo.State.Acq, "nAveFrame", 1))
-    intensity_raw = (12 * np.sum(imagearray, axis=-1)).astype(np.float64)
+    # intensity_raw = (12 * np.sum(imagearray, axis=-1)).astype(np.float64)
+    # 20260323 probably, this is not required anymore or rather incorrect.
+    # originally this was used to avoid dividing small value by 12 in the intensity calculation.
+    intensity_raw = (np.sum(imagearray, axis=-1)).astype(np.float64)
+
     axis0_len, _, C, H, W = intensity_raw.shape
     n_bins = imagearray.shape[5]
     ps_per_unit = (10 ** 12) / sync_rate / n_bins
@@ -944,6 +1141,9 @@ def quantify_intensity_from_flim(
                         raw_path = os.path.join(tiff_dir, f"{tiff_basename}_{roi_type}_roi_mask.tif")
                     if not os.path.exists(raw_path):
                         continue
+
+                    # 20260323 for debugging
+                    # print(f"roi_type: {roi_type}, raw_path: {raw_path}")
                     roi_raw[roi_type] = tifffile.imread(raw_path)
                     if roi_raw[roi_type].ndim == 2:
                         roi_raw[roi_type] = roi_raw[roi_type][np.newaxis, ...]
@@ -1054,6 +1254,8 @@ def run_tiff_uncaging_roi(
     photon_threshold: int = 15,
     total_photon_threshold: int = 1000,
     ask_stop_here_TF = False,
+    predefined_df_path: str | None = None,
+    skip_roi_gui: bool = False,
 ):
     """
     Run the full TIFF uncaging ROI workflow: first_processing, full-size stack build,
@@ -1070,9 +1272,20 @@ def run_tiff_uncaging_roi(
     summary_str += f"SYNC_RATE: {SYNC_RATE}\n"
     summary_str += f"photon_threshold: {photon_threshold}\n"
     summary_str += f"total_photon_threshold: {total_photon_threshold}\n"
+    summary_str += f"predefined_df_path: {predefined_df_path}\n"
+    summary_str += f"skip_roi_gui: {skip_roi_gui}\n"
     summary_str += "="*60+"\n"
 
-    if TEST_MODE:
+    # If predefined_df_path exists, skip FLIM/file dialogs and load directly.
+    use_predefined_df = bool(predefined_df_path and os.path.exists(predefined_df_path))
+    if use_predefined_df:
+        flim_file_select_dialog_TF = False
+        one_of_filepath_list = []
+        print("=" * 60)
+        print("Using predefined combined_df (dialog-free mode)")
+        print("  combined_df:", predefined_df_path)
+        print("=" * 60)
+    elif TEST_MODE:
         Do_without_asking = False
         skip_gui_TF = False
         flim_file_select_dialog_TF = False
@@ -1105,7 +1318,7 @@ def run_tiff_uncaging_roi(
 
     summary_str += f"one_of_filepath: {one_of_filepath_list}\n"
 
-    if not one_of_filepath_list:
+    if (not one_of_filepath_list) and (not use_predefined_df):
         print("No FLIM path. Exiting.")
         return
 
@@ -1127,11 +1340,22 @@ def run_tiff_uncaging_roi(
     one_of_filepath_list = deduped
 
     # No predefined df in test: always run first_processing
-    df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df_1.pkl")
+    if use_predefined_df:
+        df_save_path_1 = predefined_df_path
+    else:
+        df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df_1.pkl")
     combined_df = None
 
     loaded_existing_combined_df = False
-    if not TEST_MODE:
+    if use_predefined_df:
+        try:
+            combined_df = pd.read_pickle(df_save_path_1)
+            loaded_existing_combined_df = True
+            print(f"Loaded predefined df: {df_save_path_1}")
+        except Exception as e:
+            print(f"Failed to load predefined_df_path: {e}")
+            raise
+    elif not TEST_MODE:
         yn_already_have_combined_df = ask_yes_no_gui("Do you already have combined_df_1.pkl?")
         if yn_already_have_combined_df:
             df_save_path_1 = ask_open_path_gui()
@@ -1178,8 +1402,23 @@ def run_tiff_uncaging_roi(
         print("No data. Exiting.")
         return
 
+    # Determine whether to skip building full-size stacks.
+    # NOTE: When using predefined_df, we must NOT skip rebuild entirely because
+    # frame_info.csv (which stores runtime alignment shifts) must be regenerated
+    # with correct shift values from load_and_align_data. Skipping this causes
+    # save_drift_corrected_roi_masks to use stale/wrong shift values from combined_df
+    # (which differ from the actual alignment shifts), resulting in heavily shifted
+    # roi_mask_raw.tif files for pre/post frames.
+    # Instead, use skip_tiff_if_exists=True so existing TIFFs are not rewritten
+    # (fast) but frame_info.csv is always regenerated (correct).
     skip_full_size_build = False
-    if loaded_existing_combined_df:
+    skip_tiff_if_exists_flag = False
+    if use_predefined_df and loaded_existing_combined_df:
+        # Predefined df mode: always run rebuild to refresh frame_info.csv,
+        # but skip TIFF writes if files already exist (skip_tiff_if_exists=True).
+        skip_tiff_if_exists_flag = True
+        print("Predefined df mode: running rebuild with skip_tiff_if_exists=True (refresh frame_info.csv, skip TIFF write if exists)")
+    elif loaded_existing_combined_df:
         skip_full_size_build = ask_yes_no_gui(
             "Skip 'Building full-size stacks for ROI definition' and use existing stack paths?"
         )
@@ -1189,7 +1428,7 @@ def run_tiff_uncaging_roi(
         print("\n" + "=" * 60)
         print("Building full-size stacks for ROI definition (Pre + Uncaging + Post)")
         print("=" * 60)
-        combined_df = rebuild_tiff_full_size_for_roi(combined_df, ch_1or2, z_plus_minus)
+        combined_df = rebuild_tiff_full_size_for_roi(combined_df, ch_1or2, z_plus_minus, skip_tiff_if_exists=skip_tiff_if_exists_flag)
     if df_save_path_1:
         combined_df.to_pickle(df_save_path_1)
         combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
@@ -1218,19 +1457,22 @@ def run_tiff_uncaging_roi(
         combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
 
     if df_save_path_1:
-        app = QApplication.instance()
-        if app is None:
-            app = QApplication(sys.argv)
-        file_selection_gui = launch_file_selection_gui_tiff_only(
-            combined_df,
-            df_save_path_1,
-            additional_columns=['dt'],
-            save_auto=False,
-        )
-        app.exec_()
-        print("ROI definition (full-size) finished.")
-        if os.path.exists(df_save_path_1):
-            combined_df = pd.read_pickle(df_save_path_1)
+        if skip_roi_gui:
+            print("skip_roi_gui=True: skip ROI definition GUI and continue.")
+        else:
+            app = QApplication.instance()
+            if app is None:
+                app = QApplication(sys.argv)
+            file_selection_gui = launch_file_selection_gui_tiff_only(
+                combined_df,
+                df_save_path_1,
+                additional_columns=['dt'],
+                save_auto=False,
+            )
+            app.exec_()
+            print("ROI definition (full-size) finished.")
+            if os.path.exists(df_save_path_1):
+                combined_df = pd.read_pickle(df_save_path_1)
         print("\nSaving drift-corrected ROI masks (Type B: raw FLIM coordinates)...")
         save_drift_corrected_roi_masks(combined_df)
         if df_save_path_1:

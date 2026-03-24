@@ -159,13 +159,13 @@ class ROIAnalysisGUIWithViewMode(ROIAnalysisGUI):
         self.view_mode_checkbox.setEnabled(self._has_roi_defined())
         self.view_mode_checkbox.stateChanged.connect(self._on_view_mode_toggled)
 
-        # Place Reject button outside the mode frame (above it) to avoid accidental clicks.
-        if hasattr(self, "reject_button") and self.reject_button is not None:
+        # Place Reject + Shortcuts row outside the mode frame (above it).
+        if hasattr(self, "roi_action_row") and self.roi_action_row is not None:
             try:
-                layout.removeWidget(self.reject_button)
+                layout.removeWidget(self.roi_action_row)
             except Exception:
                 pass
-            layout.insertWidget(0, self.reject_button)
+            layout.insertWidget(0, self.roi_action_row)
         mode_layout.addWidget(self.view_mode_checkbox)
         layout.insertWidget(1, mode_frame)
 
@@ -183,12 +183,24 @@ class ROIAnalysisGUIWithViewMode(ROIAnalysisGUI):
                 )
                 return
             self.view_mode = True
-            if hasattr(self, "frame_info_label"):
-                self.frame_info_label.setStyleSheet("color: red; font-weight: bold;")
         else:
             self.view_mode = False
-            if hasattr(self, "frame_info_label"):
+
+        # QLabel above image + matplotlib title must match view_mode immediately
+        # (checkbox and F4), not only after moving frame.
+        if hasattr(self, "frame_info_label"):
+            if self.view_mode:
+                self.frame_info_label.setText(
+                    f"Review Mode Frame {self.current_frame + 1}/{self.total_frames}"
+                )
+                self.frame_info_label.setStyleSheet("color: red; font-weight: bold;")
+            else:
+                self.frame_info_label.setText(
+                    f"Frame {self.current_frame + 1}/{self.total_frames}"
+                )
                 self.frame_info_label.setStyleSheet("")
+        if hasattr(self, "_refresh_image_display"):
+            self._refresh_image_display()
 
     def enable_time_series_mode(self):
         """Enable time series mode and enable View mode checkbox when ROI is defined."""

@@ -10,8 +10,8 @@ Image.MAX_IMAGE_PIXELS = None
 
 def make_tiled_png(
     folder: str,
-    output_name: str = "tiled_IRF.png",
-    n_cols: int = 10,
+    output_name: str = "tiled_GFP_2d.png",
+    n_cols: int = 21,
     resize_to: tuple[int, int] | None = None,
     background_color=(0, 0, 0),
 ):
@@ -78,7 +78,7 @@ def make_tiled_png(
         canvas.paste(tile, (x0, y0))
 
     # Resize final canvas if one side exceeds max_size
-    max_size = 3000
+    max_size = 10000
     if max(out_w, out_h) > max_size:
         scale = max_size / max(out_w, out_h)
         new_w = int(out_w * scale)
@@ -93,8 +93,8 @@ def make_tiled_png(
 
 if __name__ == "__main__":
     # Use raw string literal for UNC path
-    folder = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260315\KH2PO4_920ex_IRF\IRF"
-
+    #folder = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260315\KH2PO4_920ex_IRF\IRF"
+    folder = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260315\KH2PO4_920ex_IRF\GFP_2d"
     # Example: use default tile size (150 x 150 pixels)
     make_tiled_png(folder)
 

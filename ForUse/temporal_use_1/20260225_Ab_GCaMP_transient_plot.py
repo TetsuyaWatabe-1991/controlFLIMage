@@ -9,22 +9,25 @@ from custom_plot import plt
 
 photon_threshold_for_intensity = 30
 photon_threshold_for_lifetime = 1000
-Ab_added_datetime = datetime.datetime(2026, 1, 29, 16, 2, 0, 0)
+Ab_added_datetime = datetime.datetime(2026, 2, 25, 15, 5, 0, 0)
 Ab_time_delta_hour_for_camui = 1 + 53/60
 
 # pkl_path = r"Z:\User-Personal\Tetsuya_Zdrive\Data\202601\20260122\auto1\transient_combined_df.pkl"
 # csv_path = r"Z:\User-Personal\Tetsuya_Zdrive\Data\202601\20260122\auto1\transient_combined_df_full_timeseries.csv"
-pkl_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260129\auto1\transient_combined_df.pkl"
-csv_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260129\auto1\transient_combined_df_full_timeseries.csv"
+# pkl_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260129\auto1\transient_combined_df.pkl"
+# csv_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260129\auto1\transient_combined_df_full_timeseries.csv"
+df_save_path_1 = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260225\auto1\combined_df.pkl"
+out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260225/auto1/combined_df_intensity_lifetime_all_frames.csv"
 
 
-combined_df = pd.read_pickle(pkl_path)
-fulltimeseries_df = pd.read_csv(csv_path)
+
+combined_df = pd.read_pickle(df_save_path_1)
+fulltimeseries_df = pd.read_csv(out_csv_path)
 
 #reanalyze time information
 #start of the experiment, the time I soak the slice and get widefiled image
 #get time info from that file's saved datetime using os 
-first_timepoint_filepath = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260129\20260129_101251.tif"
+first_timepoint_filepath = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260225\20260225_122523.tif"
 first_timepoint_datetime = datetime.datetime.fromtimestamp(os.path.getmtime(first_timepoint_filepath))
 
 combined_df["dt"] = pd.to_datetime(combined_df["dt_str"])
@@ -36,37 +39,11 @@ relative_time_sec_Ab_added = (Ab_added_datetime - first_timepoint_datetime).tota
 relative_time_min_Ab_added = relative_time_sec_Ab_added / 60
 relative_time_hour_Ab_added = relative_time_min_Ab_added / 60
 
+GC6s_group_header_list = ["1_pos","2_pos","3_pos","4_pos","5_pos","6_pos"]
 
-GC6s_group_header_list = ["1_pos","2_pos"]
-camui_group_header_list = ["4_pos","5_pos"]
-
-save_folder = os.path.join(os.path.dirname(pkl_path), "summary")
+save_folder = os.path.join(os.path.dirname(df_save_path_1), "summary")
 os.makedirs(save_folder, exist_ok=True)
-#%% align the time_sec based on the uncaging timing
 
-fulltimeseries_df.loc[:,"aligned_time_sec"] = -999.99
-
-for each_file_path in fulltimeseries_df["file_path"].unique():
-    each_df = fulltimeseries_df[fulltimeseries_df["file_path"] == each_file_path]
-    length_of_each_df = len(each_df)
-    if length_of_each_df == 33:
-        aligned_values = each_df["time_sec"].values - each_df["time_sec"].iloc[1]
-    elif length_of_each_df == 55:
-        aligned_values = each_df["time_sec"].values - each_df["time_sec"].iloc[4]
-    else:
-        raise ValueError(f"Length of each df is not 33 or 55: {length_of_each_df}")
-    
-    fulltimeseries_df.loc[fulltimeseries_df["file_path"] == each_file_path, "aligned_time_sec"] = aligned_values
-    
-#%%
-# get representative lifetime and intensity for each file_path
-representative_time_window = (10,20) #aligned_time_sec between 10 and 20
-for each_file_path in fulltimeseries_df["file_path"].unique():
-    each_df = fulltimeseries_df[fulltimeseries_df["file_path"] == each_file_path]
-    representative_lifetime = each_df[each_df["aligned_time_sec"].between(representative_time_window[0], representative_time_window[1])]["Spine_Ch1_lifetime"].mean()
-    representative_intensity = each_df[each_df["aligned_time_sec"].between(representative_time_window[0], representative_time_window[1])]["Spine_Ch1_intensity"].mean()
-    combined_df.loc[combined_df["file_path"] == each_file_path, "Spine_Ch1_lifetime_representative"] = representative_lifetime
-    combined_df.loc[combined_df["file_path"] == each_file_path, "Spine_Ch1_intensity_representative"] = representative_intensity
 
 
 # %%

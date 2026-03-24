@@ -90,26 +90,17 @@ def reshape_axes_to_2d(axes: Any, n_rows: int, n_cols: int) -> np.ndarray:
 
 
 group_header_dict = {
-    "B2": "Rolipram",
+    # "B2": "Rolipram",
     "B3": "Forskolin"
 }
 
 
 LTP_data_point_after_min_between = [25,35]
 
-# Exclude sets where pre-phase intensity is unstable:
-# if max(pre) / min(pre) exceeds this threshold, the set is skipped.
-pre_instability_max_min_ratio_threshold = 1.4  # 40%
-pre_instability_check_roi = "Spine"
-pre_instability_check_ch = "Ch2"
-
 acquisiton_start_datetime_str = "2026-03-17T21:00:00.000"
 
-# df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260318/auto1/combined_df_1.pkl"
-# out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260318/auto1/combined_df_1_intensity_lifetime_all_frames.csv"
-
-df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260318/auto1/combined_df_1.pkl"
-out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260318/auto1/combined_df_1_intensity_lifetime_all_frames.csv"
+df_save_path_1 = r"C:/Users/WatabeT/Desktop/temp2\combined_df_1.pkl"
+out_csv_path = r"C:/Users/WatabeT/Desktop/temp2\combined_df_1_intensity_lifetime_all_frames.csv"
 
 #%% parameters usually common to all files
 powermeter_folder= r"//RY-LAB-WS04/Users/yasudalab/Documents/Tetsuya_Imaging/powermeter"
@@ -311,18 +302,6 @@ for each_group in fulltimeseries_df["group"].unique():
         each_summary_dict["delta_FF0_intensity_ch2"] = each_summary_dict["Ch2_post_intensity"] / each_summary_dict["Ch2_pre_intensity"] - 1
         each_summary_dict["acq_time_str"] = each_df["acq_time_str"].unique()[0]
 
-        # Pre-phase intensity stability: max/min ratio for each ROI x channel
-        pre_df_phase = each_df[each_df["phase"] == "pre"]
-        for each_ROI_name in ROI_name_list:
-            for each_ch in ["Ch1", "Ch2"]:
-                col = f"{each_ROI_name}_{each_ch}_intensity_div_by_nAve"
-                pre_vals = pre_df_phase[col].dropna() if col in pre_df_phase.columns else pd.Series(dtype=float)
-                if len(pre_vals) >= 2 and pre_vals.min() > 0:
-                    ratio = pre_vals.max() / pre_vals.min()
-                else:
-                    ratio = np.nan
-                each_summary_dict[f"pre_max_min_ratio_{each_ROI_name}_{each_ch}"] = ratio
-
         summary_df = pd.concat([summary_df, pd.DataFrame([each_summary_dict])], ignore_index=True)
 
 # %%
@@ -365,22 +344,6 @@ for each_group_set_id in fulltimeseries_df["group_set_id"].unique():
     summary_df.loc[summary_df["group_set_id"] == each_group_set_id, "uncaging_power_coherent_mW"] = uncaging_power_coherent_mW
 
 
-summary_df.to_csv(os.path.join(save_folder, "summary_df.csv"), index=False)
-
-# Print pre-phase stability summary
-ratio_cols = [c for c in summary_df.columns if c.startswith("pre_max_min_ratio_")]
-print("Pre-phase intensity stability (max/min ratio):")
-print(summary_df[["group_set_id"] + ratio_cols].to_string(index=False))
-
-
-# Optional: filter out unstable sets by threshold.
-# Uncomment and adjust as needed.
-ratio_cols_to_check = [c for c in ratio_cols if "Ch2" in c]  # e.g. Ch2 only
-unstable_mask = summary_df[ratio_cols_to_check].gt(pre_instability_max_min_ratio_threshold).any(axis=1)
-unstable_ids = summary_df.loc[unstable_mask, "group_set_id"].tolist()
-print(f"Excluded sets (pre instability > {pre_instability_max_min_ratio_threshold}): {unstable_ids}")
-summary_df = summary_df[~unstable_mask].reset_index(drop=True)
-fulltimeseries_df = fulltimeseries_df[~fulltimeseries_df["group_set_id"].isin(unstable_ids)].reset_index(drop=True)
 
 # %% line plot
 #plot each data, with light thin color lines
@@ -394,7 +357,7 @@ plot_info_dict = {
                 "y": "Spine_Ch2_intensity_normalized", 
                 "errorbar": "se",
                 # "ylim": [-0.4, 5.9]
-                "ylim": swarm_ylim
+                "ylim": [-0.4, swarm_ylim[1]]
                 },
     }
 

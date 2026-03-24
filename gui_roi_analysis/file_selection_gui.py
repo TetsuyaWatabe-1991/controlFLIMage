@@ -9,7 +9,7 @@ import tifffile
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
                             QWidget, QTableWidget, QTableWidgetItem, QPushButton,
                             QLabel, QHeaderView, QCheckBox, QMessageBox, QProgressBar,
-                            QSplitter, QTextEdit, QLineEdit, QComboBox)
+                            QSplitter, QTextEdit, QLineEdit, QComboBox, QDialog)
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QColor
 
@@ -108,6 +108,13 @@ class FileSelectionGUI(QMainWindow):
             self.auto_refresh_check.setToolTip("Automatically refresh table after completing ROI analysis")
             button_layout.addWidget(self.auto_refresh_check)
             
+            # After "Launch All", continue with the following sets in table order (TIFF-only flow uses this most)
+            self.chain_sets_toggle = QCheckBox("Chain sets")
+            self.chain_sets_toggle.setToolTip(
+                "When ON: finishing Launch All for one set auto-opens Launch All for the next row."
+            )
+            button_layout.addWidget(self.chain_sets_toggle)
+            
             button_layout.addStretch()
             
             # Status label
@@ -133,6 +140,11 @@ class FileSelectionGUI(QMainWindow):
             self.refresh_timer = QTimer()
             self.refresh_timer.setSingleShot(True)
             self.refresh_timer.timeout.connect(self.delayed_refresh)
+            
+            # Chain Launch All: stop further auto-opens after Esc/cancel in ROI GUI
+            self._chain_abort = False
+            # Singleton help window for ROI keyboard shortcuts (closed with this GUI)
+            self._shortcuts_help_dialog = None
             
             # Populate table
             self.log_message("File Selection GUI initialized successfully.")
@@ -649,8 +661,10 @@ class FileSelectionGUI(QMainWindow):
             self.status_label.setText("Error")
             self.status_label.setStyleSheet("color: red; font-weight: bold;")
     
-    def launch_all_roi_analysis(self, group, set_label, tiff_path):
+    def launch_all_roi_analysis(self, group, set_label, tiff_path, from_chain=False):
         """Launch ROI analysis for all three types"""
+        if not from_chain:
+            self._chain_abort = False
         if not tiff_path or not os.path.exists(tiff_path):
             QMessageBox.warning(self, "Error", f"TIFF file not found: {tiff_path}")
             self.log_message(f"ERROR: TIFF file not found for {group}, Set {set_label}: {tiff_path}")
@@ -901,6 +915,103 @@ class FileSelectionGUI(QMainWindow):
         else:
             self.log_message("No save path specified for auto-save or save_auto is False")
     
+    def closeEvent(self, event):
+        """Close floating shortcuts help when the set-list window closes."""
+        if getattr(self, "_shortcuts_help_dialog", None) is not None:
+            try:
+                self._shortcuts_help_dialog.close()
+            except Exception:
+                pass
+            self._shortcuts_help_dialog = None
+        super().closeEvent(event)
+
+    def note_roi_esc_cancel(self):
+        """ROI closed with Esc/cancel: stop Chain sets auto-queue."""
+        self._chain_abort = True
+
+    def note_roi_navigation_cancel_chain(self):
+        """F6/F8 navigation: do not auto-continue chain from the interrupted set."""
+        self._chain_abort = True
+
+    def show_roi_shortcuts_help(self):
+        """Show or raise the singleton shortcuts help dialog."""
+        try:
+            from gui_roi_analysis.roi_shortcuts_help_dialog import RoiKeyboardShortcutsHelpDialog
+        except ImportError:
+            from roi_shortcuts_help_dialog import RoiKeyboardShortcutsHelpDialog
+        if self._shortcuts_help_dialog is None:
+            self._shortcuts_help_dialog = RoiKeyboardShortcutsHelpDialog(self)
+        self._shortcuts_help_dialog.show()
+        self._shortcuts_help_dialog.raise_()
+        self._shortcuts_help_dialog.activateWindow()
+
+    def get_ordered_sets_list(self):
+        """Same order as the table: list of dicts group_id, set_label, tiff_path."""
+        if self.combined_df is None or len(self.combined_df) == 0:
+            return []
+        if "filepath_without_number" in self.combined_df.columns:
+            primary = "filepath_without_number"
+        else:
+            primary = "group"
+        valid_data = self.combined_df[
+            (self.combined_df["nth_set_label"] >= 0)
+            & (self.combined_df["nth_set_label"].notna())
+        ]
+        if len(valid_data) == 0:
+            return []
+        unique_combinations = valid_data.groupby([primary, "nth_set_label"]).first().reset_index()
+        out = []
+        for _, row_data in unique_combinations.iterrows():
+            gid = row_data[primary]
+            sl = row_data["nth_set_label"]
+            mask = (self.combined_df[primary] == gid) & (self.combined_df["nth_set_label"] == sl)
+            gdf = self.combined_df[mask]
+            tiff_path = ""
+            if "after_align_save_path" in gdf.columns:
+                paths = gdf["after_align_save_path"].dropna()
+                if len(paths) > 0:
+                    tiff_path = str(paths.iloc[0])
+            out.append({"group_id": gid, "set_label": int(sl) if not pd.isna(sl) else sl, "tiff_path": tiff_path})
+        return out
+
+    def _neighbor_set(self, group_id, set_label, delta: int):
+        """Return adjacent set entry in table order, or None."""
+        lst = self.get_ordered_sets_list()
+        idx = -1
+        for i, e in enumerate(lst):
+            if e["group_id"] == group_id and e["set_label"] == set_label:
+                idx = i
+                break
+        if idx < 0:
+            return None
+        j = idx + int(delta)
+        if j < 0 or j >= len(lst):
+            return None
+        return lst[j]
+
+    def maybe_schedule_chain_next_set(self, group_id, set_label):
+        """After a full Launch All for one set, open the next row if Chain sets is ON."""
+        if not getattr(self, "chain_sets_toggle", None) or not self.chain_sets_toggle.isChecked():
+            return
+        if self._chain_abort:
+            return
+        nxt = self._neighbor_set(group_id, set_label, 1)
+        if not nxt:
+            return
+        p = nxt.get("tiff_path") or ""
+        if not p or not os.path.exists(str(p)):
+            self.log_message("Chain sets: next row has no TIFF path; stopping.")
+            return
+        self.log_message(
+            f"Chain sets: scheduling Launch All for next (set {nxt['set_label']})"
+        )
+        QTimer.singleShot(
+            200,
+            lambda g=nxt["group_id"], s=nxt["set_label"], path=p: self.launch_all_roi_analysis(
+                g, s, path, from_chain=True
+            ),
+        )
+
     def manual_save_dataframe(self):
         """Manually save the combined_df to the specified path (ignores save_auto setting)"""
         if self.df_save_path_2:

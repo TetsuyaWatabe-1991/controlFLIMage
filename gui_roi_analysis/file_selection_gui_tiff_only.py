@@ -9,7 +9,8 @@ import sys
 import os
 # Import the original file_selection_gui module
 from gui_roi_analysis.file_selection_gui import FileSelectionGUI as OriginalFileSelectionGUI
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtWidgets import QMessageBox, QCheckBox
+from PyQt5.QtCore import QTimer
 
 
 class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
@@ -139,6 +140,17 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
         try:
             if row_idx < 0 or row_idx >= self.table.rowCount():
                 return
+
+            # Reject checkbox lives in column 2 (View Plot=0, TIFF Path=1, Reject=2)
+            if tiff_path and str(tiff_path).strip():
+                reject_widget = self.table.cellWidget(row_idx, 2)
+                if reject_widget is not None:
+                    cb = reject_widget.findChild(QCheckBox)
+                    if cb is not None:
+                        is_rejected = self.get_reject_status_from_file(tiff_path)
+                        cb.blockSignals(True)
+                        cb.setChecked(bool(is_rejected))
+                        cb.blockSignals(False)
             
             # Find the column indices for ROI status
             # Headers: "View Plot", "TIFF Path", "Reject", "Comment", [z columns], [additional], 
@@ -321,8 +333,10 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
             traceback.print_exc()
             return False, ""
     
-    def launch_all_roi_analysis(self, group, set_label, tiff_path):
+    def launch_all_roi_analysis(self, group, set_label, tiff_path, from_chain=False):
         """Launch ROI analysis for all three types with TIFF-only saving."""
+        if not from_chain:
+            self._chain_abort = False
         if not tiff_path or not os.path.exists(tiff_path):
             QMessageBox.warning(self, "Error", f"TIFF file not found: {tiff_path}")
             self.log_message(f"ERROR: TIFF file not found for {group}, Set {set_label}: {tiff_path}")
@@ -338,6 +352,9 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
             
             roi_types = ["Spine", "DendriticShaft", "Background"]
             rejected_during_run = False
+            navigated_away = False
+            all_three_complete = False
+
             for roi_type in roi_types:
                 self.log_message(f"Launching {roi_type} ROI analysis for {group}, Set {set_label}")
                 
@@ -351,15 +368,53 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
                 self.log_message(f"ROI mask will be saved to: {tiff_save_path}")
                 
                 launch_result = launch_roi_analysis_gui_tiff_only(
-                    self.combined_df, 
-                    tiff_path, 
-                    group, 
-                    set_label, 
+                    self.combined_df,
+                    tiff_path,
+                    group,
+                    set_label,
                     header=roi_type,
-                    save_tiff_path=tiff_save_path
+                    save_tiff_path=tiff_save_path,
+                    shortcut_host=self,
                 )
-                if isinstance(launch_result, dict) and launch_result.get("rejected", False):
-                    # Mark rejected and stop launching remaining ROI windows.
+                if not isinstance(launch_result, dict):
+                    self._chain_abort = True
+                    break
+                ek = launch_result.get("exit_kind", "cancel")
+
+                if ek == "complete":
+                    self.roi_analysis_completed.emit(group, set_label, roi_type)
+                    continue
+
+                if ek == "cancel":
+                    self._chain_abort = True
+                    self.log_message(f"ROI window cancelled during {roi_type}; stopping Launch All for this set.")
+                    break
+
+                # Must run before plain "reject": F9 sets rejected=True and exit_kind=reject_next_launch_all
+                if ek == "reject_next_launch_all":
+                    navigated_away = True
+                    if 'filepath_without_number' in self.combined_df.columns:
+                        mask = (self.combined_df['filepath_without_number'] == group) & (self.combined_df['nth_set_label'] == set_label)
+                    else:
+                        mask = (self.combined_df['group'] == group) & (self.combined_df['nth_set_label'] == set_label)
+                    self.combined_df.loc[mask, 'reject'] = 1
+                    self.save_reject_status_to_file(tiff_path, True)
+                    self._create_central_roi_for_rejected(group, set_label, mask)
+                    self.auto_save_dataframe()
+                    nxt = self._neighbor_set(group, set_label, 1)
+                    if nxt and nxt.get("tiff_path") and os.path.exists(str(nxt["tiff_path"])):
+                        self.log_message("Shortcut F9: reject current set, opening next (Launch All)")
+                        QTimer.singleShot(
+                            150,
+                            lambda n=nxt: self.launch_all_roi_analysis(
+                                n["group_id"], n["set_label"], n["tiff_path"], from_chain=True
+                            ),
+                        )
+                    else:
+                        self.log_message("Shortcut F9: no next set with a valid TIFF.")
+                    break
+
+                if ek == "reject" or launch_result.get("rejected", False):
                     self.log_message(f"Rejected during {roi_type} ROI analysis. Stopping remaining ROI windows.")
                     if 'filepath_without_number' in self.combined_df.columns:
                         mask = (self.combined_df['filepath_without_number'] == group) & (self.combined_df['nth_set_label'] == set_label)
@@ -371,10 +426,42 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
                     self.auto_save_dataframe()
                     rejected_during_run = True
                     break
-                self.roi_analysis_completed.emit(group, set_label, roi_type)
-            
-            # Note: No dataframe auto-save in TIFF-only mode
-            self.log_message("ROI analysis completed. Masks saved to TIFF files only (not to dataframe).")
+
+                if ek == "prev_set_launch_all":
+                    navigated_away = True
+                    prev = self._neighbor_set(group, set_label, -1)
+                    if prev and prev.get("tiff_path") and os.path.exists(str(prev["tiff_path"])):
+                        self.log_message("Shortcut: opening previous set (Launch All)")
+                        QTimer.singleShot(
+                            100,
+                            lambda p=prev: self.launch_all_roi_analysis(
+                                p["group_id"], p["set_label"], p["tiff_path"], from_chain=True
+                            ),
+                        )
+                    else:
+                        self.log_message("Shortcut F6: no previous set with a valid TIFF.")
+                    break
+
+                if ek == "next_set_launch_all":
+                    navigated_away = True
+                    nxt = self._neighbor_set(group, set_label, 1)
+                    if nxt and nxt.get("tiff_path") and os.path.exists(str(nxt["tiff_path"])):
+                        self.log_message("Shortcut: opening next set (Launch All)")
+                        QTimer.singleShot(
+                            100,
+                            lambda n=nxt: self.launch_all_roi_analysis(
+                                n["group_id"], n["set_label"], n["tiff_path"], from_chain=True
+                            ),
+                        )
+                    else:
+                        self.log_message("Shortcut F8: no next set with a valid TIFF.")
+                    break
+
+                self._chain_abort = True
+                self.log_message(f"Unknown exit_kind={ek}; stopping Launch All.")
+                break
+            else:
+                all_three_complete = True
             
             # Update only the affected row instead of full refresh
             row_idx = self._find_row_by_tiff_path(tiff_path)
@@ -385,6 +472,14 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
                 # Fallback to full refresh if row not found
                 self.refresh_table()
             
+            if navigated_away:
+                self.status_label.setText("Switching set…")
+                self.status_label.setStyleSheet("color: blue; font-weight: bold;")
+                return
+
+            # Note: No dataframe auto-save in TIFF-only mode
+            self.log_message("ROI analysis completed. Masks saved to TIFF files only (not to dataframe).")
+
             if rejected_during_run:
                 self.status_label.setText("ROI analysis rejected")
                 self.status_label.setStyleSheet("color: orange; font-weight: bold;")
@@ -393,6 +488,9 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
                 self.status_label.setText("ROI analysis completed (TIFF saved)")
                 self.status_label.setStyleSheet("color: green; font-weight: bold;")
                 self.log_message(f"All ROI analysis completed for {group}, Set {set_label}")
+
+            if all_three_complete:
+                self.maybe_schedule_chain_next_set(group, set_label)
             
         except Exception as e:
             error_msg = f"Failed to launch ROI analysis: {str(e)}"
@@ -426,13 +524,65 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
             self.log_message(f"ROI mask will be saved to: {tiff_save_path}")
             
             launch_result = launch_roi_analysis_gui_tiff_only(
-                self.combined_df, 
-                tiff_path, 
-                group, 
-                set_label, 
+                self.combined_df,
+                tiff_path,
+                group,
+                set_label,
                 header=roi_type,
-                save_tiff_path=tiff_save_path
+                save_tiff_path=tiff_save_path,
+                shortcut_host=self,
             )
+            if isinstance(launch_result, dict):
+                ek = launch_result.get("exit_kind", "cancel")
+                if ek == "prev_set_launch_all":
+                    prev = self._neighbor_set(group, set_label, -1)
+                    if prev and prev.get("tiff_path") and os.path.exists(str(prev["tiff_path"])):
+                        QTimer.singleShot(
+                            100,
+                            lambda p=prev: self.launch_all_roi_analysis(
+                                p["group_id"], p["set_label"], p["tiff_path"], from_chain=True
+                            ),
+                        )
+                    self.status_label.setText("Switching set…")
+                    return
+                if ek == "next_set_launch_all":
+                    nxt = self._neighbor_set(group, set_label, 1)
+                    if nxt and nxt.get("tiff_path") and os.path.exists(str(nxt["tiff_path"])):
+                        QTimer.singleShot(
+                            100,
+                            lambda n=nxt: self.launch_all_roi_analysis(
+                                n["group_id"], n["set_label"], n["tiff_path"], from_chain=True
+                            ),
+                        )
+                    self.status_label.setText("Switching set…")
+                    return
+                if ek == "reject_next_launch_all":
+                    if 'filepath_without_number' in self.combined_df.columns:
+                        mask = (self.combined_df['filepath_without_number'] == group) & (self.combined_df['nth_set_label'] == set_label)
+                    else:
+                        mask = (self.combined_df['group'] == group) & (self.combined_df['nth_set_label'] == set_label)
+                    self.combined_df.loc[mask, 'reject'] = 1
+                    self.save_reject_status_to_file(tiff_path, True)
+                    self._create_central_roi_for_rejected(group, set_label, mask)
+                    self.auto_save_dataframe()
+                    nxt = self._neighbor_set(group, set_label, 1)
+                    if nxt and nxt.get("tiff_path") and os.path.exists(str(nxt["tiff_path"])):
+                        QTimer.singleShot(
+                            150,
+                            lambda n=nxt: self.launch_all_roi_analysis(
+                                n["group_id"], n["set_label"], n["tiff_path"], from_chain=True
+                            ),
+                        )
+                    self.status_label.setText("Switching set…")
+                    return
+                if ek == "cancel":
+                    self._chain_abort = True
+                    self.status_label.setText("Cancelled")
+                    self.status_label.setStyleSheet("color: orange; font-weight: bold;")
+                    row_idx = self._find_row_by_tiff_path(tiff_path)
+                    if row_idx >= 0:
+                        self.update_single_row_roi_status(row_idx, tiff_path)
+                    return
             if isinstance(launch_result, dict) and launch_result.get("rejected", False):
                 if 'filepath_without_number' in self.combined_df.columns:
                     mask = (self.combined_df['filepath_without_number'] == group) & (self.combined_df['nth_set_label'] == set_label)
