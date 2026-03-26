@@ -15,7 +15,8 @@ import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 import numpy as np
-from controlflimage_threading import Control_flimage
+# from controlflimage_threading import Control_flimage\
+from FLIM_pipeClient import FLIM_Com
 
 if False:
     import pyvisa
@@ -53,6 +54,9 @@ class ThorlabPM100:
         self.my_instrument.write('SENSE:CORR:COLL:ZERO')
         time.sleep(self.sleep_sec)
 
+
+
+
     def read(self):
         power_mW = 1000 * float(self.my_instrument.query('MEAS?'))
         time.sleep(self.sleep_sec)
@@ -67,29 +71,31 @@ class LaserSettingAuto:
     Orchestrates laser power measurement using ThorlabPM100 and FLIMage remote control.
     """
     def __init__(self, flim_ini_path, pm_resource_addr=None):
-        self.FLIMageCont = Control_flimage(flim_ini_path)
-        self.FLIMageCont.flim.print_responses = False
+        self.FLIMageCont = FLIM_Com()
+        self.FLIMageCont.start()
+        # self.FLIMageCont.flim.print_responses = False
         self.PM100D = ThorlabPM100(resource_addr=pm_resource_addr) if pm_resource_addr else ThorlabPM100()
         self.pow_result = {}
+        self.FLIMageCont.sendCommand("SetZoom, 101")
         self.zero_all()
 
     def set_power(self, laser_1or2, percent):
         """Set laser power via FLIMage remote control (SetPower command)."""
-        self.FLIMageCont.flim.sendCommand(f"SetPower, {laser_1or2}, {percent}")
+        self.FLIMageCont.sendCommand(f"SetPower, {laser_1or2}, {percent}")
 
     def set_auto(self, laser_1or2, percent_list, interval=10, no_record=False):
-        self.FLIMageCont.flim.sendCommand("SetDIOPanel, 1, 0")
-        self.FLIMageCont.flim.sendCommand("SetDIOPanel, 1, 1")
+        self.FLIMageCont.sendCommand("SetDIOPanel, 1, 0")
+        self.FLIMageCont.sendCommand("SetDIOPanel, 1, 1")
         time.sleep(0.1)
         for power in percent_list:
             self.set_power(laser_1or2, power)
-            self.FLIMageCont.flim.sendCommand("SetDIOPanel, 1, 1")
+            self.FLIMageCont.sendCommand("SetDIOPanel, 1, 1")
             if laser_1or2 == 2:
-                self.FLIMageCont.flim.sendCommand("SetDIOPanel, 3, 1")
+                self.FLIMageCont.sendCommand("SetDIOPanel, 3, 1")
             time.sleep(interval)
             power_mW = self.PM100D.read()
-            self.FLIMageCont.flim.sendCommand("SetDIOPanel, 3, 0")
-            self.FLIMageCont.flim.sendCommand("SetDIOPanel, 1, 0")
+            self.FLIMageCont.sendCommand("SetDIOPanel, 3, 0")
+            self.FLIMageCont.sendCommand("SetDIOPanel, 1, 0")
             if not no_record:
                 self.pow_result[power] = power_mW
 
