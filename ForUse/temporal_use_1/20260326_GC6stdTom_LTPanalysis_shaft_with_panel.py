@@ -90,18 +90,16 @@ def reshape_axes_to_2d(axes: Any, n_rows: int, n_cols: int) -> np.ndarray:
 
 
 group_header_dict = {
-    "C2": "dbcAMP 1mM",
-    "C3": "FSK 10uM"
+    "CytivaNoKA": "Cytiva No KA",
 }
 
 
 LTP_data_point_after_min_between = [25,35]
 
-acquisiton_start_datetime_str = "2026-03-24T15:00:00.000"
+acquisiton_start_datetime_str = "2026-03-26T11:30:00.000"
 
-df_save_path_1 = r"G:/ImagingData/Tetsuya/20260324/auto1/combined_df_1.pkl"
-out_csv_path = r"G:/ImagingData/Tetsuya/20260324/auto1/combined_df_1_intensity_lifetime_all_frames.csv"
-
+df_save_path_1 = r"G:/ImagingData/Tetsuya/20260326/cytiva_woKA\combined_df_1.pkl"
+out_csv_path = r"G:/ImagingData/Tetsuya/20260326/cytiva_woKA\combined_df_1_intensity_lifetime_all_frames.csv"
 #%% parameters usually common to all files
 powermeter_folder= r"//RY-LAB-WS04/Users/yasudalab/Documents/Tetsuya_Imaging/powermeter"
 assert os.path.exists(powermeter_folder), f"powermeter_folder does not exist: {powermeter_folder}"

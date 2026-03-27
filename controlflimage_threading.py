@@ -806,7 +806,7 @@ class Control_flimage():
                     break
         return True
     
-    def wait_while_grabbing(self,sleep_every_sec=1, max_waiting_sec = 300):
+    def wait_while_grabbing(self,sleep_every_sec=1, max_waiting_sec = 180):
         sleep(self.expected_grab_duration_sec)
         error_count = 0
         now = datetime.now()

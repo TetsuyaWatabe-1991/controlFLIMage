@@ -16,7 +16,7 @@ from FLIMageFileReader2 import FileReader
 from fitting.flim_lifetime_fitting import FLIMLifetimeFitter
 
 # --- settings ---
-flim_folder = r"G:\ImagingData\Tetsuya\20260320\auto1"
+flim_folder = r"G:\ImagingData\Tetsuya\20260325\p38_egfp\auto1"
 GLOB_PATTERN = "*_[0-9][0-9][0-9].flim"
 # Match flim_whole_frame_decay_plot.py: UI ch1 uses channel index 1 here
 CH1_INDEX = 1

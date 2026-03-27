@@ -147,46 +147,147 @@ def color_fue(savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLI
         plt.show()
 
 
+def get_nice_scalebar_um(image_x_um):
+    """Return a nice integer scalebar length approximately 1/10 to 1/5 of image_x_um."""
+    target = image_x_um * 0.15
+    magnitude = 10 ** np.floor(np.log10(target))
+    candidates = [magnitude, 2 * magnitude, 5 * magnitude, 10 * magnitude]
+    return int(min(candidates, key=lambda v: abs(v - target)))
+
+
+def add_scale_bar(ax, scalebar_um, x_um_per_pix, avoid_x_y=None, color='white', fontsize=10):
+    """Draw a scale bar with label in the upper right corner of the axes.
+
+    If avoid_x_y is provided and falls within the upper right region,
+    the bar is placed in the upper left instead.
+
+    Args:
+        ax: matplotlib Axes object
+        scalebar_um: scale bar length in micrometers
+        x_um_per_pix: micrometers per pixel in x direction
+        avoid_x_y: (x, y) data coordinate to avoid overlapping (e.g. uncaging position)
+        color: bar and text color
+        fontsize: font size of the label
+    """
+    scalebar_pix = scalebar_um / x_um_per_pix
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    x_range = abs(xlim[1] - xlim[0])
+    y_range = abs(ylim[1] - ylim[0])
+    margin_x = x_range * 0.03
+    margin_y = y_range * 0.05
+
+    # Default: upper right
+    x_right = max(xlim) - margin_x
+    x_left = x_right - scalebar_pix
+    # imshow has inverted y-axis: min(ylim) is the visual top
+    y_bar = min(ylim) + margin_y
+    y_text = y_bar - y_range * 0.015
+
+    if avoid_x_y is not None:
+        avoid_x, avoid_y = avoid_x_y
+        # Check if avoid point falls in the upper right region (with generous padding)
+        in_right_half = avoid_x >= min(xlim) + x_range * 0.5
+        in_upper_band = avoid_y <= min(ylim) + y_range * 0.2
+        if in_right_half and in_upper_band:
+            # Switch to upper left
+            x_left = min(xlim) + margin_x
+            x_right = x_left + scalebar_pix
+
+    ax.plot([x_left, x_right], [y_bar, y_bar],
+            color=color, linewidth=2, solid_capstyle='butt')
+    ax.text((x_left + x_right) / 2, y_text, f'{scalebar_um} \u03bcm',
+            color=color, ha='center', va='bottom', fontsize=fontsize)
+
+
 def plot_max_proj_uncaging(
                     each_file, ch_1or2, show_uncaging = False,
                     use_default_savefolder = True, savefolder = "",
                     plot_text = "",
+                    give_uncaging_x_y_0to1 = False,
+                    give_center_x_y = False,
+                    defined_center_x_y = [0, 0],
+                    defined_uncaging_x_y_0to1 = [0, 0],
+                    vmin = 0, vmax = 0,
+                    return_vmax = False,
+                    marker = 'c.'
                     ):
     iminfo = FileReader()
     iminfo.read_imageFile(each_file, True) 
+    x_um_per_pix_x = iminfo.statedict['State.Acq.FOV_default'][0] / iminfo.statedict['State.Acq.zoom'] / iminfo.statedict['State.Acq.pixelsPerLine']
     ch = ch_1or2 - 1
-    
     imagearray=np.array(iminfo.image)
     
+    if give_uncaging_x_y_0to1:
+        uncaging_x_y_0to1 = defined_uncaging_x_y_0to1
+    else:
+        uncaging_x_y_0to1 = iminfo.statedict["State.Uncaging.Position"]
 
-    uncaging_x_y_0to1 = iminfo.statedict["State.Uncaging.Position"]
-    center_y = imagearray.shape[-2] * uncaging_x_y_0to1[1]
-    center_x = imagearray.shape[-3] * uncaging_x_y_0to1[0]
+    if give_center_x_y:
+        center_x = defined_center_x_y[0]
+        center_y = defined_center_x_y[1]
+    else:
+        center_y = imagearray.shape[-2] * uncaging_x_y_0to1[1]
+        center_x = imagearray.shape[-3] * uncaging_x_y_0to1[0]
     
     maxproj = imagearray[:, 0, ch, :,:,:].sum(axis=-1).sum(axis=0)
       
-    plt.imshow(maxproj, cmap = 'gray', vmin = 0)
+    plt.figure(facecolor='black')
+    if vmax == 0:
+        vmax = maxproj.max() * 0.7
+    plt.imshow(maxproj, cmap = 'gray', vmin = 0, vmax = vmax)
     if show_uncaging:
-        plt.plot(center_x, center_y, 'co', markersize=4)   
-    if use_default_savefolder:
+        plt.plot(center_x, center_y, marker, markersize=10)   
         folder = os.path.dirname(each_file)
         savefolder = os.path.join(folder,"plot_maxproj")
+        trimmed_savefolder = os.path.join(folder,"plot_maxproj_trimmed")
     else:
         savefolder = savefolder
+        trimmed_savefolder = os.path.join(savefolder,"plot_maxproj_trimmed")
+    os.makedirs(savefolder, exist_ok=True)
+    os.makedirs(trimmed_savefolder, exist_ok=True)
+    plt.axis('off')
     if plot_text != "":
         if type(plot_text) == str:
-            #plot text at the left top corner
-            plt.text(0.05, 0.95, plot_text, ha='left', va='top', fontsize=8, transform=plt.gca().transAxes,
-            color='yellow')
-            
-    os.makedirs(savefolder, exist_ok=True)
-    basename = os.path.basename(each_file)                
+            #plot text at the left top corner of the plot
+            # plt.text(0.02, 0.99, plot_text, ha='left', va='top', fontsize=14, transform=plt.gca().transAxes,
+            # color='yellow')
+            plt.title(plot_text, color='yellow')
+    image_x_um = maxproj.shape[1] * x_um_per_pix_x
+    scalebar_um = get_nice_scalebar_um(image_x_um)
+    add_scale_bar(plt.gca(), scalebar_um, x_um_per_pix_x, avoid_x_y=(center_x, center_y))
+    basename = os.path.basename(each_file)
     savepath = os.path.join(savefolder, basename[:-5] + "_maxproj.png")
-    plt.savefig(savepath, dpi=150, bbox_inches = "tight")
+    
+    plt.savefig(savepath, dpi=150, bbox_inches = "tight", pad_inches = 0)
     print("maxproj_savepath ", savepath)
     plt.show()
-    plt.close(); plt.clf();plt.close("all");
 
+    trim_side_length = 25
+    # ylim = [min(maxproj.shape[0], center_y + trim_side_length),max(0, center_y - trim_side_length)]
+    # xlim = [max(0, center_x - trim_side_length), min(maxproj.shape[1], center_x + trim_side_length)]
+
+    ylim = [center_y + trim_side_length, center_y - trim_side_length]
+    xlim = [center_x - trim_side_length, center_x + trim_side_length]
+
+
+    if show_uncaging:
+        plt.figure(facecolor='black')
+        plt.imshow(maxproj, cmap = 'gray', vmin = 0, vmax = vmax)
+        plt.plot(center_x, center_y, marker, markersize=20)   
+        plt.ylim(ylim)
+        plt.xlim(xlim)
+        plt.axis('off')
+        plt.title(plot_text, color='yellow')
+        # plt.text(0.02, 0.99, plot_text, ha='left', va='top', fontsize=14, transform=plt.gca().transAxes,
+        #     color='yellow')
+        trimmed_x_um = 2 * trim_side_length * x_um_per_pix_x
+        trim_scalebar_um = get_nice_scalebar_um(trimmed_x_um)
+        add_scale_bar(plt.gca(), trim_scalebar_um, x_um_per_pix_x, avoid_x_y=(center_x, center_y))
+        trimmed_savepath = os.path.join(trimmed_savefolder, basename[:-5] + "_maxproj_trimmed.png")
+        plt.savefig(trimmed_savepath, dpi=150, bbox_inches = "tight", pad_inches = 0)
+        print("trimmed_maxproj_savepath ", trimmed_savepath)
+        plt.show()
 
 
 def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0, 
@@ -489,38 +590,16 @@ def calc_spine_dend_GCaMP(
     
     
 if __name__ == "__main__":
-    
-    import datetime
-    results = []
-    for each_header in ["1","2","3","4","5","6"]:
-        for highmag_num in range(1, 7):
-            nth_spine = 0
-            for each_acq_num in range(1, 50):
-                each_file = rf"G:\ImagingData\Tetsuya\20260225\auto1\{each_header}_pos1__highmag_{highmag_num}_00{each_acq_num}.flim"
-                if not os.path.exists(each_file):
-                    continue
-                #check date modified is more than 20 seconds before the current time
-                if datetime.datetime.fromtimestamp(os.path.getmtime(each_file)) > datetime.datetime.now() - datetime.timedelta(seconds=20):
-                    continue
-                else:
-                    print(f"Processing {each_file}")
-                    inipath = os.path.join(os.path.dirname(each_file), 
-                        os.path.basename(each_file)[:-9],
-                        os.path.basename(each_file)[:-9]+ f"_{nth_spine:03d}.ini")
-                    print("inipath ", inipath)
-                spineF_F0, shaftF_F0 = calc_spine_dend_GCaMP(each_file = each_file, 
-                        each_ini = inipath,save_img = True, save_suffix = f"_{nth_spine:03d}")
-                if spineF_F0 == -1:
-                    continue
-                print("spineF_F0 ", spineF_F0)
-                print("shaftF_F0 ", shaftF_F0)
-                nth_spine += 1
-                results.append({
-                    "file_path": each_file,
-                    "spineF_F0": spineF_F0,
-                    "shaftF_F0": shaftF_F0
-                })
-    save_csv_path = os.path.join(os.path.dirname(each_file), "plot", "result_F_F0.csv")
-    df = pd.DataFrame(results)
-    df.to_csv(save_csv_path, index=False)
-    print("saved as ", save_csv_path)
+    each_file = r"C:\Users\yasudalab\Desktop\0319_25deep_2_pos1__highmag_4_007.flim"
+    ch_1or2 = 2
+    plot_max_proj_uncaging(
+                    each_file, ch_1or2, show_uncaging = True,
+                    use_default_savefolder = True, savefolder = "",
+                    plot_text = "XX.X min after uncaging",
+                    give_uncaging_x_y_0to1 = False,
+                    give_center_x_y = False,
+                    defined_center_x_y = [0, 0],
+                    defined_uncaging_x_y_0to1 = [0, 0],
+                    vmin = 0, vmax = 0,
+                    return_vmax = False,
+                    )
