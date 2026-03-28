@@ -274,11 +274,11 @@ def _extract_lowmag_prefix_from_highmag_path(highmag_path: str) -> str:
 
 def main() -> None:
     print(f"[DEBUG] script_version={SCRIPT_VERSION}")
-    ch_1or2 = 2
-    one_of_filepath_dict = {
-        r"//RY-LAB-WS04/ImagingData/Tetsuya/20260318/auto1\B3_10_pos1__highmag_1_002.flim": " ",
-    }
-    combined_df_reject_bad_data_pkl_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260318/auto1\combined_df_1.pkl"
+    ch_1or2 = 2 if ask_yes_no_gui("Use Ch2 (tdTomato/volume)? [Yes=Ch2, No=Ch1]") else 1
+    combined_df_reject_bad_data_pkl_path = ask_open_path_gui(
+        title="Select combined_df .pkl file",
+        filetypes=[("Pickle files", "*.pkl")],
+    )
     intensity_csv_default = combined_df_reject_bad_data_pkl_path.replace(".pkl", "_intensity_lifetime_all_frames.csv")
 
     savefolder = ask_save_folder_gui("summary")
@@ -314,6 +314,11 @@ def main() -> None:
     if ask_yes_no_gui("Do you have lowmag_df?"):
         lowmag_df = pd.read_pickle(ask_open_path_gui(filetypes=[("Pickle files", "*.pkl")]))
     else:
+        one_highmag_flim_path = ask_open_path_gui(
+            title="Select any one highmag FLIM file (to locate the folder)",
+            filetypes=[("FLIM files", "*.flim")],
+        )
+        one_of_filepath_dict = {one_highmag_flim_path: " "}
         save_images = ask_yes_no_gui("Do you want to save lowmag images?")
         lowmag_df = build_lowmag_df(one_of_filepath_dict, save_images=save_images, ch_1or2=ch_1or2)
         lowmag_df_path = ask_save_path_gui()
