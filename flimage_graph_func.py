@@ -380,6 +380,7 @@ def plot_GCaMP_and_RFP(each_file, slope = 0, intercept = 0,
     Left: GCaMP F/F0
     Right: RFP (ch1or2=2) first frame (with uncaging pos)
     """
+    
     uncaging_iminfo = FileReader()
     uncaging_iminfo.read_imageFile(each_file, True) 
     

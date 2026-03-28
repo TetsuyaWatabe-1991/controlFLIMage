@@ -88,18 +88,38 @@ def reshape_axes_to_2d(axes: Any, n_rows: int, n_cols: int) -> np.ndarray:
 
     raise ValueError(f"Unexpected axes array shape: {axes_arr.shape}")
 
-
-group_header_dict = {
-    "CytivaNoKA": "Cytiva No KA",
-}
-
-
 LTP_data_point_after_min_between = [25,35]
 
+group_header_dict = {
+    # "CytivaNoKA": "Cytiva No KA",
+    # "GibcoNoKA": "Gibco No KA",
+    # "CM_withKA": "CM with KA",
+    # "CM_woKA": "CM No KA",
+    "0319_25deep": "deep_neuron",
+    "0319p4": "not deep",
+    # "CM_woKA": "CM No KA",
+}
 acquisiton_start_datetime_str = "2026-03-26T11:30:00.000"
+acquisiton_start_datetime_str = "2026-03-26T15:30:00.000"
+acquisiton_start_datetime_str = "2026-03-26T17:30:00.000"
+acquisiton_start_datetime_str = "2026-03-26T21:39:00.000"
+acquisiton_start_datetime_str = "2026-03-26T13:00:00.000"
 
-df_save_path_1 = r"G:/ImagingData/Tetsuya/20260326/cytiva_woKA\combined_df_1.pkl"
-out_csv_path = r"G:/ImagingData/Tetsuya/20260326/cytiva_woKA\combined_df_1_intensity_lifetime_all_frames.csv"
+# df_save_path_1 = r"G:/ImagingData/Tetsuya/20260326/cytiva_woKA\combined_df_1.pkl"
+# out_csv_path = r"G:/ImagingData/Tetsuya/20260326/cytiva_woKA\combined_df_1_intensity_lifetime_all_frames.csv"
+
+# df_save_path_1 = r"G:/ImagingData/Tetsuya/20260326/Gibco_woKA\combined_df_1.pkl"
+# out_csv_path = r"G:/ImagingData/Tetsuya/20260326/Gibco_woKA\combined_df_1_intensity_lifetime_all_frames.csv"
+
+# df_save_path_1 = r"G:/ImagingData/Tetsuya/20260326/CM_withKA\combined_df_1.pkl"
+# out_csv_path = r"G:/ImagingData/Tetsuya/20260326/CM_withKA\combined_df_1_intensity_lifetime_all_frames.csv"
+
+# df_save_path_1 = r"G:/ImagingData/Tetsuya/20260326/CM_woKA\combined_df_1.pkl"
+# out_csv_path = r"G:/ImagingData/Tetsuya/20260326/CM_woKA\combined_df_1_intensity_lifetime_all_frames.csv"
+
+df_save_path_1 = r"G:/ImagingData/Tetsuya/20260327/0319young/auto1\combined_df_1.pkl"
+out_csv_path = r"G:/ImagingData/Tetsuya/20260327/0319young/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
+
 #%% parameters usually common to all files
 powermeter_folder= r"//RY-LAB-WS04/Users/yasudalab/Documents/Tetsuya_Imaging/powermeter"
 assert os.path.exists(powermeter_folder), f"powermeter_folder does not exist: {powermeter_folder}"
@@ -345,8 +365,10 @@ for each_group_set_id in fulltimeseries_df["group_set_id"].unique():
 
 # %% line plot
 #plot each data, with light thin color lines
-swarm_ylim = [summary_df["delta_FF0_intensity_ch2"].min()-0.1, summary_df["delta_FF0_intensity_ch2"].max()+0.1]
-
+swarm_ylim = [summary_df["delta_FF0_intensity_ch2"].min()-0.1, 
+                summary_df["delta_FF0_intensity_ch2"].max()+0.1]
+full_range_ylim = [fulltimeseries_df["Spine_Ch2_intensity_normalized"].min()-0.1, 
+                fulltimeseries_df["Spine_Ch2_intensity_normalized"].max()+0.1]
 plot_info_dict = {
     # "lifetime": {"ylabel": r"$\Delta$lifetime (ns)", "y": "Spine_Ch1_lifetime_normalized", "errorbar": "se"},
     "intensity": {"ylabel": r"$\Delta$spine volume (a.u.)", 
@@ -355,8 +377,18 @@ plot_info_dict = {
                 "y": "Spine_Ch2_intensity_normalized", 
                 "errorbar": "se",
                 # "ylim": [-0.4, 5.9]
-                "ylim": [-0.4, swarm_ylim[1]]
+                "ylim": [-0.4, swarm_ylim[1]],
+                "plot_zero_line": True,
                 },
+    "intensity_full_range": {"ylabel": r"$\Delta$spine volume (a.u.)", 
+                "xlabel": "Time (sec)",
+                "x": "aligned_time_sec",
+                "y": "Spine_Ch2_intensity_normalized", 
+                "errorbar": "se",
+                # "ylim": [-0.4, 5.9]
+                "ylim": full_range_ylim,
+                "plot_zero_line": True,
+                },    
     }
 
 for each_header, each_header_name in group_header_dict.items():
@@ -395,6 +427,11 @@ for each_header, each_header_name in group_header_dict.items():
             plt.plot([0, 2.048*29], [ninty_percent_ylim, ninty_percent_ylim], "k-")
             plt.text(0, ninty_percent_ylim*1.005, "uncaging", ha="left", va="bottom")
 
+            current_xlim = plt.gca().get_xlim()
+
+            if each_plot_info["plot_zero_line"]:
+                plt.plot([current_xlim[0], current_xlim[1]], [0, 0], "--", color="gray", linewidth=0.5)
+                
             plt.fill_between(np.array(LTP_data_point_after_min_between)*60,
             each_plot_info["ylim"][0], each_plot_info["ylim"][1], 
             color="pink", 
@@ -450,6 +487,9 @@ if len(sorted_uncaging_powers) > 0 and len(valid_group_headers) > 0:
                     markersize=4,
                     ax=ax,
                 )
+                current_xlim = ax.get_xlim()
+                ax.plot([current_xlim[0], current_xlim[1]], [0, 0], "--", color="gray", linewidth=0.5)
+                print(current_xlim)
 
                 ax.set_ylim(each_plot_info["ylim"])
 
@@ -766,6 +806,10 @@ if len(sorted_uncaging_powers) > 0 and len(valid_group_headers) > 0:
                     markersize=4,
                     ax=ax,
                 )
+
+                # current_xlim = ax.get_xlim()
+                # ax.plot([current_xlim[0], current_xlim[1]], [0, 0], "--", color="gray", linewidth=0.5)
+                # print(current_xlim)
 
                 ax.set_ylim(each_plot_info["ylim"])
 
@@ -1108,12 +1152,10 @@ if len(sorted_uncaging_powers) > 0 and len(valid_group_headers) > 0:
 
 
 # %% plot against acq_time_str
-
 acquisiton_start_datetime = datetime.datetime.strptime(acquisiton_start_datetime_str, "%Y-%m-%dT%H:%M:%S.%f")
 summary_df["acq_time_datetime"] = pd.to_datetime(summary_df["acq_time_str"])
 summary_df["time_sec_incubation"] = (summary_df["acq_time_datetime"] - acquisiton_start_datetime).dt.total_seconds()
 summary_df["time_hours_incubation"] = summary_df["time_sec_incubation"] / 3600
-
 
 plot_info_dict = {
     "GCaMP_LTP_level_against_vs_time_hours_incubation": 
