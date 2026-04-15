@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import tifffile
 from matplotlib import pyplot as plt
+from matplotlib.patches import Rectangle
 from matplotlib.ticker import MaxNLocator
 from skimage.segmentation import find_boundaries
 
@@ -15,7 +16,23 @@ sys.path.append("..\\")
 from FLIMageFileReader2 import FileReader
 from simple_dialog import ask_yes_no_gui, ask_save_path_gui, ask_open_path_gui, ask_save_folder_gui
 
-SCRIPT_VERSION = "2026-03-23-mappingfix-v2"
+SCRIPT_VERSION = "2026-03-30-roi-fix-highmag-fov"
+
+
+def _get_motor_xy_um(statedict: dict) -> Optional[Tuple[float, float]]:
+    """Extract motor X, Y center position in um from statedict.
+
+    Returns (x_um, y_um) or None if not available.
+    The motor position [x, y, z] stored as 'State.Motor.motorPosition' represents
+    the center of the FOV for X and Y axes.
+    """
+    pos = statedict.get("State.Motor.motorPosition") if statedict else None
+    if pos is None:
+        return None
+    try:
+        return float(pos[0]), float(pos[1])
+    except Exception:
+        return None
 
 
 def _load_roi_mask_from_tiff(
@@ -126,15 +143,15 @@ def plt_zpro_with_roi_tiff(
 
         boundaries = find_boundaries(temp_mask, mode="thick")
         height, width = temp_mask.shape
+        inc_x = highmag_side_length_um / width
+        inc_y = highmag_side_length_um / height
+        color = color_dict[roi_type]
         for y in range(height):
             for x in range(width):
                 if not boundaries[y, x]:
                     continue
-                px = x * highmag_side_length_um / z_projection.shape[1]
-                py = y * highmag_side_length_um / z_projection.shape[0]
-                inc_x = highmag_side_length_um / z_projection.shape[1]
-                inc_y = highmag_side_length_um / z_projection.shape[0]
-                color = color_dict[roi_type]
+                px = x * inc_x
+                py = y * inc_y
                 if y == 0 or temp_mask[y - 1, x] != temp_mask[y, x]:
                     plt.plot([px, px + inc_x], [py, py], color=color, linewidth=linewidth)
                 if y == height - 1 or temp_mask[y + 1, x] != temp_mask[y, x]:
@@ -276,7 +293,6 @@ def main() -> None:
     print(f"[DEBUG] script_version={SCRIPT_VERSION}")
     ch_1or2 = 2 if ask_yes_no_gui("Use Ch2 (tdTomato/volume)? [Yes=Ch2, No=Ch1]") else 1
     combined_df_reject_bad_data_pkl_path = ask_open_path_gui(
-        title="Select combined_df .pkl file",
         filetypes=[("Pickle files", "*.pkl")],
     )
     intensity_csv_default = combined_df_reject_bad_data_pkl_path.replace(".pkl", "_intensity_lifetime_all_frames.csv")
@@ -315,7 +331,6 @@ def main() -> None:
         lowmag_df = pd.read_pickle(ask_open_path_gui(filetypes=[("Pickle files", "*.pkl")]))
     else:
         one_highmag_flim_path = ask_open_path_gui(
-            title="Select any one highmag FLIM file (to locate the folder)",
             filetypes=[("FLIM files", "*.flim")],
         )
         one_of_filepath_dict = {one_highmag_flim_path: " "}
@@ -456,6 +471,22 @@ def main() -> None:
         lowmag_vmax = vmax * (lowmag_row["statedict"]["State.Acq.nAveFrame"] / 3)
         lowmag_vmin = vmin * (lowmag_row["statedict"]["State.Acq.nAveFrame"] / 3)
 
+        # Compute highmag FOV position on lowmag image using motor positions.
+        # State.Motor.motorPosition[x, y, z]: x,y = center of FOV; z = bottom of Z stack.
+        # Motor offset directly maps to image coordinate offset (directionMotorX/Y = 1).
+        highmag_sd = (
+            valid_rows["statedict"].iloc[0]
+            if "statedict" in valid_rows.columns and isinstance(valid_rows["statedict"].iloc[0], dict)
+            else None
+        )
+        lowmag_motor_xy = _get_motor_xy_um(lowmag_row["statedict"])
+        highmag_motor_xy = _get_motor_xy_um(highmag_sd)
+        _hmag_dx: Optional[float] = None
+        _hmag_dy: Optional[float] = None
+        if highmag_motor_xy is not None and lowmag_motor_xy is not None:
+            _hmag_dx = highmag_motor_xy[0] - lowmag_motor_xy[0]
+            _hmag_dy = highmag_motor_xy[1] - lowmag_motor_xy[1]
+
         fig_dim = [2, 4]
         plt.figure(figsize=(4 * fig_dim[1], 4 * fig_dim[0]))
         plt.suptitle(each_label)
@@ -463,11 +494,42 @@ def main() -> None:
         plt.subplot(fig_dim[0], fig_dim[1], 1)
         zpro = tifffile.imread(valid_rows["lowmag_tiff_z_projection_savepath"].iloc[0])
         plt.imshow(zpro, cmap="gray", vmin=lowmag_vmin, vmax=lowmag_vmax, extent=(0, lowmag_side_length_um, lowmag_side_length_um, 0))
+        if _hmag_dx is not None and _hmag_dy is not None:
+            cx = lowmag_side_length_um / 2 + _hmag_dx
+            cy = lowmag_side_length_um / 2 + _hmag_dy
+            rect = Rectangle(
+                (cx - highmag_side_length_um / 2, cy - highmag_side_length_um / 2),
+                highmag_side_length_um, highmag_side_length_um,
+                linewidth=1.5, edgecolor="yellow", facecolor="none",
+            )
+            plt.gca().add_patch(rect)
+        plt.ylabel("Y (um)")
+        plt.xlabel("X (um)")
         plt.title("Low mag Z projection")
 
         plt.subplot(fig_dim[0], fig_dim[1], 2)
         ypro = tifffile.imread(valid_rows["lowmag_tiff_y_projection_savepath"].iloc[0])
-        plt.imshow(ypro, cmap="gray", vmin=lowmag_vmin, vmax=lowmag_vmax, origin="lower", extent=(0, lowmag_side_length_um, ypro.shape[0] * lowmag_z_um, 0))
+        lowmag_z_total = ypro.shape[0] * lowmag_z_um
+        plt.imshow(ypro, cmap="gray", vmin=lowmag_vmin, vmax=lowmag_vmax, origin="lower", extent=(0, lowmag_side_length_um, lowmag_z_total, 0))
+        if _hmag_dx is not None and highmag_sd is not None:
+            try:
+                lowmag_motor_z = float(lowmag_row["statedict"].get("State.Motor.motorPosition", [0, 0, 0])[2])
+                highmag_motor_z = float(highmag_sd.get("State.Motor.motorPosition", [0, 0, 0])[2])
+                delta_z = highmag_motor_z - lowmag_motor_z
+                highmag_nslices = int(highmag_sd.get("State.Acq.nSlices", 1))
+                highmag_slice_step = float(highmag_sd.get("State.Acq.sliceStep", lowmag_z_um))
+                highmag_z_len = max(highmag_nslices - 1, 1) * highmag_slice_step
+                y_z_top = lowmag_z_total - delta_z - highmag_z_len
+                x_left = lowmag_side_length_um / 2 + _hmag_dx - highmag_side_length_um / 2
+                rect_z = Rectangle(
+                    (x_left, y_z_top), highmag_side_length_um, highmag_z_len,
+                    linewidth=1.5, edgecolor="yellow", facecolor="none",
+                )
+                plt.gca().add_patch(rect_z)
+            except Exception:
+                pass
+        plt.ylabel("Z (um)")
+        plt.xlabel("X (um)")
         plt.title("Low mag Y projection")
 
         plt.subplot(fig_dim[0], fig_dim[1], 3)

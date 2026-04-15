@@ -337,32 +337,32 @@ def apply_calibration_to_txt(
 
 
 
-# if __name__ == "__main__":
-#     import glob
-#     target_txt_path_candidates = glob.glob(r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\*.txt")
-#     exclude_file_head_list = ["Default", "FLIM_deviceFile", "FLIM_init"]
-#     target_txt_path_list = [path for path in target_txt_path_candidates if not any(head in path for head in exclude_file_head_list)]
-#     print(f"Target files: {len(target_txt_path_list)} file(s)")
-#     #print file names, no parent folder path. new line for each file
-#     print(f"Target files: \n")
-    
-#     additional_target_txt_path_list = [
-#         # r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\Default-4_0_33_working_20260127.txt"
-#         # r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\Default-4_0_36_working_20260127.txt"
-#         r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\nikon_40x.txt"
-#         ]
-#     target_txt_path_list.extend(additional_target_txt_path_list)
-
-#     for each_file in [os.path.basename(path) for path in target_txt_path_list]:
-#         print(f"  {each_file}")
-
-#     apply_calibration_to_txt(
-#         source_adjusted_text_path=r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\Default-4_0_33_working_20260127.txt",
-#         target_txt_path_list=target_txt_path_list,
-#     )
-
-
 if __name__ == "__main__":
+    import glob
+    target_txt_path_candidates = glob.glob(r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\*.txt")
+    exclude_file_head_list = ["Default", "FLIM_deviceFile", "FLIM_init"]
+    target_txt_path_list = [path for path in target_txt_path_candidates if not any(head in path for head in exclude_file_head_list)]
+    print(f"Target files: {len(target_txt_path_list)} file(s)")
+    #print file names, no parent folder path. new line for each file
+    print(f"Target files: \n")
+    
+    additional_target_txt_path_list = [
+        # r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\Default-4_0_33_working_20260127.txt"
+        # r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\Default-4_0_36_working_20260127.txt"
+        # r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\nikon_40x.txt"
+        ]
+    target_txt_path_list.extend(additional_target_txt_path_list)
+
+    for each_file in [os.path.basename(path) for path in target_txt_path_list]:
+        print(f"  {each_file}")
+
+    apply_calibration_to_txt(
+        source_adjusted_text_path=r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\test.txt",
+        target_txt_path_list=target_txt_path_list,
+    )
+
+
+if __name__ == "__main__2":
     # Example usage in IPython interactive window:
     # 
     # from calibrate_FOV_XY_motor import calibrate_fov_xy_motor
@@ -383,7 +383,7 @@ if __name__ == "__main__":
     try:
         fov_x, fov_y = calibrate_fov_xy_motor(
             move_distance_um=20.0,
-            ch_1or2=1,
+            ch_1or2=2,
             base_name=f"calibration_FOV_1_{yyyymmdd_hhmmss}"
         )
         print(f"\nFinal results:")
