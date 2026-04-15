@@ -13,112 +13,40 @@ matplotlib.rcParams["font.family"] = "sans-serif"
 matplotlib.rcParams["font.sans-serif"] = ["Arial"]
 from custom_plot import plt
 import numpy as np
-from typing import Any
-
-
-def add_uncaging_label_between_ylabel_and_axis(
-    ax: Any,
-    power_mw: float,
-    fig: Any,
-    gap_points: float = 4.0,
-) -> None:
-    """Place uncaging power label between y-axis label and axis, with fixed gap.
-
-    This function computes positions in display coordinates based on the
-    rendered y-axis label and axes bounding boxes, then converts the
-    x-position back into axes fraction coordinates.
-    """
-    if power_mw is None:
-        return
-
-    renderer = fig.canvas.get_renderer()
-    ylabel_text = ax.yaxis.get_label()
-    if not ylabel_text.get_text():
-        return
-
-    label_bbox = ylabel_text.get_window_extent(renderer=renderer)
-    axes_bbox = ax.get_window_extent(renderer=renderer)
-
-    # Right edge of ylabel in display coords, add small gap to the right
-    x_display = label_bbox.x1 + gap_points
-    # Vertical center of axes in display coords
-    y_display = axes_bbox.y0 + 0.5 * axes_bbox.height
-
-    # Convert display coordinates back to axes fraction for x
-    inv = ax.transAxes.inverted()
-    x_axes, _ = inv.transform((x_display, y_display))
-
-    ax.text(
-        x_axes,
-        0.5,
-        f"{power_mw} mW",
-        transform=ax.transAxes,
-        ha="left",
-        va="center",
-    )
-
-
-
-def reshape_axes_to_2d(axes: Any, n_rows: int, n_cols: int) -> np.ndarray:
-    """Reshape matplotlib `axes` into a stable (n_rows, n_cols) array.
-
-    `plt.subplots(n_rows, n_cols)` returns different shapes depending on whether
-    `n_rows` or `n_cols` equals 1. This helper prevents indexing errors.
-    """
-
-    axes_arr = np.array(axes, dtype=object)
-
-    # n_rows == 1 and n_cols == 1: single Axes object (0-dim array).
-    if axes_arr.ndim == 0:
-        return np.array([[axes]], dtype=object)
-
-    # One of (n_rows, n_cols) equals 1: plt returns a 1-d array.
-    if axes_arr.ndim == 1:
-        if n_rows == 1 and n_cols > 1:
-            return axes_arr.reshape(1, n_cols)
-        if n_cols == 1 and n_rows > 1:
-            return axes_arr.reshape(n_rows, 1)
-        return axes_arr.reshape(n_rows, n_cols)
-
-    # Both n_rows and n_cols > 1: already 2-d.
-    if axes_arr.ndim == 2:
-        if axes_arr.shape != (n_rows, n_cols):
-            return axes_arr.reshape(n_rows, n_cols)
-        return axes_arr
-
-    raise ValueError(f"Unexpected axes array shape: {axes_arr.shape}")
+sys.path.append(r"..")
+from flim_summarize_func import add_uncaging_label_between_ylabel_and_axis, reshape_axes_to_2d
 
 LTP_data_point_after_min_between = [25,35]
 
 group_header_dict = {
-    # "CytivaNoKA": "Cytiva No KA",
+    "CytivaNoKA": "Cytiva No KA",
     # "GibcoNoKA": "Gibco No KA",
     # "CM_withKA": "CM with KA",
     # "CM_woKA": "CM No KA",
-    "0319_25deep": "deep_neuron",
-    "0319p4": "not deep",
+    # "0319_25deep": "deep_neuron",
+    # "0319p4": "not deep",
     # "CM_woKA": "CM No KA",
 }
 acquisiton_start_datetime_str = "2026-03-26T11:30:00.000"
-acquisiton_start_datetime_str = "2026-03-26T15:30:00.000"
-acquisiton_start_datetime_str = "2026-03-26T17:30:00.000"
-acquisiton_start_datetime_str = "2026-03-26T21:39:00.000"
-acquisiton_start_datetime_str = "2026-03-26T13:00:00.000"
+# acquisiton_start_datetime_str = "2026-03-26T15:30:00.000"
+# acquisiton_start_datetime_str = "2026-03-26T17:30:00.000"
+# acquisiton_start_datetime_str = "2026-03-26T21:39:00.000"
+# acquisiton_start_datetime_str = "2026-03-26T13:00:00.000"
 
-# df_save_path_1 = r"G:/ImagingData/Tetsuya/20260326/cytiva_woKA\combined_df_1.pkl"
-# out_csv_path = r"G:/ImagingData/Tetsuya/20260326/cytiva_woKA\combined_df_1_intensity_lifetime_all_frames.csv"
+df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/cytiva_woKA\combined_df_1.pkl"
+out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/cytiva_woKA\combined_df_1_intensity_lifetime_all_frames.csv"
 
-# df_save_path_1 = r"G:/ImagingData/Tetsuya/20260326/Gibco_woKA\combined_df_1.pkl"
-# out_csv_path = r"G:/ImagingData/Tetsuya/20260326/Gibco_woKA\combined_df_1_intensity_lifetime_all_frames.csv"
+# df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/Gibco_woKA\combined_df_1.pkl"
+# out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/Gibco_woKA\combined_df_1_intensity_lifetime_all_frames.csv"
 
-# df_save_path_1 = r"G:/ImagingData/Tetsuya/20260326/CM_withKA\combined_df_1.pkl"
-# out_csv_path = r"G:/ImagingData/Tetsuya/20260326/CM_withKA\combined_df_1_intensity_lifetime_all_frames.csv"
+# df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/CM_withKA\combined_df_1.pkl"
+# out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/CM_withKA\combined_df_1_intensity_lifetime_all_frames.csv"
 
-# df_save_path_1 = r"G:/ImagingData/Tetsuya/20260326/CM_woKA\combined_df_1.pkl"
-# out_csv_path = r"G:/ImagingData/Tetsuya/20260326/CM_woKA\combined_df_1_intensity_lifetime_all_frames.csv"
+# df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/CM_woKA\combined_df_1.pkl"
+# out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/CM_woKA\combined_df_1_intensity_lifetime_all_frames.csv"
 
-df_save_path_1 = r"G:/ImagingData/Tetsuya/20260327/0319young/auto1\combined_df_1.pkl"
-out_csv_path = r"G:/ImagingData/Tetsuya/20260327/0319young/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
+# df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260327/0319young/auto1\combined_df_1.pkl"
+# out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260327/0319young/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
 
 #%% parameters usually common to all files
 powermeter_folder= r"//RY-LAB-WS04/Users/yasudalab/Documents/Tetsuya_Imaging/powermeter"
@@ -318,6 +246,14 @@ for each_group in fulltimeseries_df["group"].unique():
         each_summary_dict["delta_FF0_intensity_ch1"] = each_summary_dict["Ch1_post_intensity"] / each_summary_dict["Ch1_pre_intensity"] - 1
         each_summary_dict["delta_lifetime_ch2"] = each_summary_dict["Ch2_post_lifetime"] - each_summary_dict["Ch2_pre_lifetime"]
         each_summary_dict["delta_FF0_intensity_ch2"] = each_summary_dict["Ch2_post_intensity"] / each_summary_dict["Ch2_pre_intensity"] - 1
+
+        first_post_df = each_df[each_df["phase"] == "post"].sort_values("aligned_time_sec")
+        ch2_pre_mean = each_summary_dict["Ch2_pre_intensity"]
+        if len(first_post_df) > 0 and ch2_pre_mean > 0:
+            each_summary_dict["first_post_FF0_intensity_ch2"] = first_post_df["Spine_Ch2_intensity"].iloc[0] / ch2_pre_mean - 1
+        else:
+            each_summary_dict["first_post_FF0_intensity_ch2"] = np.nan
+
         each_summary_dict["acq_time_str"] = each_df["acq_time_str"].unique()[0]
 
         summary_df = pd.concat([summary_df, pd.DataFrame([each_summary_dict])], ignore_index=True)
@@ -1043,6 +979,17 @@ plot_info_dict = {
                                      summary_df["transient_Spine_Ch1_intensity"].max() + (summary_df["transient_Spine_Ch1_intensity"].max() - summary_df["transient_Spine_Ch1_intensity"].min()) * 0.1],
                             "xlim": [summary_df["transient_DendriticShaft_Ch1_intensity"].min() - (summary_df["transient_DendriticShaft_Ch1_intensity"].max() - summary_df["transient_DendriticShaft_Ch1_intensity"].min()) * 0.1, 
                                      summary_df["transient_DendriticShaft_Ch1_intensity"].max() + (summary_df["transient_DendriticShaft_Ch1_intensity"].max() - summary_df["transient_DendriticShaft_Ch1_intensity"].min()) * 0.1],
+                                     },
+    "delta_FF0_ch2_vs_first_post_FF0_ch2":
+                            {"ylabel": r"$\Delta$spine volume (a.u.) [25-35 min]",
+                            "xlabel": r"$\Delta$spine volume (a.u.) [1st post frame]",
+                            "y": "delta_FF0_intensity_ch2",
+                            "x": "first_post_FF0_intensity_ch2",
+                            "ylim": [summary_df["delta_FF0_intensity_ch2"].min() - (summary_df["delta_FF0_intensity_ch2"].max() - summary_df["delta_FF0_intensity_ch2"].min()) * 0.1,
+                                     summary_df["delta_FF0_intensity_ch2"].max() + (summary_df["delta_FF0_intensity_ch2"].max() - summary_df["delta_FF0_intensity_ch2"].min()) * 0.1],
+                            "xlim": [summary_df["first_post_FF0_intensity_ch2"].min() - (summary_df["first_post_FF0_intensity_ch2"].max() - summary_df["first_post_FF0_intensity_ch2"].min()) * 0.1,
+                                     summary_df["first_post_FF0_intensity_ch2"].max() + (summary_df["first_post_FF0_intensity_ch2"].max() - summary_df["first_post_FF0_intensity_ch2"].min()) * 0.1],
+                            "plot_zero_lines": True,
                                      }
                 }
 
@@ -1065,6 +1012,11 @@ for each_header, each_header_name in group_header_dict.items():
             plt.xlabel(each_plot_info["xlabel"])
             plt.xlim(each_plot_info["xlim"])
             plt.ylim(each_plot_info["ylim"])
+            if each_plot_info.get("plot_zero_lines"):
+                current_xlim = plt.gca().get_xlim()
+                current_ylim = plt.gca().get_ylim()
+                plt.plot([current_xlim[0], current_xlim[1]], [0, 0], "--", color="gray", linewidth=0.5)
+                plt.plot([0, 0], [current_ylim[0], current_ylim[1]], "--", color="gray", linewidth=0.5)
             plt.title(each_header_name+ f", uncaging {each_uncaging_power_coherent_mW} mW")
             #delete right and top border
             plt.gca().spines["top"].set_visible(False)
@@ -1115,6 +1067,10 @@ if len(sorted_uncaging_powers) > 0 and len(valid_group_headers) > 0:
 
                 ax.set_xlim(each_plot_info["xlim"])
                 ax.set_ylim(each_plot_info["ylim"])
+
+                if each_plot_info.get("plot_zero_lines"):
+                    ax.plot([each_plot_info["xlim"][0], each_plot_info["xlim"][1]], [0, 0], "--", color="gray", linewidth=0.5)
+                    ax.plot([0, 0], [each_plot_info["ylim"][0], each_plot_info["ylim"][1]], "--", color="gray", linewidth=0.5)
 
                 if row_idx == n_rows - 1:
                     ax.set_xlabel(each_plot_info["xlabel"])

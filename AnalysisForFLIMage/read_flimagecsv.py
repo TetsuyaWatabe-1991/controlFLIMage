@@ -21,7 +21,7 @@ def csv_to_df(csvpath,ch_list=[1],
                            'sumIntensity-ROI',
                            'sumIntensity_bg-ROI',
                            'nPixels-ROI']
-                            ):
+                            )->pd.DataFrame:
     resultdf=pd.DataFrame()
     
     with open(csvpath) as f:
