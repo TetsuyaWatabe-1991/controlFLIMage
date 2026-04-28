@@ -83,7 +83,6 @@ def calibrate_fov_xy_motor(
     # Step 1: Acquire reference image
     print("Step 1: Acquiring reference image...")
     FLIMageCont.acquisition_include_connect_wait()
-    sleep(1)
 
     # Get reference image path
     flimlist = get_flimfile_list(os.path.join(folder, f"{name_stem}001.flim"))
@@ -95,13 +94,14 @@ def calibrate_fov_xy_motor(
 
     # Step 2: Move X direction and acquire image
     print(f"Step 2: Moving X direction by {move_distance_um} um and acquiring image...")
-    FLIMageCont.relative_zyx_um = [0, 0, move_distance_um]  # [z, y, x] in um
-    FLIMageCont.go_to_relative_pos_motor_checkstate()
-    sleep(1)
+
+    FLIMageCont.go_to_absolute_pos_motor_checkstate(x_ref + move_distance_um, y_ref, z_ref)
+    x_actual_x, y_actual_x, z_actual_x = FLIMageCont.get_position()
+    actual_move_x = x_actual_x - x_ref
+    print(f"  Commanded X move: {move_distance_um:.3f} um, Actual: {actual_move_x:.3f} um")
 
     FLIMageCont.flim.sendCommand('State.Files.fileCounter = 1')
     FLIMageCont.acquisition_include_connect_wait()
-    sleep(1)
 
     # Get X-moved image path
     flimlist = get_flimfile_list(os.path.join(folder, f"{name_stem}002.flim"))
@@ -109,23 +109,16 @@ def calibrate_fov_xy_motor(
         raise FileNotFoundError("X-moved image not found after acquisition")
     x_image_path = flimlist[-1]  # Get the latest one
     print(f"X-moved image: {x_image_path}")
-    print()
 
-    # Step 3: Return to reference position
-    print("Step 3: Returning to reference position...")
-    FLIMageCont.go_to_absolute_pos_motor_checkstate(x_ref, y_ref, z_ref)
-    sleep(1)
-    print()
-
-    # Step 4: Move Y direction and acquire image
-    print(f"Step 4: Moving Y direction by {move_distance_um} um and acquiring image...")
-    FLIMageCont.relative_zyx_um = [0, move_distance_um, 0]  # [z, y, x] in um
-    FLIMageCont.go_to_relative_pos_motor_checkstate()
-    sleep(1)
+    # Step 3: Move Y direction and acquire image
+    print(f"Step 3: Moving Y direction by {move_distance_um} um and acquiring image...")
+    FLIMageCont.go_to_absolute_pos_motor_checkstate(x_ref, y_ref + move_distance_um, z_ref)
+    x_actual_y, y_actual_y, z_actual_y = FLIMageCont.get_position()
+    actual_move_y = y_actual_y - y_ref
+    print(f"  Commanded Y move: {move_distance_um:.3f} um, Actual: {actual_move_y:.3f} um")
 
     FLIMageCont.flim.sendCommand('State.Files.fileCounter = 2')
     FLIMageCont.acquisition_include_connect_wait()
-    sleep(1)
 
     # Get Y-moved image path
     flimlist = get_flimfile_list(os.path.join(folder, f"{name_stem}003.flim"))
@@ -135,8 +128,8 @@ def calibrate_fov_xy_motor(
     print(f"Y-moved image: {y_image_path}")
     print()
 
-    # Step 5: Align images and measure pixel shifts
-    print("Step 5: Aligning images and measuring pixel shifts...")
+    # Step 4: Align images and measure pixel shifts
+    print("Step 4: Aligning images and measuring pixel shifts...")
     
     # Align reference and X-moved images
     print("  Aligning reference and X-moved images...")
@@ -151,10 +144,17 @@ def calibrate_fov_xy_motor(
         ref_image_path, y_image_path, ch=ch_1or2 - 1, return_pixel=True
     )
     print(f"  Y shift: {relative_zyx_um_y[1]:.2f} um (pixel shift: {shifts_zyx_pixel_y[-1][1]:.2f} pixels)")
-    print()
 
-    # Step 6: Calculate FOV size
-    print("Step 6: Calculating FOV size...")
+    print("ref_image_path: ", ref_image_path)
+    print("x_image_path: ", x_image_path)
+    print("y_image_path: ", y_image_path)
+
+    # Return to reference with a consistent approach direction to reduce positioning error.
+    print("Returning to reference with consistent approach direction...")
+    FLIMageCont.go_to_absolute_pos_motor_checkstate(x_ref, y_ref, z_ref)
+
+    # Step 5: Calculate FOV size
+    print("Step 5: Calculating FOV size...")
     
     # Get current zoom and pixel dimensions
     zoom = FLIMageCont.zoom
@@ -168,16 +168,16 @@ def calibrate_fov_xy_motor(
     # Calculate pixel shift in pixels
     pixel_shift_x = abs(shifts_zyx_pixel_x[-1][2])
     pixel_shift_y = abs(shifts_zyx_pixel_y[-1][1])
-    
-    # Calculate FOV size for zoom=1
-    # FOV_size_zoom1 = (move_distance_um / pixel_shift) * pixels * zoom
+
+    # Use actual measured motor travel (from get_position()) instead of commanded distance.
+    # This accounts for any positioning error so the FOV calibration reflects true stage motion.
     if pixel_shift_x > 0:
-        fov_x_zoom1 = (move_distance_um / pixel_shift_x) * pixels_x * zoom
+        fov_x_zoom1 = (abs(actual_move_x) / pixel_shift_x) * pixels_x * zoom
     else:
         raise ValueError("X pixel shift is zero or negative. Cannot calculate FOV.")
-    
+
     if pixel_shift_y > 0:
-        fov_y_zoom1 = (move_distance_um / pixel_shift_y) * pixels_y * zoom
+        fov_y_zoom1 = (abs(actual_move_y) / pixel_shift_y) * pixels_y * zoom
     else:
         raise ValueError("Y pixel shift is zero or negative. Cannot calculate FOV.")
     
@@ -185,8 +185,8 @@ def calibrate_fov_xy_motor(
     print(f"  Calculated FOV Y (zoom=1): {fov_y_zoom1:.2f} um")
     print()
 
-    # Step 7: Save to XYsize.ini
-    print("Step 7: Saving calibration results to XYsize.ini...")
+    # Step 6: Save to XYsize.ini
+    print("Step 6: Saving calibration results to XYsize.ini...")
     
     if xy_size_ini_path is None:
         xy_size_ini_path = os.path.join(
@@ -220,6 +220,13 @@ def calibrate_fov_xy_motor(
     print("=" * 60)
     print("Calibration completed successfully!")
     print("=" * 60)
+
+
+    x_ref_after_calib, y_ref_after_calib, z_ref_after_calib = FLIMageCont.get_position()
+    print("first position: ", x_ref, y_ref, z_ref)
+    print("final position: ", x_ref_after_calib, y_ref_after_calib, z_ref_after_calib)
+    print("difference: ", x_ref_after_calib - x_ref, y_ref_after_calib - y_ref, z_ref_after_calib - z_ref)
+    print()
 
     #close the FLIMage controller
     # FLIMageCont.flim.close()
@@ -337,7 +344,9 @@ def apply_calibration_to_txt(
 
 
 
-if __name__ == "__main__":
+
+
+if __name__ == "__main__2":
     import glob
     target_txt_path_candidates = glob.glob(r"C:\Users\yasudalab\Documents\FLIMage\Init_Files\*.txt")
     exclude_file_head_list = ["Default", "FLIM_deviceFile", "FLIM_init"]
@@ -362,7 +371,7 @@ if __name__ == "__main__":
     )
 
 
-if __name__ == "__main__2":
+if __name__ == "__main__":
     # Example usage in IPython interactive window:
     # 
     # from calibrate_FOV_XY_motor import calibrate_fov_xy_motor
@@ -382,8 +391,8 @@ if __name__ == "__main__2":
     yyyymmdd_hhmmss = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     try:
         fov_x, fov_y = calibrate_fov_xy_motor(
-            move_distance_um=20.0,
-            ch_1or2=2,
+            move_distance_um=5,
+            ch_1or2=1,
             base_name=f"calibration_FOV_1_{yyyymmdd_hhmmss}"
         )
         print(f"\nFinal results:")

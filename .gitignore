@@ -16,3 +16,4 @@ XYsize*.ini
 Archive/*
 */Archive/*
 slack_webhook_url.txt
+stop_flag.txt

@@ -245,7 +245,7 @@ class Control_flimage():
         self.print_responses = debug_mode
         self.check_pulse_rate = True
         self.flim = FLIM_Com(debug_log_mode=self.debug_mode, debug_log_path=self.debug_log_path)
-        self.flim.start()
+        self._fast_connect_or_recover()
         self.flim.print_responses = self.print_responses
 
         if self.flim.Connected:
@@ -539,8 +539,14 @@ class Control_flimage():
             
     def get_laser_pulse_rate(self):
         value = self.get_val_sendCommand("State.Spc.datainfo.syncRate")
-        laser_pulse_rate = int(value[1:value.find(",")])
-        return laser_pulse_rate    
+        try:
+            comma_pos = value.find(",")
+            if comma_pos <= 1:
+                return 0
+            laser_pulse_rate = int(value[1:comma_pos])
+        except (ValueError, TypeError):
+            return 0
+        return laser_pulse_rate
         
     def get_val_sendCommand(self,command):
         try:
@@ -565,18 +571,38 @@ class Control_flimage():
             
         value = Reply[len(command)+2:]
         return int(value)
+
+    def _quick_connect_once(self):
+        """
+        Try one fast pipe connection attempt.
+        """
+        self.flim.startServer()
+        sleep(0.3)
+        self.flim.startConnection()
+        return self.flim.Connected
+
+    def _fast_connect_or_recover(self):
+        """
+        Detect connection failure quickly and recover immediately.
+        """
+        if self._quick_connect_once():
+            return True
+        print("Quick connect failed. Closing Remote control and retrying...")
+        close_remote_control()
+        sleep(0.5)
+        self.flim = FLIM_Com(debug_log_mode=self.debug_mode, debug_log_path=self.debug_log_path)
+        return self._quick_connect_once()
     
     
     def reconnect(self):
         print("\n - - - Reconnect - - - \n")
-        close_remote_control()
         with open(self.error_log_path, "a") as f:
             f.write(f"reconnect, {datetime.now()}")
             for each_command in self.flim.last_commands_queue:
                 f.write(f"\n{each_command}")
             f.write("\n\n")
         self.flim = FLIM_Com(debug_log_mode=self.debug_mode, debug_log_path=self.debug_log_path)
-        self.flim.start()
+        self._fast_connect_or_recover()
         self.flim.print_responses = self.print_responses
         self.flim.messageReceived += FLIM_message_received
         if self.flim.Connected:

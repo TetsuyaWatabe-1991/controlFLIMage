@@ -195,7 +195,7 @@ class Multiarea_from_lowmag():
     def go_to_lowmag_center_pos(self, FLIMageCont):
         dest_x,dest_y,dest_z = self.corrected_lowmag_xyz_um        
         FLIMageCont.go_to_absolute_pos_motor_checkstate(dest_x, dest_y, dest_z)
-        time.sleep(1)
+        # time.sleep(1)
         
     def go_to_relative_pos_after_(self, relative_zyx_um, FLIMageCont):
         x,y,z=FLIMageCont.get_position()        

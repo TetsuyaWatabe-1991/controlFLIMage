@@ -17,6 +17,7 @@ from sklearn.metrics import r2_score
 import numpy as np
 # from controlflimage_threading import Control_flimage\
 from FLIM_pipeClient import FLIM_Com
+from find_close_remotecontrol import close_remote_control
 
 if False:
     import pyvisa
@@ -72,30 +73,80 @@ class LaserSettingAuto:
     """
     def __init__(self, flim_ini_path, pm_resource_addr=None):
         self.FLIMageCont = FLIM_Com()
-        self.FLIMageCont.start()
+        self._ensure_flimage_connection()
         # self.FLIMageCont.flim.print_responses = False
         self.PM100D = ThorlabPM100(resource_addr=pm_resource_addr) if pm_resource_addr else ThorlabPM100()
         self.pow_result = {}
-        self.FLIMageCont.sendCommand("SetZoom, 101")
+        self._send_checked_command("SetZoom, 101")
         self.zero_all()
+
+    def _connect_once(self):
+        """
+        Try one lightweight pipe connection attempt.
+        """
+        self.FLIMageCont.startServer()
+        time.sleep(0.3)
+        self.FLIMageCont.startConnection()
+        return self.FLIMageCont.Connected
+
+    def _reset_remote_control_and_recreate_client(self):
+        """
+        Close stale remote-control window and create a fresh FLIM client.
+        """
+        print("Connection failed. Closing Remote control window and retrying...")
+        close_remote_control()
+        time.sleep(0.5)
+        self.FLIMageCont = FLIM_Com()
+
+    def _ensure_flimage_connection(self, retries=3, retry_wait_sec=1.5):
+        """
+        Start FLIMage connection and fail fast if it cannot connect.
+        """
+        print(f"Connecting to FLIMage (attempt 1/{retries})...")
+        if self._connect_once():
+            print("FLIMage connection established.")
+            return
+
+        self._reset_remote_control_and_recreate_client()
+
+        for attempt in range(2, retries + 1):
+            print(f"Connecting to FLIMage (attempt {attempt}/{retries})...")
+            if self._connect_once():
+                print("FLIMage connection established.")
+                return
+            if attempt < retries:
+                time.sleep(retry_wait_sec)
+
+        raise RuntimeError(
+            "Failed to connect to FLIMage after retries. "
+            "Please confirm FLIMage is running and remote control is available."
+        )
+
+    def _send_checked_command(self, command):
+        """
+        Send command only when FLIMage is connected.
+        """
+        if not self.FLIMageCont.Connected:
+            raise RuntimeError(f"FLIMage is not connected. Command skipped: {command}")
+        return self.FLIMageCont.sendCommand(command)
 
     def set_power(self, laser_1or2, percent):
         """Set laser power via FLIMage remote control (SetPower command)."""
-        self.FLIMageCont.sendCommand(f"SetPower, {laser_1or2}, {percent}")
+        self._send_checked_command(f"SetPower, {laser_1or2}, {percent}")
 
     def set_auto(self, laser_1or2, percent_list, interval=10, no_record=False):
-        self.FLIMageCont.sendCommand("SetDIOPanel, 1, 0")
-        self.FLIMageCont.sendCommand("SetDIOPanel, 1, 1")
+        self._send_checked_command("SetDIOPanel, 1, 0")
+        self._send_checked_command("SetDIOPanel, 1, 1")
         time.sleep(0.1)
         for power in percent_list:
             self.set_power(laser_1or2, power)
-            self.FLIMageCont.sendCommand("SetDIOPanel, 1, 1")
+            self._send_checked_command("SetDIOPanel, 1, 1")
             if laser_1or2 == 2:
-                self.FLIMageCont.sendCommand("SetDIOPanel, 3, 1")
+                self._send_checked_command("SetDIOPanel, 3, 1")
             time.sleep(interval)
             power_mW = self.PM100D.read()
-            self.FLIMageCont.sendCommand("SetDIOPanel, 3, 0")
-            self.FLIMageCont.sendCommand("SetDIOPanel, 1, 0")
+            self._send_checked_command("SetDIOPanel, 3, 0")
+            self._send_checked_command("SetDIOPanel, 1, 0")
             if not no_record:
                 self.pow_result[power] = power_mW
 
