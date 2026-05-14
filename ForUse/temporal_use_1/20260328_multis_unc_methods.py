@@ -19,34 +19,14 @@ from flim_summarize_func import add_uncaging_label_between_ylabel_and_axis, resh
 LTP_data_point_after_min_between = [25,35]
 
 group_header_dict = {
-    # "CytivaNoKA": "Cytiva No KA",
-    # "GibcoNoKA": "Gibco No KA",
-    # "CM_withKA": "CM with KA",
-    # "CM_woKA": "CM No KA",
-    "0319_25deep": "deep_neuron",
-    "0319p4": "not deep",
-    # "CM_woKA": "CM No KA",
+    "":"deep 0310"
 }
-acquisiton_start_datetime_str = "2026-03-26T11:30:00.000"
-acquisiton_start_datetime_str = "2026-03-26T15:30:00.000"
-acquisiton_start_datetime_str = "2026-03-26T17:30:00.000"
-acquisiton_start_datetime_str = "2026-03-26T21:39:00.000"
-acquisiton_start_datetime_str = "2026-03-26T13:00:00.000"
+acquisiton_start_datetime_str = "2026-03-28T21:40:00.000"
 
-# df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/cytiva_woKA\combined_df_1.pkl"
-# out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/cytiva_woKA\combined_df_1_intensity_lifetime_all_frames.csv"
-
-# df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/Gibco_woKA\combined_df_1.pkl"
-# out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/Gibco_woKA\combined_df_1_intensity_lifetime_all_frames.csv"
-
-# df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/CM_withKA\combined_df_1.pkl"
-# out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/CM_withKA\combined_df_1_intensity_lifetime_all_frames.csv"
-
-# df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/CM_woKA\combined_df_1.pkl"
-# out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260326/CM_woKA\combined_df_1_intensity_lifetime_all_frames.csv"
-
-df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260327/0319young/auto1\combined_df_1.pkl"
-out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260327/0319young/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
+# df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260327/0310/auto1\combined_df_1.pkl"
+# out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260327/0310/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
+df_save_path_1 = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260328\0310\auto1\combined_df_1.pkl"
+out_csv_path = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260328\0310\auto1\combined_df_1_intensity_lifetime_all_frames.csv"
 
 #%% parameters usually common to all files
 powermeter_folder= r"//RY-LAB-WS04/Users/yasudalab/Documents/Tetsuya_Imaging/powermeter"

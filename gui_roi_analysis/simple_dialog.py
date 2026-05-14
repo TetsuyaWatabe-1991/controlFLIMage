@@ -52,6 +52,17 @@ def ask_open_path_gui(filetypes=[("Pickle files","*.pkl")]):
         print("open path is not defined")
         return None
 
+def ask_open_path_gui_title(title="Open file", filetypes=[("Pickle files","*.pkl")]):
+    dialog_script = f'import tkinter as tk;from tkinter import filedialog;root=tk.Tk();root.withdraw();print(filedialog.askopenfilename(filetypes={filetypes}))'   
+    open_path = subprocess.check_output(['python', '-c', dialog_script]).decode().strip()
+    if open_path:
+        print("open path:")
+        print(open_path)
+        return open_path
+    else:
+        print("open path is not defined")
+        return None
+
 
 
 # デフォルトでCLI版を使用
