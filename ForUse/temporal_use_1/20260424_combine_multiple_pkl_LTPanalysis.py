@@ -27,10 +27,8 @@ ch_1or2 = 1
 acquisition_list = [
     {
         "group_header_dict": {
-            # "0319_25deep": "deep_neuron",
             "cont_": "control",
             "TlnKO_": "TlnKO",
-            # "CM_woKA": "CM No KA",
         },
         "acquisiton_start_datetime_str": "2026-04-21T14:00:00.000",
         "df_save_path_1": r"G:/ImagingData/Tetsuya/20260421/cont_and_tlnKO\combined_df_1.pkl",

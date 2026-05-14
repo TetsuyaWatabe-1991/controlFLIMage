@@ -20,21 +20,18 @@ LTP_data_point_after_min_between = [25,35]
 ch_1or2 = 1
 group_header_dict = {
     # "0319_25deep": "deep_neuron",
-    "": "GFP",
+    "cont_": "control",
+    "TlnKO_": "TlnKO",
     # "CM_woKA": "CM No KA",
 }
 
-# acquisiton_start_datetime_str = "2026-04-14T16:10:00.000"
-# df_save_path_1 = r"G:/ImagingData/Tetsuya/20260414/automation/auto2\combined_df_1.pkl"
-# out_csv_path = r"G:/ImagingData/Tetsuya/20260414/automation/auto2\combined_df_1_intensity_lifetime_all_frames.csv"
+# acquisiton_start_datetime_str = "2026-04-21T11:50:00.000"
+# df_save_path_1 = r"G:/ImagingData/Tetsuya/20260421/contKO_2\combined_df_1.pkl"
+# out_csv_path = r"G:/ImagingData/Tetsuya/20260421/contKO_2\combined_df_1_intensity_lifetime_all_frames.csv"
 
-# acquisiton_start_datetime_str = "2026-04-12T16:55:00.000"
-# df_save_path_1 = r"G:\ImagingData\Tetsuya\20260412\auto1\combined_df_1.pkl"
-# out_csv_path = r"G:\ImagingData\Tetsuya\20260412\auto1\combined_df_1_intensity_lifetime_all_frames.csv"
-
-acquisiton_start_datetime_str = "2026-04-15T17:30:00.000"
-df_save_path_1 = r"G:\ImagingData\Tetsuya\20260415\auto1_GFP\combined_df_1.pkl"
-out_csv_path = r"G:\ImagingData\Tetsuya\20260415\auto1_GFP\combined_df_1_intensity_lifetime_all_frames.csv"
+acquisiton_start_datetime_str = "2026-04-21T14:00:00.000"
+df_save_path_1 = r"G:/ImagingData/Tetsuya/20260421/cont_and_tlnKO\combined_df_1.pkl"
+out_csv_path = r"G:/ImagingData/Tetsuya/20260421/cont_and_tlnKO\combined_df_1_intensity_lifetime_all_frames.csv"
 
 #%% parameters usually common to all files
 powermeter_folder= r"//RY-LAB-WS04/Users/yasudalab/Documents/Tetsuya_Imaging/powermeter"

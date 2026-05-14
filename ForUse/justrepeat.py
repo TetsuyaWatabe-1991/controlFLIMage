@@ -17,7 +17,7 @@ interval_sec = 120
 
 align_ch_1or2 = 2
 expected_acq_duration_sec = 10
-repeatnum = 30
+repeatnum = 20
 
 FLIMageCont.set_param(RepeatNum = repeatnum, interval_sec=interval_sec, 
                       ch_1or2=align_ch_1or2,

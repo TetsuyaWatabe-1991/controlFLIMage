@@ -24,13 +24,17 @@ group_header_dict = {
     # "CM_woKA": "CM No KA",
 }
 
-acquisiton_start_datetime_str = "2026-04-20T16:00:00.000"
+# acquisiton_start_datetime_str = "2026-04-30T20:30:00.000"
+# df_save_path_1 = r"G:/ImagingData/Tetsuya/20260430/calf\combined_df_1.pkl"
+# out_csv_path = r"G:/ImagingData/Tetsuya/20260430/calf\combined_df_1_intensity_lifetime_all_frames.csv"
 
-df_save_path_1 = r"G:/ImagingData/Tetsuya/20260420/auto1\combined_df_1.pkl"
-out_csv_path = r"G:/ImagingData/Tetsuya/20260420/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
+# acquisiton_start_datetime_str = "2026-05-01T15:00:00.000"
+# df_save_path_1 = r"G:/ImagingData/Tetsuya/20260501/auto_limited_buffer\combined_df_1.pkl"
+# out_csv_path = r"G:/ImagingData/Tetsuya/20260501/auto_limited_buffer\combined_df_1_intensity_lifetime_all_frames.csv"
 
-
-
+acquisiton_start_datetime_str = "2026-05-01T19:30:00.000"
+df_save_path_1 = r"G:/ImagingData/Tetsuya/20260501/AP5_tdTom_GC6s\combined_df_1.pkl"
+out_csv_path = r"G:/ImagingData/Tetsuya/20260501/AP5_tdTom_GC6s\combined_df_1_intensity_lifetime_all_frames.csv"
 #%% parameters usually common to all files
 powermeter_folder= r"//RY-LAB-WS04/Users/yasudalab/Documents/Tetsuya_Imaging/powermeter"
 assert os.path.exists(powermeter_folder), f"powermeter_folder does not exist: {powermeter_folder}"
@@ -609,360 +613,359 @@ if len(sorted_uncaging_powers) > 0 and len(valid_group_headers) > 0:
         plt.show()
 
 
-# %%
-# # %% line plot, transient
-# #plot each data, with light thin color lines
-# plot_info_dict = {
-#     "GCaMP_transient_Spine_intensity": {"ylabel": r"GCaMP F/F0", 
-#                             "xlabel": "Time (sec)",
-#                             "x": "aligned_time_sec",
-#                             "y": "transient_Spine_Ch1_intensity", 
-#                             "errorbar": "se",
-#                             "ylim": [fulltimeseries_df["transient_Spine_Ch1_intensity"].min()-0.1, 
-#                                      25],
-#                             },
-#     "GCaMP_transient_DendriticShaft_intensity": {"ylabel": r"GCaMP F/F0", 
-#                             "xlabel": "Time (sec)",
-#                             "x": "aligned_time_sec",
-#                             "y": "transient_DendriticShaft_Ch1_intensity", 
-#                             "errorbar": "se",
-#                             "ylim": [fulltimeseries_df["transient_DendriticShaft_Ch1_intensity"].min()-0.1, 
-#                                      fulltimeseries_df["transient_DendriticShaft_Ch1_intensity"].max()+0.1]}
-#     }
+# %% line plot, transient
+#plot each data, with light thin color lines
+plot_info_dict = {
+    "GCaMP_transient_Spine_intensity": {"ylabel": r"GCaMP F/F0", 
+                            "xlabel": "Time (sec)",
+                            "x": "aligned_time_sec",
+                            "y": "transient_Spine_Ch1_intensity", 
+                            "errorbar": "se",
+                            "ylim": [fulltimeseries_df["transient_Spine_Ch1_intensity"].min()-0.1, 
+                                     25],
+                            },
+    "GCaMP_transient_DendriticShaft_intensity": {"ylabel": r"GCaMP F/F0", 
+                            "xlabel": "Time (sec)",
+                            "x": "aligned_time_sec",
+                            "y": "transient_DendriticShaft_Ch1_intensity", 
+                            "errorbar": "se",
+                            "ylim": [fulltimeseries_df["transient_DendriticShaft_Ch1_intensity"].min()-0.1, 
+                                     fulltimeseries_df["transient_DendriticShaft_Ch1_intensity"].max()+0.1]}
+    }
 
-# for each_header, each_header_name in group_header_dict.items():
-#     eachgroup_df = fulltimeseries_df[fulltimeseries_df["group"].str.contains(each_header)]
-#     if len(eachgroup_df) == 0:
-#         continue
+for each_header, each_header_name in group_header_dict.items():
+    eachgroup_df = fulltimeseries_df[fulltimeseries_df["group"].str.contains(each_header)]
+    if len(eachgroup_df) == 0:
+        continue
 
-#     for each_uncaging_power_coherent_mW in fulltimeseries_df["uncaging_power_coherent_mW"].unique():
-#         each_group_same_unc_pow_df = eachgroup_df[eachgroup_df["uncaging_power_coherent_mW"] == each_uncaging_power_coherent_mW]
-#         plot_df = each_group_same_unc_pow_df[each_group_same_unc_pow_df["phase"] == "unc"]
+    for each_uncaging_power_coherent_mW in fulltimeseries_df["uncaging_power_coherent_mW"].unique():
+        each_group_same_unc_pow_df = eachgroup_df[eachgroup_df["uncaging_power_coherent_mW"] == each_uncaging_power_coherent_mW]
+        plot_df = each_group_same_unc_pow_df[each_group_same_unc_pow_df["phase"] == "unc"]
 
-#         print(each_header_name, each_uncaging_power_coherent_mW, len(plot_df))
+        print(each_header_name, each_uncaging_power_coherent_mW, len(plot_df))
   
-#         for each_plot_type, each_plot_info in plot_info_dict.items():
-#             plt.figure(figsize=(5, 3))
-#             g = sns.lineplot(
-#                         x = each_plot_info["x"],
-#                         y = each_plot_info["y"],
-#                         data = plot_df,
-#                         hue = "group_set_id",
-#                         linewidth = 0.5,
-#                         alpha = 0.5,
-#                         palette = "tab10",
-#                         legend = False,
-#                         marker = "o",
-#                         markersize = 4,
-#                         )
-#             #greek delta lifetime
-#             plt.ylabel(each_plot_info["ylabel"])
-#             plt.xlabel(each_plot_info["xlabel"])
-#             plt.title(each_header_name+ f", uncaging {each_uncaging_power_coherent_mW} mW")
-#             plt.ylim(each_plot_info["ylim"])
-#             # #plot mean with SEM
+        for each_plot_type, each_plot_info in plot_info_dict.items():
+            plt.figure(figsize=(5, 3))
+            g = sns.lineplot(
+                        x = each_plot_info["x"],
+                        y = each_plot_info["y"],
+                        data = plot_df,
+                        hue = "group_set_id",
+                        linewidth = 0.5,
+                        alpha = 0.5,
+                        palette = "tab10",
+                        legend = False,
+                        marker = "o",
+                        markersize = 4,
+                        )
+            #greek delta lifetime
+            plt.ylabel(each_plot_info["ylabel"])
+            plt.xlabel(each_plot_info["xlabel"])
+            plt.title(each_header_name+ f", uncaging {each_uncaging_power_coherent_mW} mW")
+            plt.ylim(each_plot_info["ylim"])
+            # #plot mean with SEM
 
-#             ylim = plt.gca().get_ylim()
-#             ninty_percent_ylim = ylim[0] + (ylim[1] - ylim[0]) * 0.9
-#             plt.plot([0, 2.048*29], [ninty_percent_ylim, ninty_percent_ylim], "k-")
-#             plt.text(0, ninty_percent_ylim*1.005, "uncaging", ha="left", va="bottom")
+            ylim = plt.gca().get_ylim()
+            ninty_percent_ylim = ylim[0] + (ylim[1] - ylim[0]) * 0.9
+            plt.plot([0, 2.048*29], [ninty_percent_ylim, ninty_percent_ylim], "k-")
+            plt.text(0, ninty_percent_ylim*1.005, "uncaging", ha="left", va="bottom")
 
-#             # plt.fill_between(np.array(LTP_data_point_after_min_between)*60,
-#             # each_plot_info["ylim"][0], each_plot_info["ylim"][1], 
-#             # color="pink", 
-#             # alpha=0.3)
+            # plt.fill_between(np.array(LTP_data_point_after_min_between)*60,
+            # each_plot_info["ylim"][0], each_plot_info["ylim"][1], 
+            # color="pink", 
+            # alpha=0.3)
             
-#             #delete right and top border
-#             plt.gca().spines["top"].set_visible(False)
-#             plt.gca().spines["right"].set_visible(False)
-#             savepath = os.path.join(save_folder, f"{each_header}_{each_plot_type}_{each_uncaging_power_coherent_mW}mW_lineplot_time_series.png")
-#             plt.savefig(savepath, dpi=150, bbox_inches = "tight")
-#             plt.show()
+            #delete right and top border
+            plt.gca().spines["top"].set_visible(False)
+            plt.gca().spines["right"].set_visible(False)
+            savepath = os.path.join(save_folder, f"{each_header}_{each_plot_type}_{each_uncaging_power_coherent_mW}mW_lineplot_time_series.png")
+            plt.savefig(savepath, dpi=150, bbox_inches = "tight")
+            plt.show()
 
-# # %% line plot, transient (tiled panels for group_header x uncaging_power_coherent_mW)
-# sorted_uncaging_powers = sorted(fulltimeseries_df["uncaging_power_coherent_mW"].dropna().unique())
-# valid_group_headers = []
-# for each_header, each_header_name in group_header_dict.items():
-#     if not fulltimeseries_df[fulltimeseries_df["group"].str.contains(each_header)].empty:
-#         valid_group_headers.append((each_header, each_header_name))
+# %% line plot, transient (tiled panels for group_header x uncaging_power_coherent_mW)
+sorted_uncaging_powers = sorted(fulltimeseries_df["uncaging_power_coherent_mW"].dropna().unique())
+valid_group_headers = []
+for each_header, each_header_name in group_header_dict.items():
+    if not fulltimeseries_df[fulltimeseries_df["group"].str.contains(each_header)].empty:
+        valid_group_headers.append((each_header, each_header_name))
 
-# if len(sorted_uncaging_powers) > 0 and len(valid_group_headers) > 0:
-#     for each_plot_type, each_plot_info in plot_info_dict.items():
-#         n_rows = len(sorted_uncaging_powers)
-#         n_cols = len(valid_group_headers)
-#         fig, axes = plt.subplots(
-#             n_rows,
-#             n_cols,
-#             figsize=(6 * n_cols, 3 * n_rows),
-#             sharex=True,
-#             sharey=True,
-#         )
+if len(sorted_uncaging_powers) > 0 and len(valid_group_headers) > 0:
+    for each_plot_type, each_plot_info in plot_info_dict.items():
+        n_rows = len(sorted_uncaging_powers)
+        n_cols = len(valid_group_headers)
+        fig, axes = plt.subplots(
+            n_rows,
+            n_cols,
+            figsize=(6 * n_cols, 3 * n_rows),
+            sharex=True,
+            sharey=True,
+        )
 
-#         axes = reshape_axes_to_2d(axes, n_rows, n_cols)
+        axes = reshape_axes_to_2d(axes, n_rows, n_cols)
 
-#         for col_idx, (each_header, each_header_name) in enumerate(valid_group_headers):
-#             eachgroup_df = fulltimeseries_df[fulltimeseries_df["group"].str.contains(each_header)]
-#             for row_idx, each_uncaging_power_coherent_mW in enumerate(sorted_uncaging_powers):
-#                 ax = axes[row_idx, col_idx]
-#                 each_group_same_unc_pow_df = eachgroup_df[
-#                     eachgroup_df["uncaging_power_coherent_mW"] == each_uncaging_power_coherent_mW
-#                 ]
-#                 plot_df = each_group_same_unc_pow_df[each_group_same_unc_pow_df["phase"] == "unc"]
-#                 if plot_df.empty:
-#                     ax.axis("off")
-#                     continue
+        for col_idx, (each_header, each_header_name) in enumerate(valid_group_headers):
+            eachgroup_df = fulltimeseries_df[fulltimeseries_df["group"].str.contains(each_header)]
+            for row_idx, each_uncaging_power_coherent_mW in enumerate(sorted_uncaging_powers):
+                ax = axes[row_idx, col_idx]
+                each_group_same_unc_pow_df = eachgroup_df[
+                    eachgroup_df["uncaging_power_coherent_mW"] == each_uncaging_power_coherent_mW
+                ]
+                plot_df = each_group_same_unc_pow_df[each_group_same_unc_pow_df["phase"] == "unc"]
+                if plot_df.empty:
+                    ax.axis("off")
+                    continue
 
-#                 sns.lineplot(
-#                     x=each_plot_info["x"],
-#                     y=each_plot_info["y"],
-#                     data=plot_df,
-#                     hue="group_set_id",
-#                     linewidth=0.5,
-#                     alpha=0.5,
-#                     palette="tab10",
-#                     legend=False,
-#                     marker="o",
-#                     markersize=4,
-#                     ax=ax,
-#                 )
+                sns.lineplot(
+                    x=each_plot_info["x"],
+                    y=each_plot_info["y"],
+                    data=plot_df,
+                    hue="group_set_id",
+                    linewidth=0.5,
+                    alpha=0.5,
+                    palette="tab10",
+                    legend=False,
+                    marker="o",
+                    markersize=4,
+                    ax=ax,
+                )
 
-#                 # current_xlim = ax.get_xlim()
-#                 # ax.plot([current_xlim[0], current_xlim[1]], [0, 0], "--", color="gray", linewidth=0.5)
-#                 # print(current_xlim)
+                # current_xlim = ax.get_xlim()
+                # ax.plot([current_xlim[0], current_xlim[1]], [0, 0], "--", color="gray", linewidth=0.5)
+                # print(current_xlim)
 
-#                 ax.set_ylim(each_plot_info["ylim"])
+                ax.set_ylim(each_plot_info["ylim"])
 
-#                 if row_idx == n_rows - 1:
-#                     ax.set_xlabel(each_plot_info["xlabel"])
-#                 else:
-#                     ax.set_xlabel("")
+                if row_idx == n_rows - 1:
+                    ax.set_xlabel(each_plot_info["xlabel"])
+                else:
+                    ax.set_xlabel("")
 
-#                 if col_idx == 0:
-#                     ax.set_ylabel(each_plot_info["ylabel"])
-#                 else:
-#                     ax.set_ylabel("")
+                if col_idx == 0:
+                    ax.set_ylabel(each_plot_info["ylabel"])
+                else:
+                    ax.set_ylabel("")
 
-#                 ylim = ax.get_ylim()
-#                 ninty_percent_ylim = ylim[0] + (ylim[1] - ylim[0]) * 0.9
-#                 ax.plot([0, 2.048 * 29], [ninty_percent_ylim, ninty_percent_ylim], "k-")
-#                 ax.text(0, ninty_percent_ylim * 1.005, "uncaging", ha="left", va="bottom")
+                ylim = ax.get_ylim()
+                ninty_percent_ylim = ylim[0] + (ylim[1] - ylim[0]) * 0.9
+                ax.plot([0, 2.048 * 29], [ninty_percent_ylim, ninty_percent_ylim], "k-")
+                ax.text(0, ninty_percent_ylim * 1.005, "uncaging", ha="left", va="bottom")
 
-#                 if row_idx == 0:
-#                     ax.set_title(each_header_name)
-#                 else:
-#                     ax.set_title("")
+                if row_idx == 0:
+                    ax.set_title(each_header_name)
+                else:
+                    ax.set_title("")
 
-#                 if col_idx == 0:
-#                     ax.annotate(
-#                         f"{each_uncaging_power_coherent_mW} mW",
-#                         xy=(0, 0.5),
-#                         xycoords="axes fraction",
-#                         xytext=(-55, 0),
-#                         textcoords="offset points",
-#                         ha="right",
-#                         va="center",
-#                     )
+                if col_idx == 0:
+                    ax.annotate(
+                        f"{each_uncaging_power_coherent_mW} mW",
+                        xy=(0, 0.5),
+                        xycoords="axes fraction",
+                        xytext=(-55, 0),
+                        textcoords="offset points",
+                        ha="right",
+                        va="center",
+                    )
 
-#                 ax.spines["top"].set_visible(False)
-#                 ax.spines["right"].set_visible(False)
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
 
-#         fig.subplots_adjust(left=0.22, right=0.98, top=0.9, bottom=0.14)
-#         savepath = os.path.join(save_folder, f"panel_{each_plot_type}_transient_lineplot_time_series.png")
-#         plt.savefig(savepath, dpi=150, bbox_inches="tight")
-#         plt.show()
+        fig.subplots_adjust(left=0.22, right=0.98, top=0.9, bottom=0.14)
+        savepath = os.path.join(save_folder, f"panel_{each_plot_type}_transient_lineplot_time_series.png")
+        plt.savefig(savepath, dpi=150, bbox_inches="tight")
+        plt.show()
 
 
-# # %% swarm plot for transient
+# %% swarm plot for transient
 
-# plot_info_dict = {
-#     "GCaMP_transient_Spine_intensity": {"ylabel": r"GCaMP F/F0", 
-#                             "xlabel": "Time (sec)",
-#                             "x": "aligned_time_sec",
-#                             "y": "transient_Spine_Ch1_intensity", 
-#                             "errorbar": "se",
-#                             "ylim": [summary_df["transient_Spine_Ch1_intensity"].min() - (summary_df["transient_Spine_Ch1_intensity"].max() - summary_df["transient_Spine_Ch1_intensity"].min()) * 0.1, 
-#                                      summary_df["transient_Spine_Ch1_intensity"].max() + (summary_df["transient_Spine_Ch1_intensity"].max() - summary_df["transient_Spine_Ch1_intensity"].min()) * 0.1]
-#                                      },
-#     "GCaMP_transient_DendriticShaft_intensity": {
-#         "ylabel": r"GCaMP F/F0", 
-#         "xlabel": "Time (sec)",
-#         "x": "aligned_time_sec",
-#         "y": "transient_DendriticShaft_Ch1_intensity", 
-#         "errorbar": "se",
-#         "ylim": [summary_df["transient_DendriticShaft_Ch1_intensity"].min() - (summary_df["transient_DendriticShaft_Ch1_intensity"].max() - summary_df["transient_DendriticShaft_Ch1_intensity"].min()) * 0.1, 
-#                  summary_df["transient_DendriticShaft_Ch1_intensity"].max() + (summary_df["transient_DendriticShaft_Ch1_intensity"].max() - summary_df["transient_DendriticShaft_Ch1_intensity"].min()) * 0.1]}
-#                 }
+plot_info_dict = {
+    "GCaMP_transient_Spine_intensity": {"ylabel": r"GCaMP F/F0", 
+                            "xlabel": "Time (sec)",
+                            "x": "aligned_time_sec",
+                            "y": "transient_Spine_Ch1_intensity", 
+                            "errorbar": "se",
+                            "ylim": [summary_df["transient_Spine_Ch1_intensity"].min() - (summary_df["transient_Spine_Ch1_intensity"].max() - summary_df["transient_Spine_Ch1_intensity"].min()) * 0.1, 
+                                     summary_df["transient_Spine_Ch1_intensity"].max() + (summary_df["transient_Spine_Ch1_intensity"].max() - summary_df["transient_Spine_Ch1_intensity"].min()) * 0.1]
+                                     },
+    "GCaMP_transient_DendriticShaft_intensity": {
+        "ylabel": r"GCaMP F/F0", 
+        "xlabel": "Time (sec)",
+        "x": "aligned_time_sec",
+        "y": "transient_DendriticShaft_Ch1_intensity", 
+        "errorbar": "se",
+        "ylim": [summary_df["transient_DendriticShaft_Ch1_intensity"].min() - (summary_df["transient_DendriticShaft_Ch1_intensity"].max() - summary_df["transient_DendriticShaft_Ch1_intensity"].min()) * 0.1, 
+                 summary_df["transient_DendriticShaft_Ch1_intensity"].max() + (summary_df["transient_DendriticShaft_Ch1_intensity"].max() - summary_df["transient_DendriticShaft_Ch1_intensity"].min()) * 0.1]}
+                }
 
-# for each_header, each_header_name in group_header_dict.items():
-#     each_header_summary_df = summary_df[summary_df["group"].str.contains(each_header)]
-#     if len(each_header_summary_df) == 0:
-#         continue
-#     for each_uncaging_power_coherent_mW in fulltimeseries_df["uncaging_power_coherent_mW"].unique():
-#         each_group_same_unc_pow_df = each_header_summary_df[each_header_summary_df["uncaging_power_coherent_mW"] == each_uncaging_power_coherent_mW]
-#         plot_df = each_group_same_unc_pow_df
-#         for each_plot_type, each_plot_info in plot_info_dict.items():
-#             plt.figure(figsize=(2, 3))
-#             p = sns.swarmplot(y=each_plot_info["y"],
-#                         data=plot_df,
-#                         palette = "tab10",
-#                         )
+for each_header, each_header_name in group_header_dict.items():
+    each_header_summary_df = summary_df[summary_df["group"].str.contains(each_header)]
+    if len(each_header_summary_df) == 0:
+        continue
+    for each_uncaging_power_coherent_mW in fulltimeseries_df["uncaging_power_coherent_mW"].unique():
+        each_group_same_unc_pow_df = each_header_summary_df[each_header_summary_df["uncaging_power_coherent_mW"] == each_uncaging_power_coherent_mW]
+        plot_df = each_group_same_unc_pow_df
+        for each_plot_type, each_plot_info in plot_info_dict.items():
+            plt.figure(figsize=(2, 3))
+            p = sns.swarmplot(y=each_plot_info["y"],
+                        data=plot_df,
+                        palette = "tab10",
+                        )
 
-#             sns.boxplot(showmeans=True,
-#                 meanline=True,
-#                 meanprops={'color': 'r', 'ls': '-', 'lw': 1},
-#                 medianprops={'visible': False},
-#                 whiskerprops={'visible': False},
-#                 zorder=10,
-#                 y=each_plot_info["y"],
-#                 data=plot_df,
-#                 showfliers=False,
-#                 showbox=False,
-#                 showcaps=False,
-#                 ax=p)
+            sns.boxplot(showmeans=True,
+                meanline=True,
+                meanprops={'color': 'r', 'ls': '-', 'lw': 1},
+                medianprops={'visible': False},
+                whiskerprops={'visible': False},
+                zorder=10,
+                y=each_plot_info["y"],
+                data=plot_df,
+                showfliers=False,
+                showbox=False,
+                showcaps=False,
+                ax=p)
 
-#             mean = plot_df[each_plot_info["y"]].mean()
-#             std = plot_df[each_plot_info["y"]].std()
-#             plt.text(0.2, mean, f"{mean:.2f} ± {std:.2f}", ha="left", va="bottom")
+            mean = plot_df[each_plot_info["y"]].mean()
+            std = plot_df[each_plot_info["y"]].std()
+            plt.text(0.2, mean, f"{mean:.2f} ± {std:.2f}", ha="left", va="bottom")
             
-#             plt.ylabel(each_plot_info["ylabel"])
-#             plt.ylim(each_plot_info["ylim"])
-#             plt.title(each_header_name+ f", uncaging {each_uncaging_power_coherent_mW} mW")
-#             #delete right and top border
-#             plt.gca().spines["top"].set_visible(False)
-#             plt.gca().spines["right"].set_visible(False)
-#             savepath = os.path.join(save_folder, f"{each_header}_{each_plot_type}_{each_uncaging_power_coherent_mW}mW_plot_transient_swarmplot.png")
-#             plt.savefig(savepath, dpi=150, bbox_inches = "tight")
-#             plt.show()
+            plt.ylabel(each_plot_info["ylabel"])
+            plt.ylim(each_plot_info["ylim"])
+            plt.title(each_header_name+ f", uncaging {each_uncaging_power_coherent_mW} mW")
+            #delete right and top border
+            plt.gca().spines["top"].set_visible(False)
+            plt.gca().spines["right"].set_visible(False)
+            savepath = os.path.join(save_folder, f"{each_header}_{each_plot_type}_{each_uncaging_power_coherent_mW}mW_plot_transient_swarmplot.png")
+            plt.savefig(savepath, dpi=150, bbox_inches = "tight")
+            plt.show()
 
 # %% swarm plot for transient (tiled panels for group_header x uncaging_power_coherent_mW)
-# sorted_uncaging_powers = sorted(fulltimeseries_df["uncaging_power_coherent_mW"].dropna().unique())
-# valid_group_headers = []
-# for each_header, each_header_name in group_header_dict.items():
-#     if not summary_df[summary_df["group"].str.contains(each_header)].empty:
-#         valid_group_headers.append((each_header, each_header_name))
+sorted_uncaging_powers = sorted(fulltimeseries_df["uncaging_power_coherent_mW"].dropna().unique())
+valid_group_headers = []
+for each_header, each_header_name in group_header_dict.items():
+    if not summary_df[summary_df["group"].str.contains(each_header)].empty:
+        valid_group_headers.append((each_header, each_header_name))
 
-# if len(sorted_uncaging_powers) > 0 and len(valid_group_headers) > 0:
-#     for each_plot_type, each_plot_info in plot_info_dict.items():
-#         n_rows = len(sorted_uncaging_powers)
-#         n_cols = len(valid_group_headers)
-#         fig, axes = plt.subplots(
-#             n_rows,
-#             n_cols,
-#             figsize=(3.2 * n_cols, 3 * n_rows),
-#             sharex=False,
-#             sharey=True,
-#         )
+if len(sorted_uncaging_powers) > 0 and len(valid_group_headers) > 0:
+    for each_plot_type, each_plot_info in plot_info_dict.items():
+        n_rows = len(sorted_uncaging_powers)
+        n_cols = len(valid_group_headers)
+        fig, axes = plt.subplots(
+            n_rows,
+            n_cols,
+            figsize=(3.2 * n_cols, 3 * n_rows),
+            sharex=False,
+            sharey=True,
+        )
 
-#         axes = reshape_axes_to_2d(axes, n_rows, n_cols)
+        axes = reshape_axes_to_2d(axes, n_rows, n_cols)
 
-#         for col_idx, (each_header, each_header_name) in enumerate(valid_group_headers):
-#             each_header_summary_df = summary_df[summary_df["group"].str.contains(each_header)]
-#             for row_idx, each_uncaging_power_coherent_mW in enumerate(sorted_uncaging_powers):
-#                 ax = axes[row_idx, col_idx]
-#                 plot_df = each_header_summary_df[
-#                     each_header_summary_df["uncaging_power_coherent_mW"] == each_uncaging_power_coherent_mW
-#                 ]
-#                 if plot_df.empty:
-#                     ax.axis("off")
-#                     continue
+        for col_idx, (each_header, each_header_name) in enumerate(valid_group_headers):
+            each_header_summary_df = summary_df[summary_df["group"].str.contains(each_header)]
+            for row_idx, each_uncaging_power_coherent_mW in enumerate(sorted_uncaging_powers):
+                ax = axes[row_idx, col_idx]
+                plot_df = each_header_summary_df[
+                    each_header_summary_df["uncaging_power_coherent_mW"] == each_uncaging_power_coherent_mW
+                ]
+                if plot_df.empty:
+                    ax.axis("off")
+                    continue
 
-#                 p = sns.swarmplot(
-#                     y=each_plot_info["y"],
-#                     data=plot_df,
-#                     palette="tab10",
-#                     ax=ax,
-#                 )
+                p = sns.swarmplot(
+                    y=each_plot_info["y"],
+                    data=plot_df,
+                    palette="tab10",
+                    ax=ax,
+                )
 
-#                 sns.boxplot(
-#                     showmeans=True,
-#                     meanline=True,
-#                     meanprops={"color": "r", "ls": "-", "lw": 1},
-#                     medianprops={"visible": False},
-#                     whiskerprops={"visible": False},
-#                     zorder=10,
-#                     y=each_plot_info["y"],
-#                     data=plot_df,
-#                     showfliers=False,
-#                     showbox=False,
-#                     showcaps=False,
-#                     ax=p,
-#                 )
+                sns.boxplot(
+                    showmeans=True,
+                    meanline=True,
+                    meanprops={"color": "r", "ls": "-", "lw": 1},
+                    medianprops={"visible": False},
+                    whiskerprops={"visible": False},
+                    zorder=10,
+                    y=each_plot_info["y"],
+                    data=plot_df,
+                    showfliers=False,
+                    showbox=False,
+                    showcaps=False,
+                    ax=p,
+                )
 
-#                 mean = plot_df[each_plot_info["y"]].mean()
-#                 std = plot_df[each_plot_info["y"]].std()
-#                 ax.text(0.2, mean, f"{mean:.2f} ± {std:.2f}", ha="left", va="bottom")
+                mean = plot_df[each_plot_info["y"]].mean()
+                std = plot_df[each_plot_info["y"]].std()
+                ax.text(0.2, mean, f"{mean:.2f} ± {std:.2f}", ha="left", va="bottom")
 
-#                 ax.set_ylim(each_plot_info["ylim"])
+                ax.set_ylim(each_plot_info["ylim"])
 
-#                 if row_idx == n_rows - 1:
-#                     ax.set_xlabel("")
-#                 else:
-#                     ax.set_xlabel("")
+                if row_idx == n_rows - 1:
+                    ax.set_xlabel("")
+                else:
+                    ax.set_xlabel("")
 
-#                 if col_idx == 0:
-#                     ax.set_ylabel(each_plot_info["ylabel"])
-#                 else:
-#                     ax.set_ylabel("")
+                if col_idx == 0:
+                    ax.set_ylabel(each_plot_info["ylabel"])
+                else:
+                    ax.set_ylabel("")
 
-#                 if row_idx == 0:
-#                     ax.set_title(each_header_name)
-#                 else:
-#                     ax.set_title("")
+                if row_idx == 0:
+                    ax.set_title(each_header_name)
+                else:
+                    ax.set_title("")
 
-#                 if col_idx == 0:
-#                     ax.annotate(
-#                         f"{each_uncaging_power_coherent_mW} mW",
-#                         xy=(0, 0.5),
-#                         xycoords="axes fraction",
-#                         xytext=(-55, 0),
-#                         textcoords="offset points",
-#                         ha="right",
-#                         va="center",
-#                     )
+                if col_idx == 0:
+                    ax.annotate(
+                        f"{each_uncaging_power_coherent_mW} mW",
+                        xy=(0, 0.5),
+                        xycoords="axes fraction",
+                        xytext=(-55, 0),
+                        textcoords="offset points",
+                        ha="right",
+                        va="center",
+                    )
 
-#                 ax.spines["top"].set_visible(False)
-#                 ax.spines["right"].set_visible(False)
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
 
-#         fig.subplots_adjust(left=0.26, right=0.98, top=0.9, bottom=0.14)
-#         savepath = os.path.join(save_folder, f"panel_{each_plot_type}_transient_swarmplot.png")
-#         plt.savefig(savepath, dpi=150, bbox_inches="tight")
-#         plt.show()
+        fig.subplots_adjust(left=0.26, right=0.98, top=0.9, bottom=0.14)
+        savepath = os.path.join(save_folder, f"panel_{each_plot_type}_transient_swarmplot.png")
+        plt.savefig(savepath, dpi=150, bbox_inches="tight")
+        plt.show()
 
 
 
 # %% scatter plot
 
 plot_info_dict = {
-    # "GCaMP_LTP_level_against_vs_DendriticShaft_F_F0": 
-    #                         {"ylabel": r"$\Delta$spine volume (a.u.)", 
-    #                         "xlabel": "GCaMP Dendritic Shaft F/F0",
-    #                         "y": "delta_FF0_intensity_ch2", 
-    #                         "x": "transient_DendriticShaft_Ch1_intensity",
-    #                         "ylim": [summary_df["delta_FF0_intensity_ch2"].min() - (summary_df["delta_FF0_intensity_ch2"].max() - summary_df["delta_FF0_intensity_ch2"].min()) * 0.1, 
-    #                                  summary_df["delta_FF0_intensity_ch2"].max() + (summary_df["delta_FF0_intensity_ch2"].max() - summary_df["delta_FF0_intensity_ch2"].min()) * 0.1],
-    #                         "xlim": [summary_df["transient_DendriticShaft_Ch1_intensity"].min() - (summary_df["transient_DendriticShaft_Ch1_intensity"].max() - summary_df["transient_DendriticShaft_Ch1_intensity"].min()) * 0.1, 
-    #                                  summary_df["transient_DendriticShaft_Ch1_intensity"].max() + (summary_df["transient_DendriticShaft_Ch1_intensity"].max() - summary_df["transient_DendriticShaft_Ch1_intensity"].min()) * 0.1],
-    #                                  },
-    # "GCaMP_LTP_level_against_vs_Spine_F_F0": 
-    #                         {"ylabel": r"$\Delta$spine volume (a.u.)", 
-    #                         "xlabel": "GCaMP Spine F/F0",
-    #                         "y": "delta_FF0_intensity_ch2", 
-    #                         "x": "transient_Spine_Ch1_intensity",
-    #                         "ylim": [summary_df["delta_FF0_intensity_ch2"].min() - (summary_df["delta_FF0_intensity_ch2"].max() - summary_df["delta_FF0_intensity_ch2"].min()) * 0.1, 
-    #                                  summary_df["delta_FF0_intensity_ch2"].max() + (summary_df["delta_FF0_intensity_ch2"].max() - summary_df["delta_FF0_intensity_ch2"].min()) * 0.1],
-    #                         "xlim": [summary_df["transient_Spine_Ch1_intensity"].min() - (summary_df["transient_Spine_Ch1_intensity"].max() - summary_df["transient_Spine_Ch1_intensity"].min()) * 0.1, 
-    #                                  summary_df["transient_Spine_Ch1_intensity"].max() + (summary_df["transient_Spine_Ch1_intensity"].max() - summary_df["transient_Spine_Ch1_intensity"].min()) * 0.1],
-    #                                  },
-    # "DendriticShaft_F_F0_vs_Spine_F_F0": 
-    #                         {"ylabel": "GCaMP Spine F/F0", 
-    #                         "xlabel": "GCaMP Dendritic Shaft F/F0",
-    #                         "y": "transient_Spine_Ch1_intensity", 
-    #                         "x": "transient_DendriticShaft_Ch1_intensity",
-    #                         "ylim": [summary_df["transient_Spine_Ch1_intensity"].min() - (summary_df["transient_Spine_Ch1_intensity"].max() - summary_df["transient_Spine_Ch1_intensity"].min()) * 0.1, 
-    #                                  summary_df["transient_Spine_Ch1_intensity"].max() + (summary_df["transient_Spine_Ch1_intensity"].max() - summary_df["transient_Spine_Ch1_intensity"].min()) * 0.1],
-    #                         "xlim": [summary_df["transient_DendriticShaft_Ch1_intensity"].min() - (summary_df["transient_DendriticShaft_Ch1_intensity"].max() - summary_df["transient_DendriticShaft_Ch1_intensity"].min()) * 0.1, 
-    #                                  summary_df["transient_DendriticShaft_Ch1_intensity"].max() + (summary_df["transient_DendriticShaft_Ch1_intensity"].max() - summary_df["transient_DendriticShaft_Ch1_intensity"].min()) * 0.1],
-    #                                  },
+    "GCaMP_LTP_level_against_vs_DendriticShaft_F_F0": 
+                            {"ylabel": r"$\Delta$spine volume (a.u.)", 
+                            "xlabel": "GCaMP Dendritic Shaft F/F0",
+                            "y": "delta_FF0_intensity_ch2", 
+                            "x": "transient_DendriticShaft_Ch1_intensity",
+                            "ylim": [summary_df["delta_FF0_intensity_ch2"].min() - (summary_df["delta_FF0_intensity_ch2"].max() - summary_df["delta_FF0_intensity_ch2"].min()) * 0.1, 
+                                     summary_df["delta_FF0_intensity_ch2"].max() + (summary_df["delta_FF0_intensity_ch2"].max() - summary_df["delta_FF0_intensity_ch2"].min()) * 0.1],
+                            "xlim": [summary_df["transient_DendriticShaft_Ch1_intensity"].min() - (summary_df["transient_DendriticShaft_Ch1_intensity"].max() - summary_df["transient_DendriticShaft_Ch1_intensity"].min()) * 0.1, 
+                                     summary_df["transient_DendriticShaft_Ch1_intensity"].max() + (summary_df["transient_DendriticShaft_Ch1_intensity"].max() - summary_df["transient_DendriticShaft_Ch1_intensity"].min()) * 0.1],
+                                     },
+    "GCaMP_LTP_level_against_vs_Spine_F_F0": 
+                            {"ylabel": r"$\Delta$spine volume (a.u.)", 
+                            "xlabel": "GCaMP Spine F/F0",
+                            "y": "delta_FF0_intensity_ch2", 
+                            "x": "transient_Spine_Ch1_intensity",
+                            "ylim": [summary_df["delta_FF0_intensity_ch2"].min() - (summary_df["delta_FF0_intensity_ch2"].max() - summary_df["delta_FF0_intensity_ch2"].min()) * 0.1, 
+                                     summary_df["delta_FF0_intensity_ch2"].max() + (summary_df["delta_FF0_intensity_ch2"].max() - summary_df["delta_FF0_intensity_ch2"].min()) * 0.1],
+                            "xlim": [summary_df["transient_Spine_Ch1_intensity"].min() - (summary_df["transient_Spine_Ch1_intensity"].max() - summary_df["transient_Spine_Ch1_intensity"].min()) * 0.1, 
+                                     summary_df["transient_Spine_Ch1_intensity"].max() + (summary_df["transient_Spine_Ch1_intensity"].max() - summary_df["transient_Spine_Ch1_intensity"].min()) * 0.1],
+                                     },
+    "DendriticShaft_F_F0_vs_Spine_F_F0": 
+                            {"ylabel": "GCaMP Spine F/F0", 
+                            "xlabel": "GCaMP Dendritic Shaft F/F0",
+                            "y": "transient_Spine_Ch1_intensity", 
+                            "x": "transient_DendriticShaft_Ch1_intensity",
+                            "ylim": [summary_df["transient_Spine_Ch1_intensity"].min() - (summary_df["transient_Spine_Ch1_intensity"].max() - summary_df["transient_Spine_Ch1_intensity"].min()) * 0.1, 
+                                     summary_df["transient_Spine_Ch1_intensity"].max() + (summary_df["transient_Spine_Ch1_intensity"].max() - summary_df["transient_Spine_Ch1_intensity"].min()) * 0.1],
+                            "xlim": [summary_df["transient_DendriticShaft_Ch1_intensity"].min() - (summary_df["transient_DendriticShaft_Ch1_intensity"].max() - summary_df["transient_DendriticShaft_Ch1_intensity"].min()) * 0.1, 
+                                     summary_df["transient_DendriticShaft_Ch1_intensity"].max() + (summary_df["transient_DendriticShaft_Ch1_intensity"].max() - summary_df["transient_DendriticShaft_Ch1_intensity"].min()) * 0.1],
+                                     },
     f"delta_FF0_ch{ch_1or2}_vs_first_post_FF0_ch{ch_1or2}":
                             {"ylabel": r"$\Delta$spine volume (a.u.) [25-35 min]",
                             "xlabel": r"$\Delta$spine volume (a.u.) [1st post frame]",

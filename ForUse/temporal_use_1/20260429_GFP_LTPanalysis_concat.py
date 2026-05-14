@@ -4,6 +4,8 @@ import os
 import sys
 import glob
 import datetime
+import tkinter as tk
+from tkinter import filedialog
 sys.path.append(r"..\..")
 import pandas as pd
 import seaborn as sns
@@ -17,19 +19,61 @@ sys.path.append(r"..")
 from flim_summarize_func import add_uncaging_label_between_ylabel_and_axis, reshape_axes_to_2d
 
 LTP_data_point_after_min_between = [25,35]
-ch_1or2 =2
-group_header_dict = {
-    # "0319_25deep": "deep_neuron",
-    "": "tdTom",
-    # "CM_woKA": "CM No KA",
-}
+ch_1or2 = 2
 
-acquisiton_start_datetime_str = "2026-04-20T16:00:00.000"
+# One entry = former single-acquisition script. Multiple entries: load, concat, then same downstream plots.
+# Keys per acquisition:
+#   - pkl_path, csv_path: combined_df_1.pkl and combined_df_1_intensity_lifetime_all_frames.csv
+#   - acquisiton_start_datetime_str: incubation reference for that acquisition (typo kept for compatibility)
+#   - group_header_dict: substring in column "group" -> legend title (merged across all configs for plotting)
+# Optional:
+#   - label: short tag; if len(ACQUISITION_CONFIGS) > 1, group_set_id becomes "{label}_{group}_{set_label}"
+ACQUISITION_CONFIGS = [
+    {
+        # "pkl_path": r"G:/ImagingData/Tetsuya/20260421/cont_and_tlnKO\combined_df_1.pkl",
+        # "csv_path": r"G:/ImagingData/Tetsuya/20260421/cont_and_tlnKO\combined_df_1_intensity_lifetime_all_frames.csv",
+        "pkl_path": r"G:/ImagingData/Tetsuya/20260429/auto1\combined_df_1.pkl",
+        "csv_path": r"G:/ImagingData/Tetsuya/20260429/auto1\combined_df_1_intensity_lifetime_all_frames.csv",
+        "acquisiton_start_datetime_str": "2026-04-29T11:00:00.000",
+        "group_header_dict": {"": "0414_tdT_GC6s"},
+        # "label": "run1",
+    },
+]
 
-df_save_path_1 = r"G:/ImagingData/Tetsuya/20260420/auto1\combined_df_1.pkl"
-out_csv_path = r"G:/ImagingData/Tetsuya/20260420/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
+if len(ACQUISITION_CONFIGS) == 0:
+    raise ValueError("ACQUISITION_CONFIGS must contain at least one acquisition dict.")
 
+group_header_dict = {}
+for _cfg in ACQUISITION_CONFIGS:
+    for _key, _name in _cfg["group_header_dict"].items():
+        if _key in group_header_dict and group_header_dict[_key] != _name:
+            raise ValueError(
+                f"group_header_dict key {_key!r} appears with different display names: "
+                f"{group_header_dict[_key]!r} vs {_name!r}"
+            )
+        group_header_dict[_key] = _name
 
+_multi_acquisition = len(ACQUISITION_CONFIGS) > 1
+_combined_parts = []
+_full_parts = []
+for _i, _cfg in enumerate(ACQUISITION_CONFIGS):
+    _pkl = _cfg["pkl_path"]
+    _csv = _cfg["csv_path"]
+    if not os.path.exists(_pkl):
+        raise FileNotFoundError(f"Missing pkl: {_pkl}")
+    if not os.path.exists(_csv):
+        raise FileNotFoundError(f"Missing csv: {_csv}")
+    _label = str(_cfg.get("label", f"acq{_i}"))
+    _cdf = pd.read_pickle(_pkl)
+    _fdf = pd.read_csv(_csv)
+    _cdf["_acquisition_tag"] = _label
+    _fdf["_acquisition_tag"] = _label
+    _fdf["_acquisiton_start_datetime_str"] = _cfg["acquisiton_start_datetime_str"]
+    _combined_parts.append(_cdf)
+    _full_parts.append(_fdf)
+
+combined_df = pd.concat(_combined_parts, ignore_index=True)
+fulltimeseries_df = pd.concat(_full_parts, ignore_index=True)
 
 #%% parameters usually common to all files
 powermeter_folder= r"//RY-LAB-WS04/Users/yasudalab/Documents/Tetsuya_Imaging/powermeter"
@@ -45,9 +89,6 @@ unc_total_frame_first_unc_dict = {
     55: 5,
 }
 
-combined_df = pd.read_pickle(df_save_path_1)
-fulltimeseries_df = pd.read_csv(out_csv_path)
-
 # normalize the intensity by dividing the intensity by the number of summed frames
 
 for each_ROI_name in ROI_name_list:
@@ -57,7 +98,20 @@ for each_ROI_name in ROI_name_list:
 
 combined_df["dt"] = pd.to_datetime(combined_df["dt_str"])
 
-save_folder = os.path.join(os.path.dirname(df_save_path_1), "summary")
+# Output folder via dialog (default: first acquisition's .../summary if it exists, else its data folder)
+_first_pkl_dir = os.path.dirname(ACQUISITION_CONFIGS[0]["pkl_path"])
+_default_save = os.path.join(_first_pkl_dir, "summary")
+_initialdir = _default_save if os.path.isdir(_default_save) else _first_pkl_dir
+_root = tk.Tk()
+_root.withdraw()
+_root.attributes("-topmost", True)
+save_folder = filedialog.askdirectory(
+    title="Select folder for figures and summary output",
+    initialdir=_initialdir,
+)
+_root.destroy()
+if not save_folder:
+    raise SystemExit("No output folder selected; exiting.")
 os.makedirs(save_folder, exist_ok=True)
 
 
@@ -129,14 +183,39 @@ for each_file in unc_df["file_path"].unique():
 
 #%% align the time_sec based on the uncaging timing
 
+
+def _iter_group_set_partitions(fulltimeseries_df: pd.DataFrame, multi_acquisition: bool):
+    """Yield (group_set_id, each_group, each_set_label, row_mask) for each distinct set."""
+    if multi_acquisition:
+        for acq_tag in sorted(fulltimeseries_df["_acquisition_tag"].astype(str).unique()):
+            sub = fulltimeseries_df[fulltimeseries_df["_acquisition_tag"] == acq_tag]
+            for each_group in sub["group"].unique():
+                for each_set_label in sub[sub["group"] == each_group]["set_label"].unique():
+                    sel = (
+                        (fulltimeseries_df["_acquisition_tag"] == acq_tag)
+                        & (fulltimeseries_df["group"] == each_group)
+                        & (fulltimeseries_df["set_label"] == each_set_label)
+                    )
+                    group_set_id = f"{acq_tag}_{each_group}_{each_set_label}"
+                    yield group_set_id, each_group, each_set_label, sel
+    else:
+        for each_group in fulltimeseries_df["group"].unique():
+            for each_set_label in fulltimeseries_df[fulltimeseries_df["group"] == each_group]["set_label"].unique():
+                sel = (fulltimeseries_df["group"] == each_group) & (
+                    fulltimeseries_df["set_label"] == each_set_label
+                )
+                group_set_id = f"{each_group}_{each_set_label}"
+                yield group_set_id, each_group, each_set_label, sel
+
+
 fulltimeseries_df.loc[:,"aligned_time_sec"] = -999.99
 
 summary_df = pd.DataFrame()
-for each_group in fulltimeseries_df["group"].unique():
-    for each_set_label in fulltimeseries_df[fulltimeseries_df["group"] == each_group]["set_label"].unique():
-        group_set_id = f"{each_group}_{each_set_label}"
+for group_set_id, each_group, each_set_label, sel in _iter_group_set_partitions(
+    fulltimeseries_df, _multi_acquisition
+):
         # print(f"Processing {group_set_id}")
-        each_df = fulltimeseries_df[(fulltimeseries_df["group"] == each_group) & (fulltimeseries_df["set_label"] == each_set_label)]
+        each_df = fulltimeseries_df.loc[sel].copy()
         # name the each_df with group_set_id
         fulltimeseries_df.loc[each_df.index, "group_set_id"] = group_set_id
         each_df.loc[:, "group_set_id"] = group_set_id
@@ -184,6 +263,7 @@ for each_group in fulltimeseries_df["group"].unique():
         each_summary_dict["group"] = each_group
         each_summary_dict["set_label"] = each_set_label
         each_summary_dict["group_set_id"] = group_set_id
+        each_summary_dict["acquisiton_start_datetime_str"] = each_df["_acquisiton_start_datetime_str"].iloc[0]
 
         # uncaging_power_coherent_mW = each_df[each_df["phase"] == "unc"]["uncaging_power_coherent_mW"]
         # if len(uncaging_power_coherent_mW) != 1:
@@ -1091,9 +1171,12 @@ if len(sorted_uncaging_powers) > 0 and len(valid_group_headers) > 0:
 
 
 # %% plot against acq_time_str
-acquisiton_start_datetime = datetime.datetime.strptime(acquisiton_start_datetime_str, "%Y-%m-%dT%H:%M:%S.%f")
+_dt_parse_fmt = "%Y-%m-%dT%H:%M:%S.%f"
 summary_df["acq_time_datetime"] = pd.to_datetime(summary_df["acq_time_str"])
-summary_df["time_sec_incubation"] = (summary_df["acq_time_datetime"] - acquisiton_start_datetime).dt.total_seconds()
+_acq_start_dt = pd.to_datetime(summary_df["acquisiton_start_datetime_str"], format=_dt_parse_fmt)
+summary_df["time_sec_incubation"] = (
+    summary_df["acq_time_datetime"] - _acq_start_dt
+).dt.total_seconds()
 summary_df["time_hours_incubation"] = summary_df["time_sec_incubation"] / 3600
 
 plot_info_dict = {

@@ -577,7 +577,7 @@ class Control_flimage():
         Try one fast pipe connection attempt.
         """
         self.flim.startServer()
-        sleep(0.3)
+        # sleep(0.3)
         self.flim.startConnection()
         return self.flim.Connected
 
@@ -589,7 +589,7 @@ class Control_flimage():
             return True
         print("Quick connect failed. Closing Remote control and retrying...")
         close_remote_control()
-        sleep(0.5)
+        # sleep(0.5)
         self.flim = FLIM_Com(debug_log_mode=self.debug_mode, debug_log_path=self.debug_log_path)
         return self._quick_connect_once()
     
@@ -827,12 +827,12 @@ class Control_flimage():
                         print
                         print("Second start_repeat_time", datetime.now() - start_repeat_time)
                         break
-                    sleep(1)
+                    # sleep(1)
                 else:
                     break
         return True
     
-    def wait_while_grabbing(self,sleep_every_sec=1, max_waiting_sec = 180):
+    def wait_while_grabbing(self,sleep_every_sec=0.2, max_waiting_sec = 180):
         sleep(self.expected_grab_duration_sec)
         error_count = 0
         now = datetime.now()
@@ -854,7 +854,6 @@ class Control_flimage():
                 if error_count>5:
                     self.reconnect()
                     return False
-                    
             sleep(sleep_every_sec)
             print(" - ", end="")
         print("\n *** END wait_while_grabbing *** \n")
@@ -1607,7 +1606,12 @@ if __name__ == "__main__":
     if False:
         FLIMageCont.flim.sendCommand(f'LoadSetting, {Zstack_ini}')
         FLIMageCont.flim.sendCommand(f'SetDIOPanel, 1, 1')
-    FLIMageCont.flim.sendCommand('SetOverwriteWarningOff')
+    # FLIMageCont.flim.sendCommand('SetOverwriteWarningOff')
+    # FLIMageCont.flim.sendCommand('StartLoop')
+    while True:
+        res = FLIMageCont.flim.sendCommand("GetRelativeXYZ")
+        print(res)
+        sleep(1)
     # def get_realtime_value(FLIMageCont):
     #     res = FLIMageCont.flim.sendCommand("GetRealtimeValue")
     #     realtime_value = res.split(", ")[-1]
