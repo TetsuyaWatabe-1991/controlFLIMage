@@ -44,6 +44,9 @@ unc_total_frame_first_unc_dict = {
     55: 5,
 }
 
+# Pre-phase intensity stability: exclude group_set_id if max(pre)/min(pre) on intensity_div_by_nAve exceeds this (1.4 ~= >40% swing vs min).
+pre_instability_max_min_ratio_threshold = 1.4
+
 combined_df = pd.read_pickle(df_save_path_1)
 fulltimeseries_df = pd.read_csv(out_csv_path)
 
@@ -238,6 +241,17 @@ for each_group in fulltimeseries_df["group"].unique():
 
         each_summary_dict["acq_time_str"] = each_df["acq_time_str"].unique()[0]
 
+        pre_df_phase = each_df[each_df["phase"] == "pre"]
+        for each_ROI_name in ROI_name_list:
+            for each_ch in ["Ch1", "Ch2"]:
+                col = f"{each_ROI_name}_{each_ch}_intensity_div_by_nAve"
+                pre_vals = pre_df_phase[col].dropna() if col in pre_df_phase.columns else pd.Series(dtype=float)
+                if len(pre_vals) >= 2 and pre_vals.min() > 0:
+                    ratio = pre_vals.max() / pre_vals.min()
+                else:
+                    ratio = np.nan
+                each_summary_dict[f"pre_max_min_ratio_{each_ROI_name}_{each_ch}"] = ratio
+
         summary_df = pd.concat([summary_df, pd.DataFrame([each_summary_dict])], ignore_index=True)
 
 # %%
@@ -279,6 +293,16 @@ for each_group_set_id in fulltimeseries_df["group_set_id"].unique():
     fulltimeseries_df.loc[each_df.index, "uncaging_power_coherent_mW"] = uncaging_power_coherent_mW
     summary_df.loc[summary_df["group_set_id"] == each_group_set_id, "uncaging_power_coherent_mW"] = uncaging_power_coherent_mW
 
+
+ratio_cols = [c for c in summary_df.columns if c.startswith("pre_max_min_ratio_")]
+print("Pre-phase intensity stability (max/min ratio):")
+print(summary_df[["group_set_id"] + ratio_cols].to_string(index=False))
+ratio_cols_to_check = [c for c in ratio_cols if f"Ch{ch_1or2}" in c]
+unstable_mask = summary_df[ratio_cols_to_check].gt(pre_instability_max_min_ratio_threshold).any(axis=1)
+unstable_ids = summary_df.loc[unstable_mask, "group_set_id"].tolist()
+print(f"Excluded sets (pre instability max/min > {pre_instability_max_min_ratio_threshold} on {ratio_cols_to_check}): {unstable_ids}")
+summary_df = summary_df[~unstable_mask].reset_index(drop=True)
+fulltimeseries_df = fulltimeseries_df[~fulltimeseries_df["group_set_id"].isin(unstable_ids)].reset_index(drop=True)
 
 
 # %% line plot
