@@ -11,20 +11,24 @@ plt.rcParams["font.family"] = "Arial"
 import math
 from read_flimagecsv import arrange_for_multipos3, csv_to_df, detect_uncaging, value_normalize, everymin_normalize
 
-one_of_filepath = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260329\p38\auto1\Analysis\copied\Thr_p38cnt_2_pos1_001_concat_TimeCourse.csv"
+one_of_filepath = r"C:\Users\WatabeT\Desktop\auto1\Analysis\copied\codon_opt_aniso_1_pos1__TimeCourse.csv"
 save_folder = os.path.join(os.path.dirname(one_of_filepath), "plot")
 os.makedirs(save_folder, exist_ok=True)
 csvlist = glob.glob(one_of_filepath[:one_of_filepath.rfind("\\")]+"\\*_TimeCourse.csv")
 
 
-normalize_frame_range_0start = [0, 4]
+normalize_frame_range_0start = [0, 5]
 
 
 group_dict = {
-    "p38cnt_":"p38 sensor (control)",
-    "p38_":"p38 sensor",
-    "Thr_p38cnt_":"p38 Ser to Thr (control)",
-    "Thr_p38_":"p38 Ser to Thr",
+    "p38et_aniso_":"p38 sensor",
+    "p38et_cont_":"p38 sensor (control)",
+    "no_docking_aniso_":"no docking sensor",
+    "no_docking_cont_":"no docking sensor (control)",
+    "mSG_aniso_":"mSG sensor",
+    "mSG_cont_":"mSG sensor (control)",
+    "codon_opt_aniso_":"codon opt sensor",
+    "codon_opt_cont_":"codon opt sensor (control)",
 }
 
 combined_df = pd.DataFrame()
@@ -90,7 +94,7 @@ for each_group in combined_df["group"].unique():
 
 
 #%% plot
-drug_time_minute = {0: "Anisomycin", (104-21): "SB203580"}
+drug_time_minute = {0: "Anisomycin", 90: "SB203580"}
 ch = 1
 
 combined_df["time_minute"] = combined_df["time_sec"]/60 - 21

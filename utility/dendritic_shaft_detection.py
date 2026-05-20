@@ -53,24 +53,52 @@ def filter_skeleton_points(skeleton, min_component_size=10, connection_radius=3)
     else:
         return skeleton_points
 
-def skeletonize_with_branch_filtering(binary_image, min_branch_length=10, min_component_size=10, connection_radius=3):
-    from skimage.morphology import remove_small_objects, skeletonize_3d
-    
-    # Method 1: Remove small objects before skeletonization
+def _points_to_skeleton_volume(skeleton_template, points):
+    out = np.zeros_like(skeleton_template, dtype=bool)
+    if len(points) > 0:
+        out[tuple(points.T)] = True
+    return out
+
+
+def skeletonize_with_branch_filtering(
+    binary_image,
+    min_branch_length=10,
+    min_component_size=10,
+    connection_radius=3,
+    return_removed=False,
+):
+    """
+    3D skeletonize + drop short connected skeleton segments.
+
+    min_branch_length / min_component_size are minimum voxel counts per connected
+    skeleton component (graph built with connection_radius). The larger value wins
+    for the final skeleton. When return_removed=True and min_branch_length is
+    larger, also returns voxels pruned between the two thresholds.
+    """
+    from skimage.morphology import remove_small_objects, skeletonize
+
     binary_cleaned = remove_small_objects(binary_image, min_size=min_component_size)
-    
-    # Method 2: Use 3D skeletonization with pruning
-    skeleton_3d = skeletonize_3d(binary_cleaned)
-    
-    # Method 3: Apply our custom filtering
-    skeleton_points_filtered = filter_skeleton_points(skeleton_3d, min_component_size, connection_radius)
-    
-    # Create final skeleton
-    skeleton_final = np.zeros_like(skeleton_3d)
-    if len(skeleton_points_filtered) > 0:
-        skeleton_final[tuple(skeleton_points_filtered.T)] = True
-    
-    return skeleton_final, skeleton_points_filtered
+    skeleton_3d = skeletonize(binary_cleaned)
+
+    min_keep = max(int(min_component_size), int(min_branch_length))
+    min_component_size = int(min_component_size)
+
+    if min_keep > min_component_size:
+        pts_base = filter_skeleton_points(
+            skeleton_3d, min_component_size, connection_radius
+        )
+        sk_base = _points_to_skeleton_volume(skeleton_3d, pts_base)
+        pts_final = filter_skeleton_points(sk_base, min_keep, connection_radius)
+    else:
+        sk_base = skeleton_3d
+        pts_final = filter_skeleton_points(skeleton_3d, min_keep, connection_radius)
+
+    skeleton_final = _points_to_skeleton_volume(skeleton_3d, pts_final)
+
+    if return_removed:
+        skeleton_removed = sk_base & ~skeleton_final
+        return skeleton_final, pts_final, skeleton_removed, sk_base
+    return skeleton_final, pts_final
 
 
 def get_skeleton_3d(flim_path, min_dendrite_length_um, ch_specified, ch1or2,
@@ -492,12 +520,12 @@ def get_and_save_candidate_pos(flim_path, **kwargs):
 if __name__ == "__main__":
     # flim_path = r"G:\ImagingData\Tetsuya\20250612\test_lowmag\lowmag1_001_20250602_256_zoom2_GFP.flim"
     flim_path_list = [
-        r"G:\ImagingData\Tetsuya\20250619\auto1\lowmag1_001.flim"
+        r"C:\Users\WatabeT\Desktop\temp\1_pos1_001.flim"
         ]
     threshold_area_um2 = 10
     spacing_um = 30
     ch_specified = False
-    ch1or2 = 1
+    ch1or2 = 2
     percentile = 98
     
     for flim_path in flim_path_list:

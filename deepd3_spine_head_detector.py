@@ -14,6 +14,123 @@ from skimage.morphology import skeletonize
 from scipy.spatial.distance import cdist
 from FLIMageFileReader2 import FileReader
 from FLIMageAlignment import get_xyz_pixel_um
+from scipy.ndimage import grey_closing, median_filter
+from skimage.exposure import equalize_adapthist
+from skimage.morphology import disk, white_tophat
+
+
+def ensure_directory(dirpath: str) -> str:
+    """Create dirpath if missing; return path when it already exists."""
+    if os.path.isdir(dirpath):
+        return dirpath
+    if os.path.isfile(dirpath):
+        alt = dirpath + "_save"
+        print(f"  Note: {dirpath!r} is a file; using {alt!r}")
+        os.makedirs(alt, exist_ok=True)
+        return alt
+    try:
+        os.makedirs(dirpath, exist_ok=True)
+    except FileExistsError:
+        if os.path.isdir(dirpath):
+            return dirpath
+        raise
+    return dirpath
+
+
+def resolve_savefolder(flim_path: str) -> str:
+    """
+    Resolve output folder for a .flim file (multi_spine / mushroom convention).
+
+    Prefer legacy path flim_path[:-9] (strip _NNN.flim). On some Windows/SMB
+  shares that name cannot be created when the .flim sits in the same directory
+    (e.g. AP5_pos6_256_4x_001.flim blocks folder AP5_pos6_256_4x). Then use
+    the full .flim stem directory (…/AP5_pos6_256_4x_001).
+    """
+    legacy = flim_path[:-9]
+    if os.path.isdir(legacy):
+        return legacy
+    try:
+        os.makedirs(legacy, exist_ok=True)
+        if os.path.isdir(legacy):
+            return legacy
+    except OSError:
+        pass
+    stem = os.path.splitext(flim_path)[0]
+    ensure_directory(stem)
+    if stem != legacy:
+        print(
+            f"  Note: cannot use {legacy!r}; save folder is {stem!r} "
+            f"(.flim sibling name conflict on this volume)"
+        )
+    return stem
+
+
+def local_z_mip_stack(zyx, radius=2):
+    """
+    Per-Z max over +/-radius neighbors (2*radius+1 planes); edge-padded at stack ends.
+    """
+    zyx = np.asarray(zyx, dtype=np.float32)
+    radius = int(radius)
+    if radius < 0:
+        raise ValueError(f"radius must be >= 0, got {radius}")
+    if radius == 0:
+        return zyx.copy()
+    padded = np.pad(zyx, ((radius, radius), (0, 0), (0, 0)), mode="edge")
+    win = 2 * radius + 1
+    out = np.empty_like(zyx)
+    for z in range(zyx.shape[0]):
+        out[z] = np.max(padded[z : z + win], axis=0)
+    return out
+
+
+def preprocess_stack_for_thin_branches(zyx, mode="tophat_clahe"):
+    """
+    Boost thin bright processes before DeepD3 inference.
+    mode: 'none' | 'median' | 'tophat_clahe'
+    """
+    zyx = np.asarray(zyx, dtype=np.float32)
+    if mode == "none":
+        return zyx
+    den = median_filter(zyx, size=(1, 3, 3))
+    if mode == "median":
+        return den
+    out = den.copy()
+    radius = 2
+    selem = disk(radius)
+    for z in range(out.shape[0]):
+        plane = out[z]
+        if plane.max() <= plane.min():
+            continue
+        pmin, pmax = float(plane.min()), float(plane.max())
+        plane_n = (plane - pmin) / (pmax - pmin)
+        enhanced = white_tophat(plane_n, selem)
+        combined = np.maximum(plane_n, enhanced)
+        out[z] = equalize_adapthist(combined.astype(np.float64), clip_limit=0.03)
+    return out.astype(np.float32)
+
+
+def fuse_dendrite_with_image_mask(
+    dendrite_pred,
+    raw_zyx,
+    image_percentile=92.0,
+    fusion_weight=0.5,
+    closing_iterations=1,
+):
+    """
+    Merge low-threshold image mask into dendrite prediction so thin branches
+    visible in raw data appear in shaft map (low-res / 256_4x stacks).
+    """
+    dendrite_pred = np.asarray(dendrite_pred, dtype=np.float32)
+    raw_zyx = np.asarray(raw_zyx, dtype=np.float32)
+    den = median_filter(raw_zyx, size=(1, 3, 3))
+    thresh = np.percentile(den, image_percentile)
+    image_mask = (den >= thresh).astype(np.float32)
+    fused = np.maximum(dendrite_pred, fusion_weight * image_mask)
+    if closing_iterations > 0:
+        for _ in range(closing_iterations):
+            fused = grey_closing(fused, size=(1, 3, 3))
+    return np.clip(fused, 0.0, 1.0).astype(np.float32)
+
 
 class SpinePosDeepD3():
     def __init__(self, 
@@ -21,6 +138,7 @@ class SpinePosDeepD3():
                  **kwargs):
         self.trainingdata_path = trainingdata_path
         self.params = {
+                       "roi_mode": "thresholded",
                        "roi_areaThreshold" : 0.5,
                        "roi_peakThreshold" : 0.9,
                        "roi_seedDelta" : 0.1,
@@ -28,7 +146,16 @@ class SpinePosDeepD3():
                        "min_roi_size" : 5,
                        "max_roi_size" : 1000,
                        "min_planes" : 1,
-                       "max_dist_spine_dend_um": 3}
+                       "max_dist_spine_dend_um": 3,
+                       "dendrite_skeleton_threshold": 0.9,
+                       "enhance_thin_branches": False,
+                       "stack_preprocess": "none",
+                       "image_fusion_percentile": 92.0,
+                       "image_fusion_weight": 0.5,
+                       "dendrite_closing_iterations": 1,
+                       "use_local_z_mip": False,
+                       "local_z_mip_radius": 2,
+                       }
         
         for eachkey in kwargs:
             self.params[eachkey] = kwargs[eachkey]
@@ -91,9 +218,13 @@ class SpinePosDeepD3():
     
     def plot_uncaging_pos(self, S, r, prop_dict, cand_spines, 
                           skeleton, result_dict, savefolder,
-                          savefilename):
+                          savefilename, show_interactive=True):
         vmax = S.stack.max()
-        fig, axs = plt.subplots(S.stack.shape[0], 4, figsize = (4,S.stack.shape[0]))       
+        if S.stack.shape[0] == 1:
+            fig, axs = plt.subplots(1, 4, figsize=(4, 1))
+            axs = axs.reshape(1, -1)
+        else:
+            fig, axs = plt.subplots(S.stack.shape[0], 4, figsize=(4, S.stack.shape[0]))
         for each_z in range(S.stack.shape[0]):
             axs[each_z, 0].imshow(S.stack[each_z,:,:], 
                                 vmin=0, vmax=vmax,
@@ -124,11 +255,12 @@ class SpinePosDeepD3():
                                            result_dict[each_detected]["y_pix"],
                                            c='y', s=0.02, marker = "+")
         
-        os.makedirs(savefolder, exist_ok=True)
+        savefolder = ensure_directory(savefolder)
         savepath = os.path.join(savefolder, f"{savefilename}_roi.png")
-        plt.savefig(savepath,dpi=600, bbox_inches = 'tight')
-        plt.show()
-        # plt.close();plt.clf()
+        plt.savefig(savepath, dpi=600, bbox_inches='tight')
+        if show_interactive:
+            plt.show()
+        plt.close(fig)
         print("save as ", savepath)
         
         fig, axs = plt.subplots(1, 6, figsize = (6,1))
@@ -198,17 +330,39 @@ class SpinePosDeepD3():
         #        +"  peak : "+ str(roi_peakThreshold), size = 7) 
         # savepath = os.path.join(savefolder,f"result_area{roi_areaThreshold}_peak{roi_peakThreshold}_mip.png")
         savepath = os.path.join(savefolder, f"{savefilename}_mip.png")
-        plt.savefig(savepath,dpi=600, bbox_inches = 'tight')
-        plt.close();plt.clf()
-        
-        plt.imshow(np.amax(S.stack,axis=0), 
-                   cmap="gray")
-        for each_detected in result_dict:
-            plt.scatter(result_dict[each_detected]["x_pix"], 
-                        result_dict[each_detected]["y_pix"],
-                        c='y', s=10, marker = "+")
-        plt.gca().axis("off")
-        plt.show()
+        plt.savefig(savepath, dpi=600, bbox_inches='tight')
+        plt.close(fig)
+        print("save as ", savepath)
+
+    def save_detection_outputs(self, S, r, prop_dict, cand_spines, skeleton,
+                               result_dict, save_folder, save_filename_stem,
+                               save_overview_pngs=True,
+                               save_prediction_stacks=False, skeleton_3d=False,
+                               show_interactive=False):
+        """Save DeepD3 overview PNGs and optional shaft/spine prediction TIFFs."""
+        save_folder = ensure_directory(save_folder)
+        if save_prediction_stacks:
+            spine_path = os.path.join(
+                save_folder, f"{save_filename_stem}_S_spine.tif"
+            )
+            shaft_path = os.path.join(
+                save_folder, f"{save_filename_stem}_S_shaft.tif"
+            )
+            tifffile.imwrite(spine_path, S.prediction[..., 1])
+            tifffile.imwrite(shaft_path, S.prediction[..., 0])
+            print("save as ", spine_path)
+            print("save as ", shaft_path)
+
+        if save_overview_pngs:
+            if skeleton.ndim == 3:
+                skeleton_for_plot = skeleton.max(axis=0)
+            else:
+                skeleton_for_plot = skeleton
+            self.plot_uncaging_pos(
+                S, r, prop_dict, cand_spines, skeleton_for_plot, result_dict,
+                save_folder, save_filename_stem,
+                show_interactive=show_interactive,
+            )
 
     def return_uncaging_pos_based_on_roi_sum(self,
                                              flim_path = "",
@@ -227,8 +381,17 @@ class SpinePosDeepD3():
                                              ignore_first_n_plane=1,
                                              ignore_last_n_plane=1,
                                              ignore_edge_percentile = 5,
-                                             savefolder = ""
+                                             savefolder = "",
+                                             define_save_folder=False,
+                                             save_folder="",
+                                             save_filename_stem="",
+                                             save_prediction_stacks=False,
+                                             skeleton_3d=False,
+                                             return_outputs_context=False,
+                                             skeleton_3d_detection=None,
                                              ):
+        if skeleton_3d_detection is None:
+            skeleton_3d_detection = skeleton_3d
         
         if direct_ZYXarray_use == False:
             assert os.path.exists(flim_path), f"flim_path not found: {flim_path}"
@@ -243,8 +406,19 @@ class SpinePosDeepD3():
             self.params["xy_pixel_um"] = x_um
             self.params["z_pixel_um"] = z_um
             ext = flim_path.split(".")[-1]
-            if os.path.exists(savefolder) == False:
-                savefolder = flim_path[:-len(ext)-1]
+            if define_save_folder:
+                assert save_folder, "save_folder must be set when define_save_folder=True"
+                assert save_filename_stem, (
+                    "save_filename_stem must be set when define_save_folder=True"
+                )
+                output_folder = save_folder
+                output_stem = save_filename_stem
+            elif os.path.exists(savefolder):
+                output_folder = savefolder
+                output_stem = os.path.basename(savefolder)
+            else:
+                output_folder = flim_path[:-len(ext) - 1]
+                output_stem = os.path.basename(output_folder)
         else:
             ZYXarray = direct_ZYXarray
             assert ZYXarray.shape
@@ -253,9 +427,25 @@ class SpinePosDeepD3():
             assert os.path.exists(savefolder), f"savefolder not found: {savefolder}"
             self.params["xy_pixel_um"] = xy_pixel_um
             self.params["z_pixel_um"] = z_pixel_um
-        
+            output_folder = save_folder if save_folder else savefolder
+            output_stem = save_filename_stem or os.path.basename(output_folder)
+
+        zyx_raw = np.asarray(ZYXarray, dtype=np.float32)
+        if self.params.get("use_local_z_mip", False):
+            z_radius = int(self.params.get("local_z_mip_radius", 2))
+            zyx_for_deepd3 = local_z_mip_stack(zyx_raw, radius=z_radius)
+            print(
+                f"  local Z-MIP input: radius={z_radius} "
+                f"({2 * z_radius + 1} planes per DeepD3 slice)"
+            )
+        else:
+            zyx_for_deepd3 = zyx_raw
+
+        stack_input = preprocess_stack_for_thin_branches(
+            zyx_for_deepd3, mode=self.params.get("stack_preprocess", "none")
+        )
         temp_output_path = BytesIO()
-        tifffile.imwrite(temp_output_path, ZYXarray)
+        tifffile.imwrite(temp_output_path, stack_input)
         
         print("Loading stack...")
         S = Stack(temp_output_path, 
@@ -264,14 +454,32 @@ class SpinePosDeepD3():
                   )
         print("Training data path  ", self.trainingdata_path)
         print("Training data exists  ", os.path.exists(self.trainingdata_path))        
-        S.predictWholeImage(self.trainingdata_path)        
-        # plt.imshow(S.prediction[..., 0].max(axis=0)>=1,vmin=0,vmax=1)
-        # plt.show()
-        print("Building 3D ROIs...")
+        S.predictWholeImage(self.trainingdata_path)
+        dendrite_pred_raw = S.prediction[..., 0].copy()
+        if self.params.get("enhance_thin_branches", False):
+            dendrite_fused = fuse_dendrite_with_image_mask(
+                dendrite_pred_raw,
+                zyx_raw,
+                image_percentile=self.params.get("image_fusion_percentile", 92.0),
+                fusion_weight=self.params.get("image_fusion_weight", 0.5),
+                closing_iterations=int(
+                    self.params.get("dendrite_closing_iterations", 1)
+                ),
+            )
+            S.prediction[..., 0] = dendrite_fused
+            print(
+                "  thin-branch enhance: fused dendrite frac>0.2="
+                f"{np.mean(dendrite_fused > 0.2):.3f} "
+                f"(raw pred {np.mean(dendrite_pred_raw > 0.2):.3f})"
+            )
+        else:
+            dendrite_fused = dendrite_pred_raw
+        roi_mode = self.params.get("roi_mode", "thresholded")
+        print(f"Building 3D ROIs (mode={roi_mode})...")
         r = ROI3D_Creator(
             dendrite_prediction = S.prediction[..., 0],
             spine_prediction = S.prediction[..., 1],
-            mode = "thresholded",#'floodfill',
+            mode=roi_mode,
             areaThreshold = self.params["roi_areaThreshold"],
             peakThreshold = self.params["roi_peakThreshold"],
             seedDelta = self.params["roi_seedDelta"],
@@ -287,7 +495,11 @@ class SpinePosDeepD3():
                                                    "centroid",
                                                    'num_pixels',
                                                    'equivalent_diameter_area'])
-        skeleton = skeletonize(S.prediction[..., 0].max(axis=0) > 0.9)
+        skel_thresh = self.params.get("dendrite_skeleton_threshold", 0.9)
+        if skeleton_3d_detection:
+            skeleton = skeletonize(S.prediction[..., 0] > skel_thresh)
+        else:
+            skeleton = skeletonize(S.prediction[..., 0].max(axis=0) > skel_thresh)
         skeleton_points = np.array(np.where(skeleton)).T
         prop_dict = {}
         intensity_list = []
@@ -355,16 +567,27 @@ class SpinePosDeepD3():
                     y = prop_dict[eachlabel]["y"]
                     num_pixels = prop_dict[eachlabel]["num_pixels"]
                     if eachlabel in cand_spines.index:
-                        index = np.argmin(cdist(np.array([[y,x]]), skeleton_points))
+                        if skeleton_3d_detection:
+                            index = np.argmin(
+                                cdist(np.array([[each_z, y, x]]), skeleton_points)
+                            )
+                            x_index, y_index = 2, 1
+                        else:
+                            index = np.argmin(cdist(np.array([[y, x]]), skeleton_points))
+                            x_index, y_index = 1, 0
                         nearest_point = skeleton_points[index]
-                        # # Sort by the order of the close distance
-                        neighborhood_indices = np.argsort(cdist([nearest_point], skeleton_points))
-                        # Get first 11 points coordinates
-                        neighborhood_points = skeleton_points[neighborhood_indices[0,:11]]
+                        neighborhood_indices = np.argsort(
+                            cdist([nearest_point], skeleton_points)
+                        )
+                        neighborhood_points = skeleton_points[
+                            neighborhood_indices[0, :11]
+                        ]
                         try:
-                            orientation = self.calculate_orientation_from_coordinates(neighborhood_points)
-                            x_moved = x - nearest_point[1]
-                            y_moved = y - nearest_point[0]
+                            orientation = self.calculate_orientation_from_coordinates(
+                                neighborhood_points
+                            )
+                            x_moved = x - nearest_point[x_index]
+                            y_moved = y - nearest_point[y_index]
                             x_rotated = x_moved*math.cos(orientation) - y_moved*math.sin(orientation)
                             if x_rotated<=0:
                                 direction = 1
@@ -382,9 +605,12 @@ class SpinePosDeepD3():
                                     break
                                 
                                 if max_distance:
-                                    if (((self.params["xy_pixel_um"]*(nearest_point[1] - candi_x))**2 
-                                        + (self.params["xy_pixel_um"]*(nearest_point[0] - candi_y))**2)
-                                            > self.params["max_dist_spine_dend_um"]**2):
+                                    if (
+                                        (self.params["xy_pixel_um"]
+                                         * (nearest_point[x_index] - candi_x)) ** 2
+                                        + (self.params["xy_pixel_um"]
+                                           * (nearest_point[y_index] - candi_y)) ** 2
+                                    ) > self.params["max_dist_spine_dend_um"] ** 2:
                                         break
                                     
                                 if spine_bin[int(candi_y),int(candi_x)]>0:
@@ -405,13 +631,30 @@ class SpinePosDeepD3():
                         except:
                             continue
 
-        if plot_them:
+        outputs_context = {
+            "S": S,
+            "r": r,
+            "prop_dict": prop_dict,
+            "cand_spines": cand_spines,
+            "skeleton": skeleton,
+            "output_folder": output_folder,
+            "output_stem": output_stem,
+            "dendrite_pred_raw": dendrite_pred_raw,
+            "dendrite_pred_fused": dendrite_fused,
+        }
 
-            savefilename = os.path.basename(savefolder)
-            self.plot_uncaging_pos(S, r, prop_dict, cand_spines, 
-                                   skeleton, result_dict, savefolder, 
-                                   savefilename)
-        return result_dict          
+        if plot_them or save_prediction_stacks:
+            self.save_detection_outputs(
+                S, r, prop_dict, cand_spines, skeleton, result_dict,
+                output_folder, output_stem,
+                save_overview_pngs=plot_them or save_prediction_stacks,
+                save_prediction_stacks=save_prediction_stacks,
+                skeleton_3d=skeleton_3d,
+                show_interactive=plot_them,
+            )
+        if return_outputs_context:
+            return result_dict, outputs_context
+        return result_dict
 
 
 if __name__ == "__main__":

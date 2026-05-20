@@ -24,10 +24,13 @@ group_header_dict = {
     # "CM_woKA": "CM No KA",
 }
 
+# acquisiton_start_datetime_str = "2026-05-12T21:00:00.000"
+# df_save_path_1 = r"G:/ImagingData/Tetsuya/20260513/auto1\combined_df_1.pkl"
+# out_csv_path = r"G:/ImagingData/Tetsuya/20260513/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
 
 acquisiton_start_datetime_str = "2026-05-12T21:00:00.000"
-df_save_path_1 = r"G:/ImagingData/Tetsuya/20260513/auto1\combined_df_1.pkl"
-out_csv_path = r"G:/ImagingData/Tetsuya/20260513/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
+df_save_path_1 = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260514/auto1\combined_df_1.pkl"
+out_csv_path = r"//RY-LAB-WS04/ImagingData/Tetsuya/20260514/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
 
 #%% parameters usually common to all files
 powermeter_folder= r"//RY-LAB-WS04/Users/yasudalab/Documents/Tetsuya_Imaging/powermeter"

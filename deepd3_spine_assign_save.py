@@ -11,7 +11,7 @@ from multidim_tiff_viewer import save_spine_dend_info,\
     define_uncagingPoint_dend_click_multiple, read_xyz_single
 
 def main():    
-    highmag_folder = r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20250520\E4bufferMNI4Ca"
+    highmag_folder = r"\\RY-LAB-WS04\ImagingData\Tetsuya\20260515\copied_auto1_for_find_mushroom"
     highmag_filename = "*_highmag_*002.flim"
     exclude_ini_saved = True
     from_latest_file = False
@@ -80,8 +80,8 @@ def loop_spine_assign_save(highmag_folder, highmag_filename, exclude_ini_saved, 
         if delta > 20:
 
             SpineAssign = SpinePosDeepD3()
-            SpineAssign.trainingdata_path = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\ongoing\deepd3\DeepD3_32F.h5"
-            
+            # SpineAssign.trainingdata_path = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\ongoing\deepd3\DeepD3_32F.h5"
+            SpineAssign.trainingdata_path = r"C:\Users\WatabeT\Documents\Git\DeepD3\deepd3\DeepD3_32F_94nm.h5"
             iminfo = FileReader()        
 
             iminfo.read_imageFile(flim_path, True)

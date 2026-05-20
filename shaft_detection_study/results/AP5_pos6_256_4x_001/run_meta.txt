@@ -1,0 +1,4 @@
+flim=\\RY-LAB-WS04\ImagingData\Tetsuya\20260515\lowmags\AP5_pos6_256_4x_001.flim
+model=C:\Users\WatabeT\Documents\Git\DeepD3\deepd3\DeepD3_32F_94nm.h5
+n_combos=36
+timestamp=2026-05-17T16:50:21.570256
