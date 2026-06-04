@@ -668,7 +668,7 @@ def score_all_branch_segments(
     flim_path: str,
     *,
     min_branch_width_um: float = 0.6,
-    max_branch_width_um: float = 1.0,
+    max_branch_width_um: float = 1.3,
     min_branch_length_um: float = 20.0,
     segment_length_um: float = 15.0,
     max_branches: int = 20,

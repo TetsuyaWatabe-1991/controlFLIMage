@@ -41,7 +41,7 @@ from gui_integration import (
     process_uncaging_positions,
 )
 from file_selection_gui_tiff_only import launch_file_selection_gui_tiff_only
-from simple_dialog import ask_yes_no_gui, ask_open_path_gui, ask_save_path_gui
+from simple_dialog import ask_yes_no_gui, ask_open_path_gui
 
 # -----------------------------------------------------------------------------
 # TEST CONFIG: fixed path, no predefined df, no dialogs
@@ -1385,12 +1385,7 @@ def run_tiff_uncaging_roi(
                 import traceback
                 traceback.print_exc()
                 raise
-        
-            df_save_path_1 = ask_save_path_gui()
-            if df_save_path_1 and (df_save_path_1[-4:] != ".pkl"):
-                df_save_path_1 = df_save_path_1 + ".pkl"
-        else:
-            df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df_1.pkl")
+        print(f"Saving combined_df to: {df_save_path_1}")
         combined_df.to_pickle(df_save_path_1)
         combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
         print(f"Saved: {df_save_path_1}")
@@ -1600,11 +1595,7 @@ def run_tiff_uncaging_roi_no_zstack(
                 import traceback
                 traceback.print_exc()
                 raise
-        df_save_path_1 = ask_save_path_gui()
-        if df_save_path_1 and (df_save_path_1[-4:] != ".pkl"):
-            df_save_path_1 = df_save_path_1 + ".pkl"
-        else:
-            df_save_path_1 = os.path.join(os.path.dirname(one_of_filepath_list[0]), "combined_df_1.pkl")
+        print(f"Saving combined_df to: {df_save_path_1}")
         combined_df.to_pickle(df_save_path_1)
         combined_df.to_csv(df_save_path_1.replace(".pkl", ".csv"))
         print(f"Saved: {df_save_path_1}")
