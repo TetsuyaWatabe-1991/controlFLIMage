@@ -245,7 +245,7 @@ class Control_flimage():
         self.print_responses = debug_mode
         self.check_pulse_rate = True
         self.flim = FLIM_Com(debug_log_mode=self.debug_mode, debug_log_path=self.debug_log_path)
-        self._fast_connect_or_recover()
+        self.first_connect_check()
         self.flim.print_responses = self.print_responses
 
         if self.flim.Connected:
@@ -291,6 +291,31 @@ class Control_flimage():
         self.zoom = self.get_val_sendCommand('State.Acq.zoom')
         self.nSlices = self.get_val_sendCommand('State.Acq.nSlices')
         self.config_ini(ini_path)
+
+    def first_connect_check(self):
+        if self.flim.Connected==False:
+            self.reconnect()
+        print("first_connect_check")
+        for i in range(10):
+            Reply = self.flim.sendCommand("GetVersion")
+            if Reply is not None:
+                print(Reply)
+                if Reply.find("Version") == -1:
+                    print("Version not found")
+                    self.reconnect()
+                    continue
+                else:
+                    print("Version found")
+                    print("connect_check done, attempt ", i+1, " times")
+                    break
+                
+            else:
+                print("first_connect_check failed, attempt ", i+1, " times")
+                sleep(0.2)
+                self.reconnect()
+                continue
+        else:
+            raise Exception("first_connect_check failed 10 times")
 
     def xy_zoom1_setting(self):
         config = configparser.ConfigParser()
@@ -802,6 +827,7 @@ class Control_flimage():
         if self.flim.Connected==False:
             self.reconnect()
         first = True
+        print("flim_connect_check")
         while True:
             repeat_count = 0
             if self.check_pulse_rate == False:
@@ -1608,10 +1634,11 @@ if __name__ == "__main__":
         FLIMageCont.flim.sendCommand(f'SetDIOPanel, 1, 1')
     # FLIMageCont.flim.sendCommand('SetOverwriteWarningOff')
     # FLIMageCont.flim.sendCommand('StartLoop')
-    while True:
+    for i in range(10):
         res = FLIMageCont.flim.sendCommand("GetRelativeXYZ")
         print(res)
-        sleep(1)
+        sleep(0.5)
+    print("-"*20,"\n","done","\n","-"*20)
     # def get_realtime_value(FLIMageCont):
     #     res = FLIMageCont.flim.sendCommand("GetRealtimeValue")
     #     realtime_value = res.split(", ")[-1]

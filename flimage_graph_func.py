@@ -237,13 +237,14 @@ def plot_max_proj_uncaging(
         vmax = maxproj.max() * 0.7
     plt.imshow(maxproj, cmap = 'gray', vmin = 0, vmax = vmax)
     if show_uncaging:
-        plt.plot(center_x, center_y, marker, markersize=10)   
+        plt.plot(center_x, center_y, marker, markersize=10)
+
+    if use_default_savefolder:
         folder = os.path.dirname(each_file)
-        savefolder = os.path.join(folder,"plot_maxproj")
-        trimmed_savefolder = os.path.join(folder,"plot_maxproj_trimmed")
+        savefolder = os.path.join(folder, "plot_maxproj")
+        trimmed_savefolder = os.path.join(folder, "plot_maxproj_trimmed")
     else:
-        savefolder = savefolder
-        trimmed_savefolder = os.path.join(savefolder,"plot_maxproj_trimmed")
+        trimmed_savefolder = os.path.join(savefolder, "plot_maxproj_trimmed")
     os.makedirs(savefolder, exist_ok=True)
     os.makedirs(trimmed_savefolder, exist_ok=True)
     plt.axis('off')
