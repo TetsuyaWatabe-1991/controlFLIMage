@@ -1,0 +1,4 @@
+method,frame,time_sec,shift_z_px,shift_y_px,shift_x_px,shift_z_um,shift_y_um,shift_x_um
+01_traditional,0,0,0.0,0.0,0.0,0.0,0.0,0.0
+02_xy_z_split,0,0,0.0,0.0,0.0,0.0,0.0,0.0
+04_structure_laplacian,0,0,0.0,0.0,0.0,0.0,0.0,0.0

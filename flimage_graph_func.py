@@ -17,9 +17,10 @@ from scipy.ndimage import median_filter
 from FLIMageFileReader2 import FileReader
 from multidim_tiff_viewer import read_xyz_single
 import pandas as pd
+from utility.mpl_show import resolve_show
 plt.rcParams['image.interpolation'] = 'none'
 
-def plot_drift_from_drift_txt(drift_txt_path, show = True, savefig = False, savepath = ""):
+def plot_drift_from_drift_txt(drift_txt_path, show=None, savefig=False, savepath=""):
     if False:
         drift_txt_path = r"G:\ImagingData\Tetsuya\20250611\test2\lowmag1_001_highmag_001_drift.txt"
     df = pd.read_csv(drift_txt_path, sep = ",")
@@ -62,9 +63,9 @@ def plot_drift_from_drift_txt(drift_txt_path, show = True, savefig = False, save
         if savepath == "":
             savepath = os.path.join(os.path.dirname(drift_txt_path), "drift_plot.png")
         plt.savefig(savepath,dpi=300,bbox_inches='tight')        
-    if show==True:
-        plt.show()        
-    plt.close();plt.clf();plt.close("all");        
+    if resolve_show(show):
+        plt.show()
+    plt.close();plt.clf();plt.close("all");
 
 
 def color_fue(savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLIMage\ForUse",
@@ -210,7 +211,8 @@ def plot_max_proj_uncaging(
                     defined_uncaging_x_y_0to1 = [0, 0],
                     vmin = 0, vmax = 0,
                     return_vmax = False,
-                    marker = 'c.'
+                    marker = 'c.',
+                    show=None,
                     ):
     iminfo = FileReader()
     iminfo.read_imageFile(each_file, True) 
@@ -262,7 +264,10 @@ def plot_max_proj_uncaging(
     
     plt.savefig(savepath, dpi=150, bbox_inches = "tight", pad_inches = 0)
     print("maxproj_savepath ", savepath)
-    plt.show()
+    if resolve_show(show):
+        plt.show()
+    else:
+        plt.close()
 
     trim_side_length = 25
     # ylim = [min(maxproj.shape[0], center_y + trim_side_length),max(0, center_y - trim_side_length)]
@@ -288,7 +293,10 @@ def plot_max_proj_uncaging(
         trimmed_savepath = os.path.join(trimmed_savefolder, basename[:-5] + "_maxproj_trimmed.png")
         plt.savefig(trimmed_savepath, dpi=150, bbox_inches = "tight", pad_inches = 0)
         print("trimmed_maxproj_savepath ", trimmed_savepath)
-        plt.show()
+        if resolve_show(show):
+            plt.show()
+        else:
+            plt.close()
 
 
 def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0, 
@@ -296,7 +304,8 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
                     vmin = 1, vmax = 10, cmap='inferno', 
                     acceptable_image_shape_0th_list = [4,32, 33,34,55],
                     GCaMP_intensity_threshold = 0,
-                    plot_RFP_also = False):
+                    plot_RFP_also = False,
+                    show=None):
     uncaging_iminfo = FileReader()
     uncaging_iminfo.read_imageFile(each_file, True) 
     
@@ -353,7 +362,8 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
     savepath = os.path.join(savefolder, basename[:-5] + "_F_F0.png")
     plt.savefig(savepath, dpi=150, bbox_inches = "tight")
     print("F_F0_savepath ", savepath)
-    plt.show()
+    if resolve_show(show):
+        plt.show()
     plt.close(); plt.clf();plt.close("all");
     
     color_fue(savefolder = savefolder,
@@ -367,7 +377,8 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
         savepath = os.path.join(savefolder, basename[:-5] + "_RFP.png")
         plt.savefig(savepath, dpi=150, bbox_inches = "tight")
         print("RFP_savepath ", savepath)
-        plt.show()
+        if resolve_show(show):
+            plt.show()
         plt.close(); plt.clf();plt.close("all");
 
 

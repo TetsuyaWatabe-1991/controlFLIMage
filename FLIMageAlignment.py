@@ -10,10 +10,18 @@ from FLIMageFileReader2 import FileReader
 import matplotlib.pyplot as plt
 import numpy as np
 from skimage.registration import phase_cross_correlation
-from scipy.ndimage import fourier_shift
+from scipy.ndimage import fourier_shift, shift as ndimage_shift
 from scipy.signal import medfilt
 from datetime import datetime
 from skimage.transform import resize
+from utility.mpl_show import resolve_show
+
+# "roi_adjacent": ROI-local phase correlation + adjacent-frame cumulative (default)
+# "traditional": frame-0 reference + fourier_shift (legacy)
+DEFAULT_ALIGN_METHOD = "roi_adjacent"
+MOTOR_ALIGN_METHOD = "traditional"
+POST_ACQUISITION_ALIGN_METHOD = "roi_adjacent"
+DEFAULT_ROI_HALF_ZYX = (2, 30, 30)  # matches gui_integration.process_small_region
 
 def get_flimfile_list(one_file_path):
     # print(f"DEBUG: get_flimfile_list called with: {one_file_path}")
@@ -103,35 +111,224 @@ def fft_drift_3d(ref_array ,query_array,
     return aligned_array, shift
 
 
-def Align_3d_array(Tiff_MultiArray, MedianFilter = False, Ksize = 3):
-    shifts = []
-    Aligned_3d = []
-    
-    for NthTime in range(Tiff_MultiArray.shape[0]):    
-        aligned_array, shift = fft_drift_3d(Tiff_MultiArray[0],Tiff_MultiArray[NthTime],
-                                            MedianFilter, Ksize)
-        shifts.append(shift)
-        Aligned_3d.append(aligned_array)
-    # for plotting the xy shifts over time
-    shifts = np.array(shifts)
-    Aligned_3d_array = np.array(Aligned_3d)
-    return shifts, Aligned_3d_array
+def _apply_shift_array(array, shift, shift_mode="fourier"):
+    """Apply sub-pixel shift to a 2D or 3D array."""
+    if shift_mode == "fourier":
+        img_corr = fourier_shift(np.fft.fftn(array), shift)
+        return np.fft.ifftn(img_corr).real
+    if shift_mode == "constant":
+        return ndimage_shift(array, shift=shift, order=3, mode="constant", cval=0.0)
+    raise ValueError(f"Unknown shift_mode: {shift_mode}")
 
 
-def Align_4d_array(Tiff_MultiArray):
-    shifts = []
-    Aligned_4d = []
-    
-    for NthTime in range(Tiff_MultiArray.shape[0]):    
-        aligned_array, shift = fft_drift_3d(Tiff_MultiArray[0],Tiff_MultiArray[NthTime])
-        shifts.append(shift)
-        Aligned_4d.append(aligned_array)
-    # for plotting the xy shifts over time
-    shifts = np.array(shifts)
-    Aligned_4d_array = np.array(Aligned_4d)
-    return shifts, Aligned_4d_array
+def _estimate_shift_pcc(ref_array, query_array, MedianFilter=False, Ksize=3,
+                        upsample_factor=10):
+    if MedianFilter:
+        ref_for_corr = medfilt(ref_array, kernel_size=Ksize)
+        query_for_corr = medfilt(query_array, kernel_size=Ksize)
+    else:
+        ref_for_corr = ref_array
+        query_for_corr = query_array
+    shift, error, _ = phase_cross_correlation(
+        ref_for_corr, query_for_corr, upsample_factor=upsample_factor
+    )
+    return shift, error
 
-def align_two_flimfile(flim_1, flim_2, ch, return_pixel = False):
+
+def _crop_around_center(volume, center_zyx, half_zyx):
+    """Crop a ZYX (or YX) volume around center; return cropped volume."""
+    cz, cy, cx = center_zyx
+    hz, hy, hx = half_zyx
+    if volume.ndim == 2:
+        y0 = max(0, int(cy) - hy)
+        y1 = min(volume.shape[0], int(cy) + hy + 1)
+        x0 = max(0, int(cx) - hx)
+        x1 = min(volume.shape[1], int(cx) + hx + 1)
+        return volume[y0:y1, x0:x1]
+    z0 = max(0, int(cz) - hz)
+    z1 = min(volume.shape[0], int(cz) + hz + 1)
+    y0 = max(0, int(cy) - hy)
+    y1 = min(volume.shape[1], int(cy) + hy + 1)
+    x0 = max(0, int(cx) - hx)
+    x1 = min(volume.shape[2], int(cx) + hx + 1)
+    return volume[z0:z1, y0:y1, x0:x1]
+
+
+def _estimate_z_near_xy(volume_zyx, center_y, center_x, xy_radius=8):
+    """Pick Z index with peak intensity near (Y, X)."""
+    cy = int(np.clip(round(center_y), 0, volume_zyx.shape[1] - 1))
+    cx = int(np.clip(round(center_x), 0, volume_zyx.shape[2] - 1))
+    y0 = max(0, cy - xy_radius)
+    y1 = min(volume_zyx.shape[1], cy + xy_radius + 1)
+    x0 = max(0, cx - xy_radius)
+    x1 = min(volume_zyx.shape[2], cx + xy_radius + 1)
+    z_profile = volume_zyx[:, y0:y1, x0:x1].max(axis=(1, 2))
+    return int(np.argmax(z_profile))
+
+
+def roi_center_from_iminfo(first_volume, iminfo):
+    """
+    Build ROI center (Z, Y, X) from uncaging metadata.
+
+    Returns None if uncaging position is unavailable.
+    """
+    statedict = getattr(iminfo, "statedict", None)
+    if not statedict or "State.Uncaging.Position" not in statedict:
+        return None
+    pos = statedict["State.Uncaging.Position"]
+    if pos is None or len(pos) < 2:
+        return None
+    x_pix = statedict["State.Acq.pixelsPerLine"]
+    y_pix = statedict["State.Acq.linesPerFrame"]
+    center_x = float(x_pix * pos[0])
+    center_y = float(y_pix * pos[1])
+    if first_volume.ndim == 3:
+        center_z = _estimate_z_near_xy(first_volume, center_y, center_x)
+    else:
+        center_z = 0
+    return (center_z, int(round(center_y)), int(round(center_x)))
+
+
+def _volume_center(volume):
+    if volume.ndim == 2:
+        return (0, volume.shape[0] // 2, volume.shape[1] // 2)
+    return (volume.shape[0] // 2, volume.shape[1] // 2, volume.shape[2] // 2)
+
+
+def _resolve_roi_center(first_volume, roi_center_zyx=None, iminfo=None):
+    if roi_center_zyx is not None:
+        return tuple(roi_center_zyx)
+    if iminfo is not None:
+        center = roi_center_from_iminfo(first_volume, iminfo)
+        if center is not None:
+            return center
+    return None
+
+
+def _scale_roi_center_zyx(
+    center_zyx: tuple[int, int, int],
+    orig_shape_zyx: tuple[int, int, int],
+    new_shape_zyx: tuple[int, int, int],
+) -> tuple[int, int, int]:
+    """Map an ROI center from original ZYX shape to a resized volume."""
+    cz, cy, cx = center_zyx
+    oz, oy, ox = orig_shape_zyx
+    nz, ny, nx = new_shape_zyx
+    return (
+        int(np.clip(round(cz * nz / max(oz, 1)), 0, max(nz - 1, 0))),
+        int(np.clip(round(cy * ny / max(oy, 1)), 0, max(ny - 1, 0))),
+        int(np.clip(round(cx * nx / max(ox, 1)), 0, max(nx - 1, 0))),
+    )
+
+
+def _align_stack(
+    Tiff_MultiArray,
+    *,
+    method=DEFAULT_ALIGN_METHOD,
+    roi_center_zyx=None,
+    roi_half_zyx=DEFAULT_ROI_HALF_ZYX,
+    iminfo=None,
+    MedianFilter=False,
+    Ksize=3,
+    upsample_factor=10,
+):
+    """
+    Align a time-series stack (T, Z, Y, X) or (T, Y, X).
+
+    method:
+      - "roi_adjacent": adjacent-frame cumulative shifts (default)
+      - "traditional": frame-0 reference with fourier_shift
+    """
+    n_time = Tiff_MultiArray.shape[0]
+    first_vol = Tiff_MultiArray[0]
+    shifts = np.zeros((n_time, len(first_vol.shape)), dtype=np.float64)
+
+    if method == "traditional":
+        for t in range(n_time):
+            _, shift = fft_drift_3d(
+                first_vol, Tiff_MultiArray[t], MedianFilter, Ksize
+            )
+            shifts[t] = np.asarray(shift, dtype=np.float64)
+        aligned = np.array([
+            _apply_shift_array(Tiff_MultiArray[t], tuple(shifts[t]), "fourier")
+            for t in range(n_time)
+        ])
+        return shifts, aligned
+
+    if method != "roi_adjacent":
+        raise ValueError(
+            f"Unknown alignment method: {method}. "
+            "Use 'roi_adjacent' or 'traditional'."
+        )
+
+    roi_center = _resolve_roi_center(first_vol, roi_center_zyx, iminfo)
+    use_roi = roi_center is not None
+
+    for t in range(1, n_time):
+        ref_vol = Tiff_MultiArray[t - 1]
+        query_vol = Tiff_MultiArray[t]
+        if use_roi:
+            ref_vol = _crop_around_center(ref_vol, roi_center, roi_half_zyx)
+            query_vol = _crop_around_center(query_vol, roi_center, roi_half_zyx)
+        delta, _ = _estimate_shift_pcc(
+            ref_vol, query_vol,
+            MedianFilter=MedianFilter,
+            Ksize=Ksize,
+            upsample_factor=upsample_factor,
+        )
+        shifts[t] = shifts[t - 1] + np.asarray(delta, dtype=np.float64)
+
+    aligned = np.array([
+        _apply_shift_array(Tiff_MultiArray[t], tuple(shifts[t]), "constant")
+        for t in range(n_time)
+    ])
+    return shifts, aligned
+
+
+def Align_3d_array(
+    Tiff_MultiArray,
+    MedianFilter=False,
+    Ksize=3,
+    method=DEFAULT_ALIGN_METHOD,
+    roi_center_zyx=None,
+    roi_half_zyx=DEFAULT_ROI_HALF_ZYX,
+    iminfo=None,
+    upsample_factor=10,
+):
+    return _align_stack(
+        Tiff_MultiArray,
+        method=method,
+        roi_center_zyx=roi_center_zyx,
+        roi_half_zyx=roi_half_zyx,
+        iminfo=iminfo,
+        MedianFilter=MedianFilter,
+        Ksize=Ksize,
+        upsample_factor=upsample_factor,
+    )
+
+
+def Align_4d_array(
+    Tiff_MultiArray,
+    method=DEFAULT_ALIGN_METHOD,
+    roi_center_zyx=None,
+    roi_half_zyx=DEFAULT_ROI_HALF_ZYX,
+    iminfo=None,
+    MedianFilter=False,
+    Ksize=3,
+    upsample_factor=10,
+):
+    return _align_stack(
+        Tiff_MultiArray,
+        method=method,
+        roi_center_zyx=roi_center_zyx,
+        roi_half_zyx=roi_half_zyx,
+        iminfo=iminfo,
+        MedianFilter=MedianFilter,
+        Ksize=Ksize,
+        upsample_factor=upsample_factor,
+    )
+
+def align_two_flimfile(flim_1, flim_2, ch, return_pixel=False, method=DEFAULT_ALIGN_METHOD):
     if False:
         filelist = [r"G:\ImagingData\Tetsuya\20250511\2ndslice\lowmag2__highmag_6_002.flim",
                     r"G:\ImagingData\Tetsuya\20250511\2ndslice\lowmag2__highmag_6_040.flim"]
@@ -140,7 +337,9 @@ def align_two_flimfile(flim_1, flim_2, ch, return_pixel = False):
     filelist = [flim_1, flim_2]
     print("filelist", filelist)
     Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(filelist,ch=ch)
-    shifts_zyx_pixel, Aligned_4d_array = Align_4d_array(Tiff_MultiArray)
+    shifts_zyx_pixel, Aligned_4d_array = Align_4d_array(
+        Tiff_MultiArray, iminfo=iminfo, method=method
+    )
     # print(shifts_zyx_pixel)
     x_um, y_um, z_um = get_xyz_pixel_um(iminfo)
     
@@ -154,7 +353,16 @@ def align_two_flimfile(flim_1, flim_2, ch, return_pixel = False):
         return [z_relative, y_relative, x_relative], Aligned_4d_array
 
 
-def align_two_flimfile_different_resolution(flim_1, flim_2, ch, return_pixel = False, debug = False, save_img = False):    
+def align_two_flimfile_different_resolution(
+    flim_1,
+    flim_2,
+    ch,
+    return_pixel=False,
+    debug=False,
+    save_img=False,
+    show=None,
+    method=DEFAULT_ALIGN_METHOD,
+):    
     Tiff_MultiArray_1, iminfo_1, _ = flim_files_to_nparray([flim_1],ch=ch)
     Tiff_MultiArray_2, iminfo_2, _ = flim_files_to_nparray([flim_2],ch=ch)
     threeD_array_1 = Tiff_MultiArray_1[0]
@@ -164,12 +372,30 @@ def align_two_flimfile_different_resolution(flim_1, flim_2, ch, return_pixel = F
     lower_y_dim = min(threeD_array_1.shape[1],threeD_array_2.shape[1])
     lower_z_dim = min(threeD_array_1.shape[0],threeD_array_2.shape[0])
     
-    resized_array1 = resize(threeD_array_1, (11, lower_y_dim, lower_x_dim), anti_aliasing=False)
-    resized_array2 = resize(threeD_array_2, (11, lower_y_dim, lower_x_dim), anti_aliasing=False)
+    resized_array1 = resize(
+        threeD_array_1, (lower_z_dim, lower_y_dim, lower_x_dim), anti_aliasing=False
+    )
+    resized_array2 = resize(
+        threeD_array_2, (lower_z_dim, lower_y_dim, lower_x_dim), anti_aliasing=False
+    )
 
+    resized_shape = (lower_z_dim, lower_y_dim, lower_x_dim)
+    roi_center_scaled = None
+    raw_center = _resolve_roi_center(threeD_array_1, iminfo=iminfo_1)
+    if raw_center is not None:
+        roi_center_scaled = _scale_roi_center_zyx(
+            raw_center,
+            threeD_array_1.shape,
+            resized_shape,
+        )
 
-    Tiff_MultiArray = np.array([resized_array1,resized_array2])
-    shifts_zyx_pixel, Aligned_4d_array = Align_4d_array(Tiff_MultiArray)
+    Tiff_MultiArray = np.array([resized_array1, resized_array2])
+    shifts_zyx_pixel, Aligned_4d_array = Align_4d_array(
+        Tiff_MultiArray,
+        method=method,
+        iminfo=None,
+        roi_center_zyx=roi_center_scaled,
+    )
     # print(shifts_zyx_pixel)
     x_um_1, y_um_1, z_um_1 = get_xyz_pixel_um(iminfo_1)
     x_um_2, y_um_2, z_um_2 = get_xyz_pixel_um(iminfo_2)
@@ -216,7 +442,10 @@ def align_two_flimfile_different_resolution(flim_1, flim_2, ch, return_pixel = F
             save_basename = os.path.basename(flim_2)[:-5]
             plt.savefig(os.path.join(dir_name, save_basename + "_for_align.png"), dpi = 72, bbox_inches = 'tight')
             print(f"Saved alignment image to {os.path.join(dir_name, save_basename + '_for_align.png')}")
-        plt.show()
+        if resolve_show(show):
+            plt.show()
+        else:
+            plt.close()
 
 
     if return_pixel == True:

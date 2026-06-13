@@ -1,7 +1,7 @@
 ﻿# FLIMage pipe GUI settings (auto-saved next to the .ps1 script)
 # Filter.P1..P6 and Objective.P1..P6 are turret position labels
 LastVelocity=8100
-ActivePreset=Coarse
+ActivePreset=Mid
 NumpadJogEnabled=true
 JogKeyLayout=Numpad
 RoeComPort=COM7

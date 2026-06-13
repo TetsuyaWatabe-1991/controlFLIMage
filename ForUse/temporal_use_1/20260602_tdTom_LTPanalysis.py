@@ -22,7 +22,12 @@ ch_1or2 =2
 group_header_dict = {
     # "0319_25deep": "deep_neuron",
     # "pos": "Mg",
-    "": "Control",
+    "1_": "genegun",
+    "2_": "genegun",
+    "4_": "genegun",
+    "5_": "AAV",
+    "7_": "AAV",
+    "8_": "AAV",
     # "pos3": "Mg",
     # "pos5": "Mg",
     # "AP5_pos6": "AP5",
@@ -52,11 +57,11 @@ def group_header_file_tag(header_list):
 group_header_combined = build_group_header_combined(group_header_dict)
 
 
-acquisiton_start_datetime_str = "2026-05-21T15:00:00.000"
+acquisiton_start_datetime_str = "2026-06-01T21:00:00.000"
 # df_save_path_1 = r"G:/ImagingData/Tetsuya/20260515/auto1\combined_df_1.pkl"
 # out_csv_path = r"G:/ImagingData/Tetsuya/20260515/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
-df_save_path_1 = r"G:/ImagingData/Tetsuya/20260521/auto1\combined_df_1.pkl"
-out_csv_path = r"G:/ImagingData/Tetsuya/20260521/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
+df_save_path_1 = r"G:/ImagingData/Tetsuya/20260601/auto1\combined_df_1.pkl"
+out_csv_path = r"G:/ImagingData/Tetsuya/20260601/auto1\combined_df_1_intensity_lifetime_all_frames.csv"
 
 #%% parameters usually common to all files
 powermeter_folder= r"//RY-LAB-WS04/Users/yasudalab/Documents/Tetsuya_Imaging/powermeter"

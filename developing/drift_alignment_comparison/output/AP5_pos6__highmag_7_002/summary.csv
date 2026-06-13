@@ -1,0 +1,4 @@
+method,mse_maxproj_vs_ref,final_drift_z_um,final_drift_y_um,final_drift_x_um
+04_structure_laplacian,289.7599285817691,0.1,-0.701318359375,-0.013330078125
+01_traditional,306.21644025709344,0.0,-0.5623779296875,0.0333251953125
+02_xy_z_split,329.2675770882594,0.2,-0.674853515625,0.0

@@ -16,8 +16,17 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+from scipy import ndimage as ndi
+from scipy.ndimage import label as ndimage_label
+from scipy.stats import percentileofscore
+from skimage.draw import polygon
+from skimage.measure import find_contours, regionprops
+from skimage.morphology import binary_closing, binary_opening, disk
+from skimage.segmentation import watershed
 
 from deepd3_spine_head_detector import SpinePosDeepD3, resolve_savefolder
+from flimage_graph_func import calc_point_on_line_close_to_xy
 from FLIMageFileReader2 import FileReader
 from multidim_tiff_viewer import save_spine_dend_info, read_xyz_single
 
@@ -98,6 +107,8 @@ SKELETON_3D_FOR_ROI_PANEL = True
 # Per-mushroom spine files for run_multi_spine_manager: {base_name}_NNN.ini / .png
 SAVE_PER_SPINE_INI = False
 SAVE_PER_SPINE_PNG = SAVE_PER_SPINE_INI
+# Per-flim feature table: {base_name}_mushroom_features.csv
+SAVE_MUSHROOM_FEATURES_CSV = True
 
 
 def print_prediction_diagnostics(S):
@@ -295,20 +306,141 @@ def dedupe_mushrooms_by_xy(
     return kept
 
 
-def save_spine_overlay_png(mip_img, spine_zyx, dend_slope, dend_intercept,
-                           savepath, pix_size=512):
-    """Save MIP overlay PNG without opening an interactive window."""
-    fig, ax = plt.subplots(figsize=(4, 4))
-    ax.imshow(mip_img, cmap="gray")
-    ax.axis("off")
-    ax.scatter(spine_zyx[2], spine_zyx[1], c="r", s=4)
+def _dendrite_line_xy(mip_img, dend_slope, dend_intercept):
+    """Return x/y arrays for the fitted dendrite shaft line within image bounds."""
     dend_x, dend_y = [], []
     for x in range(1, mip_img.shape[1] - 1):
         y = dend_slope * x + dend_intercept
         if (1 < y) and (y < mip_img.shape[0] - 1):
             dend_x.append(x)
             dend_y.append(y)
-    ax.scatter(dend_x, dend_y, c="g", s=2)
+    return dend_x, dend_y
+
+
+SPINE_CONTOUR_SPINE_THRESHOLD = 0.15
+SPINE_CONTOUR_SHAFT_THRESHOLD = 0.10
+SPINE_CONTOUR_Z_HALF_WINDOW = 2
+SHAFT_ROI_RECT_LENGTH_PX = 10
+SHAFT_ROI_RECT_HEIGHT_PX = 2
+SHAFT_BIN_DENDRITE_THRESHOLD = SPINE_CONTOUR_SHAFT_THRESHOLD
+
+
+def _nearest_foreground_point(mask, y_pix, x_pix, max_radius=8):
+    """Return the closest foreground pixel to (y, x) within max_radius."""
+    ny, nx = mask.shape
+    best_dist = max_radius + 1
+    best_yx = None
+    y0 = max(0, y_pix - max_radius)
+    y1 = min(ny, y_pix + max_radius + 1)
+    x0 = max(0, x_pix - max_radius)
+    x1 = min(nx, x_pix + max_radius + 1)
+    for yy in range(y0, y1):
+        for xx in range(x0, x1):
+            if not mask[yy, xx]:
+                continue
+            dist = np.hypot(yy - y_pix, xx - x_pix)
+            if dist < best_dist:
+                best_dist = dist
+                best_yx = (yy, xx)
+    return best_yx
+
+
+def _spine_full_mask_2d_from_prediction(
+    spine_prediction,
+    dendrite_prediction,
+    spine_zyx,
+    *,
+    spine_threshold=SPINE_CONTOUR_SPINE_THRESHOLD,
+    shaft_threshold=SPINE_CONTOUR_SHAFT_THRESHOLD,
+    z_half_window=SPINE_CONTOUR_Z_HALF_WINDOW,
+):
+    """
+    Segment one full spine (head + neck) from DeepD3 prediction maps.
+
+    Uses the same spine-minus-shaft + watershed strategy as
+    gui_roi_analysis/make_spine_roi_based_on_deepd3.py, but keeps only the
+    watershed basin seeded at the detected head position.
+    """
+    z_pix = int(round(spine_zyx[0]))
+    y_pix = int(round(spine_zyx[1]))
+    x_pix = int(round(spine_zyx[2]))
+    spine_prediction = np.asarray(spine_prediction)
+    dendrite_prediction = np.asarray(dendrite_prediction)
+    ny, nx = spine_prediction.shape[1], spine_prediction.shape[2]
+    empty = np.zeros((ny, nx), dtype=bool)
+
+    if not (0 <= y_pix < ny and 0 <= x_pix < nx):
+        return empty
+
+    z0 = max(0, z_pix - z_half_window)
+    z1 = min(spine_prediction.shape[0], z_pix + z_half_window + 1)
+    spine_mip = np.max(spine_prediction[z0:z1], axis=0)
+    shaft_mip = np.max(dendrite_prediction[z0:z1], axis=0)
+
+    spine_mask = spine_mip > spine_threshold
+    shaft_mask = shaft_mip > shaft_threshold
+    spine_mask = binary_closing(binary_opening(spine_mask, disk(1)), disk(2))
+    shaft_mask = binary_closing(binary_opening(shaft_mask, disk(1)), disk(2))
+    spine_minus_shaft = spine_mask & ~shaft_mask
+    if not spine_minus_shaft.any():
+        return empty
+
+    seed_y, seed_x = y_pix, x_pix
+    if not spine_minus_shaft[seed_y, seed_x]:
+        nearest = _nearest_foreground_point(spine_minus_shaft, y_pix, x_pix)
+        if nearest is None:
+            return empty
+        seed_y, seed_x = nearest
+
+    distance = ndi.distance_transform_edt(spine_minus_shaft)
+    markers = np.zeros(spine_minus_shaft.shape, dtype=np.int32)
+    markers[seed_y, seed_x] = 1
+    spine_seg = watershed(
+        -distance,
+        markers,
+        mask=spine_minus_shaft,
+        connectivity=2,
+        compactness=0,
+    )
+    return spine_seg == 1
+
+
+def save_spine_overlay_png(
+    mip_img,
+    spine_zyx,
+    dend_slope,
+    dend_intercept,
+    savepath,
+    pix_size=512,
+    spine_prediction=None,
+    dendrite_prediction=None,
+):
+    """
+    Save a side-by-side PNG: raw MIP | MIP with shaft line, head, and spine contour.
+
+    Left panel: raw MIP only.
+    Right panel: MIP + green dendrite line + red head + cyan full-spine outline.
+    """
+    fig, axs = plt.subplots(1, 2, figsize=(8, 4))
+
+    for ax in axs:
+        ax.imshow(mip_img, cmap="gray")
+        ax.axis("off")
+
+    dend_x, dend_y = _dendrite_line_xy(mip_img, dend_slope, dend_intercept)
+    axs[1].scatter(dend_x, dend_y, c="g", s=2)
+    axs[1].scatter(spine_zyx[2], spine_zyx[1], c="r", s=4)
+
+    if spine_prediction is not None and dendrite_prediction is not None:
+        mask_2d = _spine_full_mask_2d_from_prediction(
+            spine_prediction,
+            dendrite_prediction,
+            spine_zyx,
+        )
+        if mask_2d.any():
+            for contour in find_contours(mask_2d.astype(np.float32), 0.5):
+                axs[1].plot(contour[:, 1], contour[:, 0], c="c", lw=0.8)
+
     fig.savefig(
         savepath,
         bbox_inches="tight",
@@ -316,6 +448,355 @@ def save_spine_overlay_png(mip_img, spine_zyx, dend_slope, dend_intercept,
         dpi=int(pix_size / 4 * 1.3264),
     )
     plt.close(fig)
+
+
+def _prefix_dict(data: dict, prefix: str) -> dict:
+    return {f"{prefix}_{key}": value for key, value in data.items()}
+
+
+def _shaft_rectangle_mask_2d(
+    head_x: float,
+    head_y: float,
+    dend_slope: float,
+    dend_intercept: float,
+    image_shape: tuple[int, int],
+    rect_length: float = SHAFT_ROI_RECT_LENGTH_PX,
+    rect_height: float = SHAFT_ROI_RECT_HEIGHT_PX,
+) -> tuple[np.ndarray, float, float]:
+    """DendriticShaft-style rectangle on the fitted dendrite line (calc_spine_dend_GCaMP)."""
+    y_c, x_c = calc_point_on_line_close_to_xy(head_x, head_y, dend_slope, dend_intercept)
+    theta = np.arctan(dend_slope)
+    dx = (rect_length / 2) * np.cos(theta)
+    dy = (rect_length / 2) * np.sin(theta)
+    px = (rect_height / 2) * -np.sin(theta)
+    py = (rect_height / 2) * np.cos(theta)
+    corners_x = [x_c - dx - px, x_c - dx + px, x_c + dx + px, x_c + dx - px]
+    corners_y = [y_c - dy - py, y_c - dy + py, y_c + dy + py, y_c + dy - py]
+    rr_rect, cc_rect = polygon(corners_y, corners_x, shape=image_shape)
+    mask = np.zeros(image_shape, dtype=bool)
+    mask[rr_rect, cc_rect] = True
+    return mask, float(y_c), float(x_c)
+
+
+def _shaft_binary_mask_from_prediction(
+    dendrite_prediction: np.ndarray,
+    shaft_rect_mask: np.ndarray,
+    z_pix: int,
+    *,
+    dendrite_threshold: float = SHAFT_BIN_DENDRITE_THRESHOLD,
+    exclude_mask: np.ndarray | None = None,
+    z_half_window: int = SPINE_CONTOUR_Z_HALF_WINDOW,
+) -> np.ndarray:
+    """Binarized dendrite prediction within the shaft rectangle, excluding spine if given."""
+    z0 = max(0, z_pix - z_half_window)
+    z1 = min(dendrite_prediction.shape[0], z_pix + z_half_window + 1)
+    dend_mip = np.max(np.asarray(dendrite_prediction)[z0:z1], axis=0)
+    mask = (dend_mip >= dendrite_threshold) & shaft_rect_mask
+    if exclude_mask is not None:
+        mask &= ~np.asarray(exclude_mask, dtype=bool)
+    if not mask.any():
+        return mask
+
+    labeled, n_labels = ndimage_label(mask)
+    if n_labels <= 1:
+        return mask
+
+    # Keep the connected component with the largest overlap inside the shaft rectangle.
+    best_label = 1 + int(np.argmax([np.sum(labeled == i) for i in range(1, n_labels + 1)]))
+    return labeled == best_label
+
+
+def _mask_raw_intensity_stats(mip_img: np.ndarray, mask_2d: np.ndarray) -> dict:
+    """Raw-image intensity stats and whole-image percentile rank of the mask mean."""
+    if not mask_2d.any():
+        return {}
+
+    vals = np.asarray(mip_img)[mask_2d].astype(np.float64)
+    mean_val = float(vals.mean())
+    image_vals = np.asarray(mip_img, dtype=np.float64).ravel()
+    return {
+        "raw_intensity_mean": mean_val,
+        "raw_intensity_median": float(np.median(vals)),
+        "raw_intensity_std": float(vals.std()),
+        "raw_intensity_max": float(vals.max()),
+        "raw_intensity_percentile_image": float(
+            percentileofscore(image_vals, mean_val, kind="weak")
+        ),
+    }
+
+
+def _prediction_stats_in_mask_simple(
+    spine_mip: np.ndarray,
+    dend_mip: np.ndarray,
+    mask_2d: np.ndarray,
+) -> dict:
+    if not mask_2d.any():
+        return {}
+    spine_vals = spine_mip[mask_2d]
+    dend_vals = dend_mip[mask_2d]
+    return {
+        "spine_pred_mean": float(spine_vals.mean()),
+        "spine_pred_max": float(spine_vals.max()),
+        "dendrite_pred_mean": float(dend_vals.mean()),
+        "dendrite_pred_max": float(dend_vals.max()),
+    }
+
+
+def _skeleton_branch_length_um(neighborhood_points, xy_pixel_um: float, z_pixel_um: float) -> float:
+    """Polyline length of the local dendrite skeleton branch paired to the spine."""
+    pts = np.asarray(neighborhood_points)
+    if pts.shape[0] < 2:
+        return 0.0
+    if pts.shape[1] == 3:
+        scaled = pts.astype(np.float64) * np.array([z_pixel_um, xy_pixel_um, xy_pixel_um])
+    else:
+        scaled = pts.astype(np.float64) * np.array([xy_pixel_um, xy_pixel_um])
+    diffs = np.diff(scaled, axis=0)
+    return float(np.sum(np.linalg.norm(diffs, axis=1)))
+
+
+def _regionprops_metrics(mask_2d: np.ndarray, xy_pixel_um: float, prefix: str = "seg") -> dict:
+    """Shape metrics from a 2D binary mask."""
+    labeled, n_labels = ndimage_label(mask_2d)
+    if n_labels < 1:
+        return {}
+
+    prop = regionprops(labeled)[0]
+    xy2 = xy_pixel_um ** 2
+    return {
+        f"{prefix}_area_px": int(prop.area),
+        f"{prefix}_area_um2": float(prop.area * xy2),
+        f"{prefix}_perimeter_px": float(prop.perimeter),
+        f"{prefix}_perimeter_um": float(prop.perimeter * xy_pixel_um),
+        f"{prefix}_major_axis_px": float(prop.major_axis_length),
+        f"{prefix}_major_axis_um": float(prop.major_axis_length * xy_pixel_um),
+        f"{prefix}_minor_axis_px": float(prop.minor_axis_length),
+        f"{prefix}_minor_axis_um": float(prop.minor_axis_length * xy_pixel_um),
+        f"{prefix}_equivalent_diameter_px": float(prop.equivalent_diameter_area),
+        f"{prefix}_equivalent_diameter_um": float(prop.equivalent_diameter_area * xy_pixel_um),
+        f"{prefix}_eccentricity": float(prop.eccentricity),
+        f"{prefix}_solidity": float(prop.solidity),
+        f"{prefix}_extent": float(prop.extent),
+        f"{prefix}_orientation_rad": float(prop.orientation),
+        f"{prefix}_bbox_min_row": int(prop.bbox[0]),
+        f"{prefix}_bbox_min_col": int(prop.bbox[1]),
+        f"{prefix}_bbox_max_row": int(prop.bbox[2]),
+        f"{prefix}_bbox_max_col": int(prop.bbox[3]),
+    }
+
+
+def _prediction_stats_in_mask(
+    spine_prediction: np.ndarray,
+    dendrite_prediction: np.ndarray,
+    mask_2d: np.ndarray,
+    z_pix: int,
+    z_half_window: int = SPINE_CONTOUR_Z_HALF_WINDOW,
+) -> dict:
+    """Spine/dendrite prediction statistics inside the segmented mask."""
+    if not mask_2d.any():
+        return {}
+
+    z0 = max(0, z_pix - z_half_window)
+    z1 = min(spine_prediction.shape[0], z_pix + z_half_window + 1)
+    spine_mip = np.max(spine_prediction[z0:z1], axis=0)
+    dend_mip = np.max(dendrite_prediction[z0:z1], axis=0)
+    spine_vals = spine_mip[mask_2d]
+    dend_vals = dend_mip[mask_2d]
+    return {
+        "seg_spine_pred_mean": float(spine_vals.mean()),
+        "seg_spine_pred_max": float(spine_vals.max()),
+        "seg_spine_pred_min": float(spine_vals.min()),
+        "seg_dendrite_pred_mean": float(dend_vals.mean()),
+        "seg_dendrite_pred_max": float(dend_vals.max()),
+    }
+
+
+def build_mushroom_spine_feature_row(
+    *,
+    flim_path: str,
+    base_name: str,
+    spine_index: int,
+    deepd3_label,
+    mushroom_info: dict,
+    outputs_context: dict,
+    xy_pixel_um: float,
+    z_pixel_um: float,
+    min_shaft_to_head_um: float,
+    n_roi_all: int,
+    n_uncaging_candidates: int,
+    n_mushroom_before_dedupe: int,
+    n_mushroom_after_dedupe: int,
+    detection_params: dict | None = None,
+    mip_img: np.ndarray | None = None,
+    png_path: str = "",
+    ini_path: str = "",
+) -> dict:
+    """Collect shape, distance, ROI, and prediction features for one mushroom spine."""
+    entry = mushroom_info["entry"]
+    label_key = str(deepd3_label)
+    prop_dict = outputs_context["prop_dict"]
+    cand_spines = outputs_context["cand_spines"]
+    roi_map = outputs_context["r"].roi_map
+    spine_prediction = outputs_context["S"].prediction[..., 1]
+    dendrite_prediction = outputs_context["S"].prediction[..., 0]
+
+    head_z = float(entry["z_pix"])
+    head_y = float(entry["centroid_y_pix"])
+    head_x = float(entry["centroid_x_pix"])
+    uncaging_y = float(entry.get("y_pix", head_y))
+    uncaging_x = float(entry.get("x_pix", head_x))
+    dend_slope, dend_intercept = dend_slope_intercept_from_neighborhood(
+        entry["neighborhood_points"]
+    )
+
+    row = {
+        "flim_path": flim_path,
+        "base_name": base_name,
+        "spine_index": int(spine_index),
+        "deepd3_label": label_key,
+        "png_path": png_path,
+        "ini_path": ini_path,
+        "xy_pixel_um": float(xy_pixel_um),
+        "z_pixel_um": float(z_pixel_um),
+        "min_shaft_to_head_um": float(min_shaft_to_head_um),
+        "n_roi_all": int(n_roi_all),
+        "n_uncaging_candidates": int(n_uncaging_candidates),
+        "n_mushroom_before_dedupe": int(n_mushroom_before_dedupe),
+        "n_mushroom_after_dedupe": int(n_mushroom_after_dedupe),
+        "head_z_pix": head_z,
+        "head_y_pix": head_y,
+        "head_x_pix": head_x,
+        "uncaging_y_pix": uncaging_y,
+        "uncaging_x_pix": uncaging_x,
+        "shaft_to_head_um": float(mushroom_info["shaft_to_head_um"]),
+        "head_to_uncaging_um": float(
+            np.hypot((head_x - uncaging_x) * xy_pixel_um, (head_y - uncaging_y) * xy_pixel_um)
+        ),
+        "dend_slope": float(dend_slope),
+        "dend_intercept": float(dend_intercept),
+        "shaft_orientation_rad": float(entry.get("orientation", np.nan)),
+        "trace_direction": float(entry.get("direction", np.nan)),
+        "floodfill_equivalent_diameter_px": float(
+            entry.get("equivalent_diameter_area", np.nan)
+        ),
+        "floodfill_equivalent_diameter_um": float(
+            entry.get("equivalent_diameter_area", np.nan) * xy_pixel_um
+        ),
+    }
+
+    if label_key in prop_dict:
+        prop = prop_dict[label_key]
+        row.update({
+            "floodfill_roi_num_pixels": int(prop["num_pixels"]),
+            "floodfill_roi_intensity_sum": float(prop["intensity"]),
+            "floodfill_roi_z_pix": float(prop["z"]),
+            "floodfill_roi_y_pix": float(prop["y"]),
+            "floodfill_roi_x_pix": float(prop["x"]),
+        })
+
+    label_id = int(label_key)
+    floodfill_mask_3d = np.asarray(roi_map) == label_id
+    row["floodfill_roi_voxels_3d"] = int(floodfill_mask_3d.sum())
+    row["floodfill_roi_proj_px_2d"] = int(np.any(floodfill_mask_3d, axis=0).sum())
+
+    if label_key in cand_spines.index:
+        cand = cand_spines.loc[label_key]
+        row["nearest_neighbor_distance_um"] = float(cand.get("distance_to_nearest", np.nan))
+        row["nearest_neighbor_label"] = str(cand.get("nearest_point_label", ""))
+
+    z_pix = int(round(head_z))
+    y_pix = int(round(head_y))
+    x_pix = int(round(head_x))
+    if (
+        0 <= z_pix < spine_prediction.shape[0]
+        and 0 <= y_pix < spine_prediction.shape[1]
+        and 0 <= x_pix < spine_prediction.shape[2]
+    ):
+        row["head_spine_pred"] = float(spine_prediction[z_pix, y_pix, x_pix])
+        row["head_dendrite_pred"] = float(dendrite_prediction[z_pix, y_pix, x_pix])
+
+    spine_zyx = [head_z, head_y, head_x]
+    seg_mask = _spine_full_mask_2d_from_prediction(
+        spine_prediction,
+        dendrite_prediction,
+        spine_zyx,
+    )
+    row["seg_mask_found"] = bool(seg_mask.any())
+    shape_metrics = _regionprops_metrics(seg_mask, xy_pixel_um)
+    row.update(shape_metrics)
+    if shape_metrics.get("seg_minor_axis_um", 0) > 0:
+        row["seg_aspect_ratio"] = float(
+            shape_metrics["seg_major_axis_um"] / shape_metrics["seg_minor_axis_um"]
+        )
+    row.update(
+        _prediction_stats_in_mask(
+            spine_prediction,
+            dendrite_prediction,
+            seg_mask,
+            z_pix,
+        )
+    )
+
+    image_shape = (spine_prediction.shape[1], spine_prediction.shape[2])
+    shaft_rect_mask, shaft_anchor_y, shaft_anchor_x = _shaft_rectangle_mask_2d(
+        head_x,
+        head_y,
+        dend_slope,
+        dend_intercept,
+        image_shape,
+    )
+    row["shaft_anchor_y_pix"] = shaft_anchor_y
+    row["shaft_anchor_x_pix"] = shaft_anchor_x
+    row["shaft_skeleton_branch_length_um"] = _skeleton_branch_length_um(
+        entry["neighborhood_points"],
+        xy_pixel_um,
+        z_pixel_um,
+    )
+    row.update(_regionprops_metrics(shaft_rect_mask, xy_pixel_um, prefix="shaft_roi"))
+    if row.get("shaft_roi_minor_axis_um", 0) > 0:
+        row["shaft_roi_aspect_ratio"] = float(
+            row["shaft_roi_major_axis_um"] / row["shaft_roi_minor_axis_um"]
+        )
+
+    z0 = max(0, z_pix - SPINE_CONTOUR_Z_HALF_WINDOW)
+    z1 = min(spine_prediction.shape[0], z_pix + SPINE_CONTOUR_Z_HALF_WINDOW + 1)
+    spine_mip = np.max(spine_prediction[z0:z1], axis=0)
+    dend_mip = np.max(dendrite_prediction[z0:z1], axis=0)
+
+    row.update(_prefix_dict(_prediction_stats_in_mask_simple(spine_mip, dend_mip, shaft_rect_mask), "shaft_roi"))
+    shaft_bin_mask = _shaft_binary_mask_from_prediction(
+        dendrite_prediction,
+        shaft_rect_mask,
+        z_pix,
+        exclude_mask=seg_mask if seg_mask.any() else None,
+    )
+    row["shaft_bin_mask_found"] = bool(shaft_bin_mask.any())
+    row.update(_regionprops_metrics(shaft_bin_mask, xy_pixel_um, prefix="shaft_bin"))
+    if row.get("shaft_bin_minor_axis_um", 0) > 0:
+        row["shaft_bin_aspect_ratio"] = float(
+            row["shaft_bin_major_axis_um"] / row["shaft_bin_minor_axis_um"]
+        )
+    row.update(_prefix_dict(_prediction_stats_in_mask_simple(spine_mip, dend_mip, shaft_bin_mask), "shaft_bin"))
+
+    if mip_img is not None:
+        row.update(_prefix_dict(_mask_raw_intensity_stats(mip_img, shaft_rect_mask), "shaft_roi"))
+        row.update(_prefix_dict(_mask_raw_intensity_stats(mip_img, shaft_bin_mask), "shaft_bin"))
+
+    if detection_params:
+        for key, value in detection_params.items():
+            row[f"param_{key}"] = value
+    return row
+
+
+def save_mushroom_features_csv(savefolder: str, base_name: str, feature_rows: list[dict]) -> str:
+    """Write per-flim mushroom feature table to CSV."""
+    if not feature_rows:
+        return ""
+    df = pd.DataFrame(feature_rows)
+    out_path = os.path.join(savefolder, f"{base_name}_mushroom_features.csv")
+    df.to_csv(out_path, index=False, encoding="utf-8")
+    print(f"  saved mushroom features CSV ({len(df)} rows): {out_path}")
+    return out_path
 
 
 def get_next_ini_indices(savefolder, base_name, count):
@@ -435,7 +916,8 @@ def loop_mushroom_spine_assign_save(
 ):
     first_flim_list = get_first_flim_list(highmag_folder, highmag_filename)
     first_flim_list = [
-        f for f in first_flim_list if "for_align" not in f
+        f for f in first_flim_list
+        if not os.path.basename(f).lower().startswith(("for_align", "for_aling"))
     ]
     first_flim_list = sorted(
         first_flim_list,
@@ -565,34 +1047,58 @@ def loop_mushroom_spine_assign_save(
                     f"({len(mushroom_result_dict)} mushroom marker(s) on MIP)"
                 )
 
+        z_pixel_um = spine_assign.params["z_pixel_um"]
+        n_mushroom_after_dedupe = len(mushrooms)
+
         if not mushrooms:
             print("  no mushroom spines detected")
             summary_rows.append({
                 "flim_path": flim_path,
-                "n_detected": len(result_dict),
+                "n_roi_all": len(outputs_context["prop_dict"]),
+                "n_uncaging_candidates": len(result_dict),
                 "n_mushroom_detected": 0,
                 "n_mushroom_saved": 0,
             })
             continue
 
-        if not save_per_spine_ini and not save_per_spine_png:
-            print(
-                f"  {len(mushrooms)} mushroom(s) detected; "
-                "per-spine ini/png skipped (SAVE_PER_SPINE_* = False)"
-            )
-            summary_rows.append({
-                "flim_path": flim_path,
-                "n_detected": len(result_dict),
-                "n_mushroom_detected": len(mushrooms),
-                "n_mushroom_saved": 0,
-            })
-            continue
-
-        ini_indices = get_next_ini_indices(savefolder, base_name, len(mushrooms))
+        ini_indices = (
+            get_next_ini_indices(savefolder, base_name, len(mushrooms))
+            if save_per_spine_ini
+            else list(range(len(mushrooms)))
+        )
         saved_inipaths = []
         n_saved = 0
+        feature_rows = []
+        detection_params = {
+            key: spine_assign.params.get(key)
+            for key in (
+                "roi_mode",
+                "roi_peakThreshold",
+                "roi_areaThreshold",
+                "roi_seedDelta",
+                "roi_distanceToSeed",
+                "min_roi_size",
+                "max_roi_size",
+                "min_planes",
+                "dendrite_skeleton_threshold",
+                "max_dist_spine_dend_um",
+                "use_local_z_mip",
+                "local_z_mip_radius",
+                "stack_preprocess",
+                "enhance_thin_branches",
+            )
+        }
+        detection_params["seg_spine_threshold"] = SPINE_CONTOUR_SPINE_THRESHOLD
+        detection_params["seg_shaft_threshold"] = SPINE_CONTOUR_SHAFT_THRESHOLD
+        detection_params["seg_z_half_window"] = SPINE_CONTOUR_Z_HALF_WINDOW
+        detection_params["shaft_roi_rect_length_px"] = SHAFT_ROI_RECT_LENGTH_PX
+        detection_params["shaft_roi_rect_height_px"] = SHAFT_ROI_RECT_HEIGHT_PX
+        detection_params["shaft_bin_dendrite_threshold"] = SHAFT_BIN_DENDRITE_THRESHOLD
+        detection_params["dedupe_mushroom_xy_sep_um"] = dedupe_mushroom_xy_sep_um
 
-        for idx, (label, mushroom_info) in zip(ini_indices, mushrooms.items()):
+        for spine_idx, ((label, mushroom_info), ini_idx) in enumerate(
+            zip(mushrooms.items(), ini_indices)
+        ):
             entry = mushroom_info["entry"]
             dist_um = mushroom_info["shaft_to_head_um"]
 
@@ -606,37 +1112,64 @@ def loop_mushroom_spine_assign_save(
             )
 
             inipath = os.path.join(
-                savefolder, f"{base_name}_{str(idx).zfill(3)}.ini"
+                savefolder, f"{base_name}_{str(ini_idx).zfill(3)}.ini"
             )
             pngpath = inipath[:-4] + ".png"
             saved_parts = []
 
             if save_per_spine_png:
                 save_spine_overlay_png(
-                    mip_img, spine_zyx, dend_slope, dend_intercept, savepath=pngpath
+                    mip_img,
+                    spine_zyx,
+                    dend_slope,
+                    dend_intercept,
+                    savepath=pngpath,
+                    spine_prediction=outputs_context["S"].prediction[..., 1],
+                    dendrite_prediction=outputs_context["S"].prediction[..., 0],
                 )
                 saved_parts.append("png")
             if save_per_spine_ini:
                 save_spine_dend_info(spine_zyx, dend_slope, dend_intercept, inipath)
                 saved_inipaths.append(inipath)
                 saved_parts.append("ini")
-            n_saved += 1
+            if saved_parts:
+                n_saved += 1
+                print(
+                    f"  saved mushroom {','.join(saved_parts)} "
+                    f"{os.path.basename(inipath if save_per_spine_ini else pngpath)} "
+                    f"(DeepD3 label {label}, shaft-to-head XY {dist_um:.3f} um)"
+                )
 
-            print(
-                f"  saved mushroom {','.join(saved_parts)} "
-                f"{os.path.basename(inipath if save_per_spine_ini else pngpath)} "
-                f"(DeepD3 label {label}, shaft-to-head XY {dist_um:.3f} um)"
+            feature_row = build_mushroom_spine_feature_row(
+                flim_path=flim_path,
+                base_name=base_name,
+                spine_index=spine_idx,
+                deepd3_label=label,
+                mushroom_info=mushroom_info,
+                outputs_context=outputs_context,
+                xy_pixel_um=xy_pixel_um,
+                z_pixel_um=z_pixel_um,
+                min_shaft_to_head_um=min_shaft_to_head_um,
+                n_roi_all=len(outputs_context["prop_dict"]),
+                n_uncaging_candidates=len(result_dict),
+                n_mushroom_before_dedupe=n_mushroom_before_dedupe,
+                n_mushroom_after_dedupe=n_mushroom_after_dedupe,
+                detection_params=detection_params,
+                mip_img=mip_img,
+                png_path=pngpath if save_per_spine_png else "",
+                ini_path=inipath if save_per_spine_ini else "",
             )
-            summary_rows.append({
-                "flim_path": flim_path,
-                "ini_path": inipath if save_per_spine_ini else "",
-                "png_path": pngpath if save_per_spine_png else "",
-                "deepd3_label": label,
-                "shaft_to_head_um": dist_um,
-                "spine_z": spine_zyx[0],
-                "spine_y": spine_zyx[1],
-                "spine_x": spine_zyx[2],
-            })
+            feature_rows.append(feature_row)
+            summary_rows.append(feature_row)
+
+        if SAVE_MUSHROOM_FEATURES_CSV:
+            save_mushroom_features_csv(savefolder, base_name, feature_rows)
+
+        if not save_per_spine_ini and not save_per_spine_png:
+            print(
+                f"  {len(mushrooms)} mushroom(s) detected; "
+                "per-spine ini/png skipped (SAVE_PER_SPINE_* = False)"
+            )
 
         if save_per_spine_ini:
             issues = verify_outputs_for_spine_manager(
@@ -654,8 +1187,10 @@ def loop_mushroom_spine_assign_save(
                     f"{'/png pair(s)' if save_per_spine_png else '(s)'} for "
                     "run_multi_spine_manager"
                 )
-        else:
+        elif n_saved:
             print(f"  saved {n_saved} png(s); ini skipped (no verification)")
+        else:
+            print(f"  saved feature table for {len(feature_rows)} mushroom(s)")
 
     summary_csv = os.path.join(
         highmag_folder, "mushroom_spine_assign_summary.csv"

@@ -20,7 +20,7 @@ class Multiarea_from_lowmag():
     def __init__(self, lowmag_path,
                  rel_pos_um_csv_path,
                  high_mag_setting_path,
-                 high_mag_zoom = 16,
+                 high_mag_zoom=None,
                  ch_1or2 = 1,
                  preassigned_spine = False
                  ):
@@ -115,6 +115,43 @@ class Multiarea_from_lowmag():
         return counter
         # self.high_max_plus1_flim = os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"], 
                                               # f"{self.lowmag_basename}_highmag_{pos_id}_" + str(self.low_counter).zfill(3) + ".flim")
+
+    def first_highmag_flim_for_pos(self, pos_id) -> str:
+        folder = self.lowmag_iminfo.statedict["State.Files.pathName"]
+        pattern = os.path.join(
+            folder,
+            f"{self.lowmag_basename}_highmag_{pos_id}_[0-9][0-9][0-9].flim",
+        )
+        flims = sorted(glob.glob(pattern))
+        return flims[0] if flims else ""
+
+    @staticmethod
+    def zoom_from_flim(flim_path: str) -> float:
+        iminfo = FileReader()
+        iminfo.read_imageFile(flim_path, True)
+        return float(iminfo.statedict["State.Acq.zoom"])
+
+    def resolve_high_mag_zoom(self, pos_id) -> float:
+        ref_flim = self.first_highmag_flim_for_pos(pos_id)
+        if ref_flim:
+            zoom = self.zoom_from_flim(ref_flim)
+            print(
+                f"high_mag zoom from reference FLIM pos_id={pos_id}: "
+                f"{zoom} ({os.path.basename(ref_flim)})"
+            )
+            return zoom
+        if self.high_mag_zoom is not None:
+            print(
+                f"high_mag zoom from script setting pos_id={pos_id}: "
+                f"{self.high_mag_zoom}"
+            )
+            return float(self.high_mag_zoom)
+        raise ValueError(
+            f"No existing highmag FLIM for pos_id={pos_id} "
+            f"({self.lowmag_basename}_highmag_{pos_id}_*.flim) and high_mag_zoom "
+            "was not set. Set zoom_highmag in the acquisition script for the "
+            "first highmag acquisition."
+        )
         
     def send_lowmag_acq_info(self, FLIMageCont):
         FLIMageCont.flim.sendCommand(f'LoadSetting, {self.lowmag_path}')
@@ -130,7 +167,8 @@ class Multiarea_from_lowmag():
     def send_highmag_acq_info(self, FLIMageCont, pos_id, use_galvo = True):
         FLIMageCont.flim.sendCommand(f'LoadSetting, {self.high_mag_setting_path}')
         FLIMageCont.flim.sendCommand(f'State.Files.baseName = "{self.lowmag_basename}_highmag_{pos_id}_"')
-        FLIMageCont.flim.sendCommand(f'State.Acq.zoom = {self.high_mag_zoom}')      
+        zoom = self.resolve_high_mag_zoom(pos_id)
+        FLIMageCont.flim.sendCommand(f'State.Acq.zoom = {zoom}')
         counter = self.count_high_mag_flimfiles(pos_id = pos_id)
         FLIMageCont.flim.sendCommand(f'State.Files.fileCounter = {counter}')
         FLIMageCont.relative_zyx_um = [(-1)*self.high_mag_relpos_dict[pos_id]["z_um"],

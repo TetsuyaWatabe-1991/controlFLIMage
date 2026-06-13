@@ -771,7 +771,9 @@ class Control_flimage():
         print(filelist)
         # FileNum.append(int(flimlist[-1][-8:-5]))
         Tiff_MultiArray, iminfo, relative_sec_list = flim_files_to_nparray(filelist,ch=self.ch)
-        self.shifts_zyx_pixel, self.Aligned_4d_array=Align_4d_array(Tiff_MultiArray)
+        self.shifts_zyx_pixel, self.Aligned_4d_array=Align_4d_array(
+            Tiff_MultiArray, iminfo=iminfo
+        )
         self.x_um, self.y_um, self.z_um = get_xyz_pixel_um(iminfo)
         
         self.convert_shifts_pix_to_micro(self.shifts_zyx_pixel)

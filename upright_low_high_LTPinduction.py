@@ -21,8 +21,6 @@ acquisition_number = 30
 minutes_after_uncaging = 25
 
 ch_1or2 = 2
-zoom_highmag = 15
-
 lowmag_path_list = [        
 r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20250520\E4bufferMNI4Ca\lowmag1_001.flim",
 r"C:\Users\Yasudalab\Documents\Tetsuya_Imaging\20250520\E4bufferMNI4Ca\lowmag2_001.flim",
@@ -83,7 +81,6 @@ for nth_spine in range(12):
                 Each_lowmag_instance.update_pos_fromcurrent(FLIMageCont)                
                 for each_high_mag_id in Each_lowmag_instance.high_mag_relpos_dict:
                     Each_lowmag_instance.go_to_lowmag_center_pos(FLIMageCont)
-                    Each_lowmag_instance.high_mag_zoom = zoom_highmag
                     Each_lowmag_instance.send_highmag_acq_info(FLIMageCont, each_high_mag_id,
                                                                use_galvo = False)
                     FLIMageCont.set_param(RepeatNum = 1,
