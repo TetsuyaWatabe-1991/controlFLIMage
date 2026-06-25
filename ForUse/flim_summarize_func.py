@@ -5,9 +5,31 @@ Created on Sat Mar 28 15:44:15 2026
 @author: WatabeT
 """
 import sys
+from collections import defaultdict
+
 sys.path.append(r"..\..")
 import numpy as np
+import pandas as pd
 from typing import Any
+
+
+def build_group_header_combined(group_header_dict):
+    """Merge dict entries that share the same display name (each_header_name)."""
+    combined = defaultdict(list)
+    for each_header, each_header_name in group_header_dict.items():
+        combined[each_header_name].append(each_header)
+    return dict(combined)
+
+
+def df_matches_group_headers(df, header_list):
+    mask = pd.Series(False, index=df.index)
+    for each_header in header_list:
+        mask |= df["group"].str.contains(each_header, na=False)
+    return df[mask]
+
+
+def group_header_file_tag(header_list):
+    return "_".join(header_list)
 
 def add_uncaging_label_between_ylabel_and_axis(
     ax: Any,

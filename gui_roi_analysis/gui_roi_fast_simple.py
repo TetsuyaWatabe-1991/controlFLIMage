@@ -973,15 +973,17 @@ def _row_from_flim_data(
     z_plus_minus: int,
     each_set_label: int,
     each_group: int,
-    fitter: FLIMLifetimeFitter,
+    fitter: FLIMLifetimeFitter | None,
     sync_rate: float,
     photon_threshold: int,
     total_photon_threshold: int,
+    skip_lifetime_analysis: bool = False,
 ) -> dict:
     """
     Build one quantification row from FLIM imagearray (with bins).
     Pre/post: Z-proj over z_from:z_to; lifetime = fit on histogram summed over Z and ROI.
     Uncaging: single frame at frame_idx; lifetime = fit on histogram over ROI.
+    When skip_lifetime_analysis is True, only intensity is computed; total_photon and lifetime are NaN.
     """
     n_ave_frame = int(getattr(iminfo.State.Acq, "nAveFrame", 1))
     # intensity_raw = (12 * np.sum(imagearray, axis=-1)).astype(np.float64)
@@ -990,8 +992,9 @@ def _row_from_flim_data(
     intensity_raw = (np.sum(imagearray, axis=-1)).astype(np.float64)
 
     axis0_len, _, C, H, W = intensity_raw.shape
-    n_bins = imagearray.shape[5]
-    ps_per_unit = (10 ** 12) / sync_rate / n_bins
+    if not skip_lifetime_analysis:
+        n_bins = imagearray.shape[5]
+        ps_per_unit = (10 ** 12) / sync_rate / n_bins
 
     if phase in ("pre", "post"):
         z_from = max(0, min(corrected_uncaging_z - z_plus_minus, axis0_len - 1))
@@ -1022,11 +1025,13 @@ def _row_from_flim_data(
             continue
         if phase in ("pre", "post"):
             img = intensity_raw[z_from:z_to, 0, ch_idx, :, :].max(axis=0).astype(np.float32)
-            # For lifetime: sum bins over Z then (H,W,bins)
-            frame_bins = np.sum(imagearray[z_from:z_to, 0, ch_idx, :, :, :], axis=0).astype(np.float64)
+            if not skip_lifetime_analysis:
+                # For lifetime: sum bins over Z then (H,W,bins)
+                frame_bins = np.sum(imagearray[z_from:z_to, 0, ch_idx, :, :, :], axis=0).astype(np.float64)
         else:
             img = intensity_raw[frame_idx, 0, ch_idx, :, :].astype(np.float32)
-            frame_bins = np.array(imagearray[frame_idx, 0, ch_idx, :, :, :], dtype=np.float64)
+            if not skip_lifetime_analysis:
+                frame_bins = np.array(imagearray[frame_idx, 0, ch_idx, :, :, :], dtype=np.float64)
 
         if stack_frame_idx >= roi_raw[list(roi_raw.keys())[0]].shape[0]:
             continue
@@ -1044,6 +1049,10 @@ def _row_from_flim_data(
             row[f"{roi_type}_{ch_name}_intensity"] = float(np.nanmean(img[mask]))
 
             if roi_type == "Background":
+                continue
+            if skip_lifetime_analysis:
+                row[f"{roi_type}_{ch_name}_total_photon"] = np.nan
+                row[f"{roi_type}_{ch_name}_lifetime"] = np.nan
                 continue
             # Lifetime (Spine, DendriticShaft): transient_roi_analysis style
             intensity_image = frame_bins.sum(axis=-1)
@@ -1074,11 +1083,13 @@ def quantify_intensity_from_flim(
     sync_rate: float = SYNC_RATE,
     photon_threshold: int = 15,
     total_photon_threshold: int = 1000,
+    skip_lifetime_analysis: bool = False,
 ):
     """
     Quantify intensity and lifetime from FLIM. Per FLIM file, per frame, per Ch, per ROI.
     Pre/post: Z-proj with z_plus_minus; time_sec=0. Uncaging: per-frame time_sec from FLIM metadata.
     Output CSV includes intensity, time_sec, total_photon, lifetime (Spine/DendriticShaft).
+    When skip_lifetime_analysis is True, lifetime fitting is skipped and total_photon/lifetime are NaN.
     """
     def _is_rejected(set_df):
         """Return True if this group/set is rejected (skip intensity/lifetime quantification)."""
@@ -1108,10 +1119,13 @@ def quantify_intensity_from_flim(
     if total_items == 0:
         print("No frames to quantify. Skipping.")
         return pd.DataFrame()
-    print(f"Intensity & lifetime quantification: {total_items} frames (printing every 10%)")
+    if skip_lifetime_analysis:
+        print(f"Intensity quantification (lifetime skipped): {total_items} frames (printing every 10%)")
+    else:
+        print(f"Intensity & lifetime quantification: {total_items} frames (printing every 10%)")
     next_pct = 10
     processed = 0
-    fitter = FLIMLifetimeFitter()
+    fitter = None if skip_lifetime_analysis else FLIMLifetimeFitter()
 
     all_rows = []
     for each_filepath_without_number in combined_df["filepath_without_number"].unique():
@@ -1159,7 +1173,7 @@ def quantify_intensity_from_flim(
                     return _row_from_flim_data(
                         imagearray, iminfo, file_path, frame_idx, stack_frame_idx, phase, time_sec, acq_time_str,
                         roi_raw, corrected_uncaging_z, z_plus_minus, each_set_label, each_group,
-                        fitter, sync_rate, photon_threshold, total_photon_threshold,
+                        fitter, sync_rate, photon_threshold, total_photon_threshold, skip_lifetime_analysis,
                     )
 
                 pre_df = each_set_df[each_set_df["phase"] == "pre"].sort_values("nth_omit_induction")
@@ -1191,7 +1205,7 @@ def quantify_intensity_from_flim(
                             all_rows.append(_row_from_flim_data(
                                 imagearray_unc, iminfo_unc, unc_path, t, n_pre + t, "unc", time_sec, acq_str,
                                 roi_raw, corrected_uncaging_z, z_plus_minus, each_set_label, each_group,
-                                fitter, sync_rate, photon_threshold, total_photon_threshold,
+                                fitter, sync_rate, photon_threshold, total_photon_threshold, skip_lifetime_analysis,
                             ))
                             processed += 1
                             if total_items > 0 and 100 * processed >= total_items * next_pct:
@@ -1243,7 +1257,10 @@ def quantify_intensity_from_flim(
         rest = [c for c in out_df.columns if c not in lead]
         out_df = out_df[[c for c in lead if c in out_df.columns] + rest]
         out_df.to_csv(output_csv_path, index=False)
-        print(f"Saved intensity & lifetime quantification to {output_csv_path}")
+        if skip_lifetime_analysis:
+            print(f"Saved intensity quantification (lifetime skipped) to {output_csv_path}")
+        else:
+            print(f"Saved intensity & lifetime quantification to {output_csv_path}")
     return out_df
 
 
@@ -1256,11 +1273,13 @@ def run_tiff_uncaging_roi(
     ask_stop_here_TF = False,
     predefined_df_path: str | None = None,
     skip_roi_gui: bool = False,
+    skip_lifetime_analysis: bool = False,
 ):
     """
     Run the full TIFF uncaging ROI workflow: first_processing, full-size stack build,
     GUI for ROI definition, drift-corrected ROI masks, intensity/lifetime quantification.
     Call from other modules with e.g. run_tiff_uncaging_roi(photon_threshold=20).
+    Set skip_lifetime_analysis=True to quantify intensity only (lifetime/total_photon as NaN).
     """
     summary_str = ""
     summary_str += datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n"
@@ -1275,7 +1294,7 @@ def run_tiff_uncaging_roi(
     summary_str += f"predefined_df_path: {predefined_df_path}\n"
     summary_str += f"skip_roi_gui: {skip_roi_gui}\n"
     summary_str += "="*60+"\n"
-
+    summary_str += f"skip_lifetime_analysis: {skip_lifetime_analysis}\n"
     # If predefined_df_path exists, skip FLIM/file dialogs and load directly.
     use_predefined_df = bool(predefined_df_path and os.path.exists(predefined_df_path))
     if use_predefined_df:
@@ -1485,12 +1504,16 @@ def run_tiff_uncaging_roi(
     else:
         combined_df['reject'] = 0
 
-    print("Start intensity and lifetime quantification from .flim files")
+    if skip_lifetime_analysis:
+        print("Start intensity quantification from .flim files (lifetime skipped)")
+    else:
+        print("Start intensity and lifetime quantification from .flim files")
     out_csv_path = df_save_path_1.replace(".pkl", "_intensity_lifetime_all_frames.csv")
     quantify_intensity_from_flim(
         combined_df, ch_1or2, z_plus_minus, out_csv_path,
         photon_threshold=photon_threshold,
         total_photon_threshold=total_photon_threshold,
+        skip_lifetime_analysis=skip_lifetime_analysis,
     )
     summary_str += f"out_csv_path: {out_csv_path}\n"
     summary_str += "="*60+"\n"
