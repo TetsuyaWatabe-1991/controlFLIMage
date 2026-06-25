@@ -59,47 +59,7 @@ Use olympus_turret_pipe_gui_ps.bat (Windows PowerShell 5.1), or install the pack
 
 Import-SystemIoPortsAssembly
 
-Add-Type @"
-using System;
-using System.Text;
-using System.Runtime.InteropServices;
-
-public static class RemoteControlCloser
-{
-    private delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
-
-    [DllImport("user32.dll")]
-    private static extern bool EnumWindows(EnumProc lpEnumFunc, IntPtr lParam);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
-
-    [DllImport("user32.dll")]
-    private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-
-    private const uint WM_CLOSE = 0x0010;
-    private static IntPtr _target = IntPtr.Zero;
-
-    private static bool Callback(IntPtr hWnd, IntPtr lParam)
-    {
-        var sb = new StringBuilder(512);
-        GetWindowText(hWnd, sb, sb.Capacity);
-        if (sb.ToString().Contains("Remote control & script"))
-            _target = hWnd;
-        return true;
-    }
-
-    public static bool CloseRemoteControlWindow()
-    {
-        _target = IntPtr.Zero;
-        EnumWindows(Callback, IntPtr.Zero);
-        if (_target == IntPtr.Zero)
-            return false;
-        PostMessage(_target, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-        return true;
-    }
-}
-"@
+. (Join-Path $PSScriptRoot 'FlimagePipeClient.ps1')
 
 Add-Type @"
 using System;
@@ -251,31 +211,34 @@ $TurretMax = 6
 $MotorVelMin = 101
 $MotorVelMax = 9999
 $MotorVelDefault = 2000
-$HandshakeCode = "FLIMage"
-$ReadPipeName = "FLIMageR"
-$WritePipeName = "FLIMageW"
-$ComInitDir = Join-Path $env:USERPROFILE "Documents\FLIMage\Init_Files\COM"
-$ComInitFile = Join-Path $ComInitDir "COM_method.txt"
-$ConnectTimeoutMs = 500
-$ConnectRetries = 3
 $SettingsFile = Join-Path $PSScriptRoot "olympus_turret_pipe_gui.settings.txt"
-$PresetNames = @('Fine', 'Mid', 'Coarse')
+$PresetNames = @('1', '2', '3', '4', '5')
+$PresetLegacyNameMap = @{
+    Fine   = '2'
+    Mid    = '3'
+    Coarse = '5'
+}
 $JogKeyLayouts = @('Numpad', 'Cursor')
 $GuiMargin = 10
 $GuiInnerWidth = 372
+$script:CollapsibleSections = New-Object System.Collections.Generic.List[object]
+$script:LayoutTopY = 42
+$script:LayoutSectionGap = 6
+$script:LayoutBottomMargin = 12
+$script:CollapsedSectionHeight = 26
+$script:SavedGuiSettings = @{}
 
 $script:OlympusObjectiveParkZUm = 0.0
 $script:OlympusTurretWaitMs = 500
 $script:OlympusZMoveTimeoutMs = 60000
 $script:OlympusZPositionToleranceUm = 2.0
 $script:OlympusObjectiveSetTimeoutMs = 45000
-$script:OlympusPanelControlMode = 'MANUAL+COMPUTER'
+$script:OlympusPanelControlMode = 'COMPUTER'
 $script:SuppressOlympusPanelControlUiEvent = $false
 
 $script:PipeR = $null
 $script:PipeW = $null
 $script:PipeConnected = $false
-$script:PipeLock = New-Object object
 $script:Busy = $false
 $script:JogKeysDown = @{}
 $script:PresetKeysDown = @{}
@@ -293,13 +256,40 @@ $script:MotorUsesVectorJog = $false
 $script:NumpadJogEnabled = $true
 $script:PresetDialogOpen = $false
 $script:SuppressKeyLayoutComboEvent = $false
-$script:ActivePreset = 'Mid'
+$script:ActivePreset = '3'
 $script:LastVelocity = $MotorVelDefault
-$script:Presets = @{
-    Fine   = @{ StepXY = 0.10; StepZ = 0.05; VelXY = 0.010; VelZ = 0.005 }
-    Mid    = @{ StepXY = 1.00; StepZ = 0.50; VelXY = 0.050; VelZ = 0.025 }
-    Coarse = @{ StepXY = 10.0; StepZ = 5.00; VelXY = 0.200; VelZ = 0.100 }
+
+function New-DefaultPresetTable {
+    return @{
+        '1' = @{
+            KeyStepXY = 0.05; KeyStepZ = 0.05
+            KnobStepXY = 0.05; KnobStepZ = 0.05
+            VelXY = 0.005; VelZ = 0.003
+        }
+        '2' = @{
+            KeyStepXY = 0.10; KeyStepZ = 0.05
+            KnobStepXY = 0.10; KnobStepZ = 0.05
+            VelXY = 0.010; VelZ = 0.005
+        }
+        '3' = @{
+            KeyStepXY = 1.00; KeyStepZ = 0.50
+            KnobStepXY = 1.00; KnobStepZ = 0.50
+            VelXY = 0.050; VelZ = 0.025
+        }
+        '4' = @{
+            KeyStepXY = 5.00; KeyStepZ = 2.50
+            KnobStepXY = 5.00; KnobStepZ = 2.50
+            VelXY = 0.100; VelZ = 0.050
+        }
+        '5' = @{
+            KeyStepXY = 10.0; KeyStepZ = 5.00
+            KnobStepXY = 10.0; KnobStepZ = 5.00
+            VelXY = 0.200; VelZ = 0.100
+        }
+    }
 }
+
+$script:Presets = New-DefaultPresetTable
 $script:FilterLabels = @{}
 $script:ObjectiveLabels = @{}
 $script:OlympusTurretsAvailable = $false
@@ -318,7 +308,11 @@ $script:RoeMoveInFlight = $false
 $script:RoePendingMove = $null
 $script:MotorPosRefreshPending = $false
 $script:LastMotorActivityUtc = [datetime]::MinValue
-$script:MotorPosRefreshQuietMs = 100
+$script:MotorPosRefreshQuietMs = 500
+$script:MotorPosDeadX = 0.0
+$script:MotorPosDeadY = 0.0
+$script:MotorPosDeadZ = 0.0
+$script:MotorPosDeadSynced = $false
 $RoeFirmwareId = 'roe_encoder_nano'
 $RoeBaudRate = 115200
 
@@ -341,7 +335,7 @@ function Initialize-TurretLabelDefaults {
 function Get-DefaultGuiSettings {
     $settings = @{
         LastVelocity     = $MotorVelDefault
-        ActivePreset     = 'Mid'
+        ActivePreset     = '3'
         NumpadJogEnabled = $true
         JogKeyLayout     = 'Numpad'
         RoeComPort       = ''
@@ -351,28 +345,33 @@ function Get-DefaultGuiSettings {
         MotorInvertZ     = 'false'
         MotorSwapXY      = 'false'
         RoeClockwisePositive = 'false'
-        'Fine.StepXY'    = 0.10
-        'Fine.StepZ'     = 0.05
-        'Fine.VelXY'     = 0.010
-        'Fine.VelZ'      = 0.005
-        'Mid.StepXY'     = 1.00
-        'Mid.StepZ'      = 0.50
-        'Mid.VelXY'      = 0.050
-        'Mid.VelZ'       = 0.025
-        'Coarse.StepXY'  = 10.0
-        'Coarse.StepZ'   = 5.00
-        'Coarse.VelXY'   = 0.200
-        'Coarse.VelZ'    = 0.100
         'Olympus.ObjectiveParkZUm' = 0
         'Olympus.TurretWaitMs'  = 500
         'Olympus.ZMoveTimeoutMs' = 60000
         'Olympus.ZPositionToleranceUm' = 2
         'Olympus.ObjectiveSetTimeoutMs' = 45000
-        'Olympus.PanelControlMode' = 'MANUAL+COMPUTER'
+        'Olympus.PanelControlMode' = 'COMPUTER'
+        'SectionExpanded.Roe' = 'false'
+        'SectionExpanded.Filter' = 'true'
+        'SectionExpanded.Objective' = 'true'
+        'SectionExpanded.LightPath' = 'true'
+        'SectionExpanded.Panel' = 'true'
+        'SectionExpanded.Motor' = 'true'
+        'SectionExpanded.PipeCommand' = 'false'
+        'SectionExpanded.Log' = 'true'
     }
     for ($p = $TurretMin; $p -le $TurretMax; $p++) {
         $settings["Filter.P$p"] = Get-DefaultTurretLabel $p
         $settings["Objective.P$p"] = Get-DefaultTurretLabel $p
+    }
+    foreach ($name in $PresetNames) {
+        $preset = (New-DefaultPresetTable)[$name]
+        $settings["$name.KeyStepXY"] = $preset.KeyStepXY
+        $settings["$name.KeyStepZ"] = $preset.KeyStepZ
+        $settings["$name.KnobStepXY"] = $preset.KnobStepXY
+        $settings["$name.KnobStepZ"] = $preset.KnobStepZ
+        $settings["$name.VelXY"] = $preset.VelXY
+        $settings["$name.VelZ"] = $preset.VelZ
     }
     return $settings
 }
@@ -406,6 +405,9 @@ function Apply-GuiSettings {
     if ($script:LastVelocity -gt $MotorVelMax) { $script:LastVelocity = $MotorVelMax }
 
     $preset = [string]$Settings.ActivePreset
+    if ($PresetLegacyNameMap.ContainsKey($preset)) {
+        $preset = $PresetLegacyNameMap[$preset]
+    }
     if ($PresetNames -contains $preset) {
         $script:ActivePreset = $preset
     }
@@ -478,27 +480,43 @@ function Apply-GuiSettings {
         $script:OlympusPanelControlMode = Normalize-OlympusPanelControlModeToken $Settings['Olympus.PanelControlMode']
     }
     else {
-        $script:OlympusPanelControlMode = 'MANUAL+COMPUTER'
+        $script:OlympusPanelControlMode = 'COMPUTER'
     }
 
     Initialize-JogKeyState
 
+    $script:Presets = New-DefaultPresetTable
+    $legacyTierByName = @{ Fine = '2'; Mid = '3'; Coarse = '5' }
     foreach ($name in $PresetNames) {
-        $xyKey = "$name.StepXY"
-        $zKey = "$name.StepZ"
-        $velXyKey = "$name.VelXY"
-        $velZKey = "$name.VelZ"
-        if ($Settings.ContainsKey($xyKey)) {
-            try { $script:Presets[$name].StepXY = [double]$Settings[$xyKey] } catch { }
-        }
-        if ($Settings.ContainsKey($zKey)) {
-            try { $script:Presets[$name].StepZ = [double]$Settings[$zKey] } catch { }
-        }
-        if ($Settings.ContainsKey($velXyKey)) {
-            try { $script:Presets[$name].VelXY = [double]$Settings[$velXyKey] } catch { }
-        }
-        if ($Settings.ContainsKey($velZKey)) {
-            try { $script:Presets[$name].VelZ = [double]$Settings[$velZKey] } catch { }
+        $legacyName = $null
+        if ($name -eq '2') { $legacyName = 'Fine' }
+        elseif ($name -eq '3') { $legacyName = 'Mid' }
+        elseif ($name -eq '5') { $legacyName = 'Coarse' }
+
+        foreach ($field in @('KeyStepXY', 'KeyStepZ', 'KnobStepXY', 'KnobStepZ', 'VelXY', 'VelZ')) {
+            $loaded = $false
+            $newKey = "$name.$field"
+            if ($Settings.ContainsKey($newKey)) {
+                try {
+                    $script:Presets[$name][$field] = [double]$Settings[$newKey]
+                    $loaded = $true
+                }
+                catch { }
+            }
+            if ($loaded -or [string]::IsNullOrWhiteSpace($legacyName)) { continue }
+
+            $legacyField = switch ($field) {
+                'KeyStepXY' { 'StepXY' }
+                'KeyStepZ'  { 'StepZ' }
+                'KnobStepXY' { 'StepXY' }
+                'KnobStepZ'  { 'StepZ' }
+                'VelXY'     { 'VelXY' }
+                'VelZ'      { 'VelZ' }
+            }
+            $legacyKey = "$legacyName.$legacyField"
+            if ($Settings.ContainsKey($legacyKey)) {
+                try { $script:Presets[$name][$field] = [double]$Settings[$legacyKey] } catch { }
+            }
         }
     }
 
@@ -539,18 +557,6 @@ function Export-GuiSettings {
         ("MotorInvertZ={0}" -f ($(if ($script:MotorInvertZ) { 'true' } else { 'false' }))),
         ("MotorSwapXY={0}" -f ($(if ($script:MotorSwapXY) { 'true' } else { 'false' }))),
         ("RoeClockwisePositive={0}" -f ($(if ($script:RoeClockwisePositive) { 'true' } else { 'false' }))),
-        ("Fine.StepXY={0}" -f $script:Presets.Fine.StepXY.ToString('F2', $ci)),
-        ("Fine.StepZ={0}" -f $script:Presets.Fine.StepZ.ToString('F2', $ci)),
-        ("Fine.VelXY={0}" -f $script:Presets.Fine.VelXY.ToString('F3', $ci)),
-        ("Fine.VelZ={0}" -f $script:Presets.Fine.VelZ.ToString('F3', $ci)),
-        ("Mid.StepXY={0}" -f $script:Presets.Mid.StepXY.ToString('F2', $ci)),
-        ("Mid.StepZ={0}" -f $script:Presets.Mid.StepZ.ToString('F2', $ci)),
-        ("Mid.VelXY={0}" -f $script:Presets.Mid.VelXY.ToString('F3', $ci)),
-        ("Mid.VelZ={0}" -f $script:Presets.Mid.VelZ.ToString('F3', $ci)),
-        ("Coarse.StepXY={0}" -f $script:Presets.Coarse.StepXY.ToString('F2', $ci)),
-        ("Coarse.StepZ={0}" -f $script:Presets.Coarse.StepZ.ToString('F2', $ci)),
-        ("Coarse.VelXY={0}" -f $script:Presets.Coarse.VelXY.ToString('F3', $ci)),
-        ("Coarse.VelZ={0}" -f $script:Presets.Coarse.VelZ.ToString('F3', $ci)),
         ("Olympus.ObjectiveParkZUm={0}" -f $script:OlympusObjectiveParkZUm.ToString('F1', $ci)),
         ("Olympus.TurretWaitMs={0}" -f $script:OlympusTurretWaitMs),
         ("Olympus.ZMoveTimeoutMs={0}" -f $script:OlympusZMoveTimeoutMs),
@@ -558,9 +564,21 @@ function Export-GuiSettings {
         ("Olympus.ObjectiveSetTimeoutMs={0}" -f $script:OlympusObjectiveSetTimeoutMs),
         ("Olympus.PanelControlMode={0}" -f $script:OlympusPanelControlMode)
     )
+    foreach ($section in $script:CollapsibleSections) {
+        $lines += ("SectionExpanded.{0}={1}" -f $section.SettingsKey, ($(if ($section.Expanded) { 'true' } else { 'false' })))
+    }
     for ($p = $TurretMin; $p -le $TurretMax; $p++) {
         $lines += ("Filter.P{0}={1}" -f $p, $script:FilterLabels[$p])
         $lines += ("Objective.P{0}={1}" -f $p, $script:ObjectiveLabels[$p])
+    }
+    foreach ($name in $PresetNames) {
+        $preset = $script:Presets[$name]
+        $lines += ("{0}.KeyStepXY={1}" -f $name, $preset.KeyStepXY.ToString('F2', $ci))
+        $lines += ("{0}.KeyStepZ={1}" -f $name, $preset.KeyStepZ.ToString('F2', $ci))
+        $lines += ("{0}.KnobStepXY={1}" -f $name, $preset.KnobStepXY.ToString('F2', $ci))
+        $lines += ("{0}.KnobStepZ={1}" -f $name, $preset.KnobStepZ.ToString('F2', $ci))
+        $lines += ("{0}.VelXY={1}" -f $name, $preset.VelXY.ToString('F3', $ci))
+        $lines += ("{0}.VelZ={1}" -f $name, $preset.VelZ.ToString('F3', $ci))
     }
     try {
         Set-Content -Path $SettingsFile -Value $lines -Encoding UTF8
@@ -585,161 +603,159 @@ function Register-FocusClearOnClick {
         })
 }
 
+function Get-SectionExpandedFromSettings {
+    param(
+        [string]$SettingsKey,
+        [bool]$DefaultExpanded = $true
+    )
+
+    $key = "SectionExpanded.$SettingsKey"
+    if ($script:SavedGuiSettings.ContainsKey($key)) {
+        return (Get-SettingsBool -Settings $script:SavedGuiSettings -Key $key)
+    }
+    return $DefaultExpanded
+}
+
+function Register-CollapsibleSection {
+    param(
+        [System.Windows.Forms.GroupBox]$Group,
+        [int]$ExpandedHeight,
+        [string]$SettingsKey,
+        [bool]$DefaultExpanded = $true
+    )
+
+    $expanded = Get-SectionExpandedFromSettings -SettingsKey $SettingsKey -DefaultExpanded $DefaultExpanded
+
+    $toggle = New-Object System.Windows.Forms.Button
+    $toggle.Size = New-Object System.Drawing.Size 24, 20
+    $toggle.Location = New-Object System.Drawing.Point ($GuiInnerWidth - 30), 1
+    $toggle.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $toggle.TabStop = $false
+    $toggle.Font = New-Object System.Drawing.Font (
+        $toggle.Font.FontFamily,
+        9.0,
+        [System.Drawing.FontStyle]::Bold
+    )
+    $Group.Controls.Add($toggle)
+    $toggle.BringToFront()
+
+    $contentControls = @()
+    foreach ($child in $Group.Controls) {
+        if ($child -ne $toggle) {
+            $contentControls += $child
+        }
+    }
+
+    $section = [PSCustomObject]@{
+        Group           = $Group
+        Toggle          = $toggle
+        ExpandedHeight  = $ExpandedHeight
+        SettingsKey     = $SettingsKey
+        Expanded        = $expanded
+        ContentControls = $contentControls
+    }
+    [void]$script:CollapsibleSections.Add($section)
+
+    $toggle.Add_Click({
+            param($sender, $eventArgs)
+            $sec = $sender.Tag
+            Set-CollapsibleSectionExpanded -Section $sec -Expanded (-not $sec.Expanded)
+        })
+    $toggle.Tag = $section
+
+    Set-CollapsibleSectionExpanded -Section $section -Expanded $expanded -SkipLayout
+}
+
+function Set-CollapsibleSectionExpanded {
+    param(
+        $Section,
+        [bool]$Expanded,
+        [switch]$SkipLayout
+    )
+
+    $Section.Expanded = $Expanded
+    foreach ($ctrl in $Section.ContentControls) {
+        $ctrl.Visible = $Expanded
+    }
+    $Section.Toggle.Text = if ($Expanded) { '-' } else { '+' }
+    if (-not $SkipLayout) {
+        Update-CollapsibleLayout
+        Export-GuiSettings
+    }
+}
+
+function Get-CollapsibleSectionLayoutHeight {
+    param($Section)
+
+    if (-not $Section.Expanded) {
+        return $script:CollapsedSectionHeight
+    }
+
+    $maxBottom = 24
+    foreach ($ctrl in $Section.ContentControls) {
+        if (-not $ctrl.Visible) { continue }
+        $bottom = $ctrl.Location.Y + $ctrl.Height
+        if ($bottom -gt $maxBottom) {
+            $maxBottom = $bottom
+        }
+    }
+
+    $toggleBottom = $Section.Toggle.Location.Y + $Section.Toggle.Height
+    if ($toggleBottom -gt $maxBottom) {
+        $maxBottom = $toggleBottom
+    }
+
+    $computed = $maxBottom + 8
+    if ($computed -gt $Section.ExpandedHeight) {
+        return $computed
+    }
+    return $Section.ExpandedHeight
+}
+
+function Update-CollapsibleLayout {
+    if ($null -eq $form -or $script:CollapsibleSections.Count -eq 0) { return }
+
+    $form.SuspendLayout()
+    try {
+        $y = $script:LayoutTopY
+        foreach ($section in $script:CollapsibleSections) {
+            $height = Get-CollapsibleSectionLayoutHeight -Section $section
+            $section.Group.Location = New-Object System.Drawing.Point $GuiMargin, $y
+            $section.Group.Size = New-Object System.Drawing.Size $GuiInnerWidth, $height
+            $y += $height + $script:LayoutSectionGap
+        }
+
+        $clientHeight = $y - $script:LayoutSectionGap + $script:LayoutBottomMargin
+        $formWidth = $GuiInnerWidth + ($GuiMargin * 2) + 16
+        $borderHeight = $form.Height - $form.ClientSize.Height
+        if ($borderHeight -lt 8) { $borderHeight = 39 }
+        $form.ClientSize = New-Object System.Drawing.Size ($GuiInnerWidth + ($GuiMargin * 2)), $clientHeight
+        $form.Size = New-Object System.Drawing.Size $formWidth, ($clientHeight + $borderHeight)
+
+        $minClient = $script:LayoutTopY + ($script:CollapsedSectionHeight * $script:CollapsibleSections.Count) +
+            (($script:LayoutSectionGap * ($script:CollapsibleSections.Count - 1)) + $script:LayoutBottomMargin)
+        $form.MinimumSize = New-Object System.Drawing.Size $formWidth, ($minClient + $borderHeight)
+    }
+    finally {
+        $form.ResumeLayout($true)
+    }
+}
+
+function Initialize-CollapsibleLayout {
+    Register-CollapsibleSection -Group $roeGroup -ExpandedHeight 62 -SettingsKey 'Roe' -DefaultExpanded $false
+    Register-CollapsibleSection -Group $filterGroup -ExpandedHeight 56 -SettingsKey 'Filter' -DefaultExpanded $true
+    Register-CollapsibleSection -Group $objGroup -ExpandedHeight 56 -SettingsKey 'Objective' -DefaultExpanded $true
+    Register-CollapsibleSection -Group $prismGroup -ExpandedHeight 56 -SettingsKey 'LightPath' -DefaultExpanded $true
+    Register-CollapsibleSection -Group $panelGroup -ExpandedHeight 56 -SettingsKey 'Panel' -DefaultExpanded $true
+    Register-CollapsibleSection -Group $motorGroup -ExpandedHeight 200 -SettingsKey 'Motor' -DefaultExpanded $true
+    Register-CollapsibleSection -Group $cmdGroup -ExpandedHeight 118 -SettingsKey 'PipeCommand' -DefaultExpanded $false
+    Register-CollapsibleSection -Group $logGroup -ExpandedHeight 180 -SettingsKey 'Log' -DefaultExpanded $true
+    Update-CollapsibleLayout
+}
+
 function Get-Timestamp {
     return (Get-Date).ToString("HH:mm:ss.fff")
 }
-
-function Read-PipeString([System.IO.Stream]$Stream) {
-    $b1 = $Stream.ReadByte()
-    $b2 = $Stream.ReadByte()
-    if ($b1 -lt 0 -or $b2 -lt 0) { return $null }
-    $len = ($b1 * 256) + $b2
-    if ($len -le 0) { return "" }
-    $buffer = New-Object byte[] $len
-    $offset = 0
-    while ($offset -lt $len) {
-        $read = $Stream.Read($buffer, $offset, $len - $offset)
-        if ($read -le 0) { break }
-        $offset += $read
-    }
-    return [System.Text.Encoding]::UTF8.GetString($buffer, 0, $offset)
-}
-
-function Write-PipeString([System.IO.Stream]$Stream, [string]$Text) {
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
-    $len = $bytes.Length
-    if ($len -gt 65535) { $len = 65535 }
-    $Stream.WriteByte([byte][math]::Floor($len / 256))
-    $Stream.WriteByte([byte]($len -band 255))
-    if ($len -gt 0) { $Stream.Write($bytes, 0, $len) }
-    $Stream.Flush()
-}
-
-function Invoke-PipeHandshake {
-    param(
-        [System.IO.Pipes.NamedPipeClientStream]$Stream,
-        [string]$PipeLabel
-    )
-    $first = Read-PipeString $Stream
-    if ($first -ne $HandshakeCode) {
-        return @{ Ok = $false; Detail = "$PipeLabel handshake step 1 failed (got '$first')" }
-    }
-    Write-PipeString $Stream $HandshakeCode
-    $second = Read-PipeString $Stream
-    if ($second -ne "Connected") {
-        return @{ Ok = $false; Detail = "$PipeLabel handshake step 2 failed (got '$second')" }
-    }
-    return @{ Ok = $true; Detail = "" }
-}
-
-function Start-FlimagePipeServer {
-    if (-not (Test-Path $ComInitDir)) {
-        New-Item -ItemType Directory -Path $ComInitDir -Force | Out-Null
-    }
-    Set-Content -Path $ComInitFile -Value "PIPE" -Encoding ascii -NoNewline
-}
-
-function Close-FlimagePipes {
-    foreach ($pipe in @($script:PipeW, $script:PipeR)) {
-        if ($null -eq $pipe) { continue }
-        try {
-            if ($pipe.IsConnected) { $pipe.Close() }
-            $pipe.Dispose()
-        }
-        catch { }
-    }
-    $script:PipeW = $null
-    $script:PipeR = $null
-    $script:PipeConnected = $false
-}
-
-function Reset-FlimageRemoteControl {
-    param([scriptblock]$Log = $null)
-    if ($null -ne $Log) { & $Log "Closing Remote control & script, then restarting PIPE server..." }
-    $closed = [RemoteControlCloser]::CloseRemoteControlWindow()
-    if ($null -ne $Log) {
-        if ($closed) { & $Log "Remote control window close message sent." }
-        else { & $Log "Remote control window not found." }
-    }
-    Start-Sleep -Milliseconds 150
-    Start-FlimagePipeServer
-    Start-Sleep -Milliseconds 250
-}
-
-function Connect-FlimagePipesOnce {
-    param([scriptblock]$Log = $null)
-
-    Close-FlimagePipes
-    Start-FlimagePipeServer
-    Start-Sleep -Milliseconds 150
-
-    $pipeR = New-Object System.IO.Pipes.NamedPipeClientStream ".", $ReadPipeName, ([System.IO.Pipes.PipeDirection]::InOut)
-    $pipeW = New-Object System.IO.Pipes.NamedPipeClientStream ".", $WritePipeName, ([System.IO.Pipes.PipeDirection]::InOut)
-
-    try {
-        $pipeR.Connect($ConnectTimeoutMs)
-        $pipeW.Connect($ConnectTimeoutMs)
-    }
-    catch {
-        if ($null -ne $Log) { & $Log "!! Pipe connect failed: $($_.Exception.Message)" }
-        $pipeR.Dispose()
-        $pipeW.Dispose()
-        return $false
-    }
-
-    $hsR = Invoke-PipeHandshake -Stream $pipeR -PipeLabel $ReadPipeName
-    if (-not $hsR.Ok) {
-        if ($null -ne $Log) { & $Log $hsR.Detail }
-        $pipeR.Dispose(); $pipeW.Dispose()
-        return $false
-    }
-
-    $hsW = Invoke-PipeHandshake -Stream $pipeW -PipeLabel $WritePipeName
-    if (-not $hsW.Ok) {
-        if ($null -ne $Log) { & $Log $hsW.Detail }
-        $pipeR.Dispose(); $pipeW.Dispose()
-        return $false
-    }
-
-    $script:PipeR = $pipeR
-    $script:PipeW = $pipeW
-    $script:PipeConnected = $true
-    return $true
-}
-
-function Connect-FlimagePipes {
-    param([scriptblock]$Log = $null)
-
-    if (Connect-FlimagePipesOnce -Log $Log) { return $true }
-
-    for ($attempt = 2; $attempt -le $ConnectRetries; $attempt++) {
-        if ($null -ne $Log) { & $Log "Connect attempt $attempt/$ConnectRetries" }
-        Reset-FlimageRemoteControl -Log $Log
-        if (Connect-FlimagePipesOnce -Log $Log) { return $true }
-    }
-    return $false
-}
-
-function Send-FlimagePipeCommand {
-    param([string]$Command)
-    if (-not $script:PipeConnected -or $null -eq $script:PipeW) {
-        throw "Not connected to FLIMage pipe"
-    }
-    [System.Threading.Monitor]::Enter($script:PipeLock)
-    try {
-        Write-PipeString $script:PipeW $Command
-        $reply = Read-PipeString $script:PipeW
-        if ($null -eq $reply) {
-            $script:PipeConnected = $false
-            throw "Connection problem"
-        }
-        return $reply
-    }
-    finally {
-        [System.Threading.Monitor]::Exit($script:PipeLock)
-    }
-}
-
 
 function Get-OlympusReplyPayload {
     param([string]$Reply)
@@ -764,17 +780,72 @@ function Get-OlympusIx2PositionValue {
     if ([string]::IsNullOrWhiteSpace($payload)) { return $null }
 
     if (-not [string]::IsNullOrWhiteSpace($CommandToken)) {
-        $tokenPattern = ('(?i)' + [regex]::Escape($CommandToken.Trim()) + '\s+([+-]?\d+)')
-        if ($payload -match $tokenPattern) {
+        $token = $CommandToken.Trim()
+        $escaped = [regex]::Escape($token)
+
+        # IX2 query/set replies such as "1OB 4" or "1MU 4".
+        if ($payload -match ('(?i)' + $escaped + '\s+([+-]?\d+)')) {
             return [int]$Matches[1]
+        }
+
+        # IX2 set ack such as "1MU +004" (position after '+').
+        if ($payload -match ('(?i)' + $escaped + '\s+\+(\d+)')) {
+            return [int]$Matches[1]
+        }
+
+        # Set ack without position digits (e.g. "1OB +") — do not treat the leading "1" in "1OB" as position.
+        if ($payload -match ('(?i)^' + $escaped + '\b')) {
+            return $null
         }
     }
 
-    # IX2 replies such as "1OB 4" or "1MU +004" — position is the last numeric field.
-    $numberMatches = [regex]::Matches($payload, '[+-]?\d+')
+    # Generic fallback: last numeric field (skip when token prefix would be misread as position).
+    $numberMatches = [regex]::Matches($payload, '(?<!\d)[+-]?\d+')
     if ($numberMatches.Count -gt 0) {
         return [int]$numberMatches[$numberMatches.Count - 1].Value
     }
+    return $null
+}
+
+function Test-OlympusIx2SetAckWithoutPosition {
+    param(
+        [string]$Reply,
+        [string]$CommandToken
+    )
+
+    if (-not (Test-OlympusIx2Success -Reply $Reply)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($CommandToken)) { return $false }
+
+    $payload = Get-OlympusReplyPayload -Reply $Reply
+    if ([string]::IsNullOrWhiteSpace($payload)) { return $false }
+
+    $escaped = [regex]::Escape($CommandToken.Trim())
+    return ($payload -match ('(?i)^' + $escaped + '\s*\+\s*$'))
+}
+
+function Test-OlympusIx2TurretSetCommand {
+    param([string]$Ix2Command)
+
+    if ([string]::IsNullOrWhiteSpace($Ix2Command)) { return $false }
+    return ($Ix2Command.Trim() -match '^(?i)(1OB|1MU|1PRISM)\s+\d')
+}
+
+function Resolve-OlympusTurretPositionFromReply {
+    param(
+        [string]$Reply,
+        [string]$CommandToken
+    )
+
+    $value = Get-OlympusIx2PositionValue -Reply $Reply -CommandToken $CommandToken
+    if ($null -ne $value) { return $value }
+
+    if (Test-OlympusIx2SetAckWithoutPosition -Reply $Reply -CommandToken $CommandToken) {
+        $queryReply = Invoke-OlympusIx2Query -Ix2Command ("{0}?" -f $CommandToken.Trim())
+        if ($null -ne $queryReply) {
+            return Get-OlympusIx2PositionValue -Reply $queryReply -CommandToken $CommandToken
+        }
+    }
+
     return $null
 }
 
@@ -1001,7 +1072,13 @@ function Send-OlympusObjectiveSetWithEscape {
         }
     }
 
-    Update-ObjectiveLabel -Reply $setReply
+    $queryReply = Invoke-OlympusIx2Query -Ix2Command '1OB?'
+    if ($null -ne $queryReply) {
+        Update-ObjectiveLabel -Reply $queryReply
+    }
+    else {
+        Update-ObjectiveLabel -Reply $setReply
+    }
     if ($null -ne $OnSuccess) {
         & $OnSuccess $setReply
     }
@@ -1022,14 +1099,16 @@ function Send-OlympusIx2WithLog {
     if ($reply -match '(?i)^Error' -and -not $AllowError) {
         throw $reply
     }
-    Update-OlympusLabelsFromPipeExchange -Command $pipeCmd -Reply $reply
+    if (-not (Test-OlympusIx2TurretSetCommand -Ix2Command $ix2)) {
+        Update-OlympusLabelsFromPipeExchange -Command $pipeCmd -Reply $reply
+    }
     return $reply
 }
 
 function Normalize-OlympusPanelControlModeToken {
     param([string]$Token)
 
-    if ([string]::IsNullOrWhiteSpace($Token)) { return 'MANUAL+COMPUTER' }
+    if ([string]::IsNullOrWhiteSpace($Token)) { return 'COMPUTER' }
     $normalized = $Token.Trim().ToUpperInvariant() -replace '\s', ''
     switch ($normalized) {
         'ON' { return 'MANUAL+COMPUTER' }
@@ -1039,9 +1118,10 @@ function Normalize-OlympusPanelControlModeToken {
         'COMPUTER' { return 'COMPUTER' }
         'REMOTE' { return 'COMPUTER' }
         'PC' { return 'COMPUTER' }
-        'LOCAL' { return 'LOCAL' }
-        'MANUAL' { return 'LOCAL' }
-        default { return 'MANUAL+COMPUTER' }
+        'LOCAL' { return 'MANUAL+COMPUTER' }
+        'MANUAL' { return 'MANUAL+COMPUTER' }
+        'PANEL' { return 'MANUAL+COMPUTER' }
+        default { return 'COMPUTER' }
     }
 }
 
@@ -1049,32 +1129,57 @@ function Get-OlympusPanelControlFromReply {
     param([string]$Reply)
 
     if ([string]::IsNullOrWhiteSpace($Reply)) { return $null }
-    if ($Reply -match '(?i)^OlympusPanelControl\s*,\s*(\S+)') {
-        return (Normalize-OlympusPanelControlModeToken $Matches[1])
+    if ($Reply -match '(?i)^OlympusPanelControl\s*,\s*(.+)') {
+        return (Normalize-OlympusPanelControlModeToken $Matches[1].Trim())
     }
     return $null
+}
+
+$script:PanelControlOptions = @(
+    @{ Mode = 'MANUAL+COMPUTER'; Label = 'Manual + Computer' },
+    @{ Mode = 'COMPUTER'; Label = 'Computer' }
+)
+
+function Initialize-PanelControlCombo {
+    if ($null -eq $panelCombo) { return }
+    $panelCombo.Items.Clear()
+    foreach ($opt in $script:PanelControlOptions) {
+        [void]$panelCombo.Items.Add($opt.Label)
+    }
+}
+
+function Sync-PanelComboToMode {
+    param([string]$Mode)
+
+    if ($null -eq $panelCombo) { return }
+    $modeNorm = Normalize-OlympusPanelControlModeToken $Mode
+    for ($i = 0; $i -lt $script:PanelControlOptions.Count; $i++) {
+        if ($script:PanelControlOptions[$i].Mode -eq $modeNorm) {
+            $script:SuppressOlympusPanelControlUiEvent = $true
+            try { $panelCombo.SelectedIndex = $i }
+            finally { $script:SuppressOlympusPanelControlUiEvent = $false }
+            return
+        }
+    }
+}
+
+function Get-PanelComboMode {
+    if ($null -eq $panelCombo -or $panelCombo.SelectedIndex -lt 0) {
+        return 'COMPUTER'
+    }
+    if ($panelCombo.SelectedIndex -ge $script:PanelControlOptions.Count) {
+        return 'COMPUTER'
+    }
+    return [string]$script:PanelControlOptions[$panelCombo.SelectedIndex].Mode
 }
 
 function Update-OlympusPanelControlUi {
     param([string]$Mode)
 
-    if ($null -eq $panelRadioOn) { return }
+    if ($null -eq $panelCombo) { return }
     $modeNorm = Normalize-OlympusPanelControlModeToken $Mode
     $script:OlympusPanelControlMode = $modeNorm
-    $script:SuppressOlympusPanelControlUiEvent = $true
-    try {
-        switch ($modeNorm) {
-            'COMPUTER' { $panelRadioOff.Checked = $true }
-            'LOCAL' { $panelRadioLocal.Checked = $true }
-            default { $panelRadioOn.Checked = $true }
-        }
-        if ($null -ne $panelStatusLabel) {
-            $panelStatusLabel.Text = ("Mode: {0}" -f $modeNorm)
-        }
-    }
-    finally {
-        $script:SuppressOlympusPanelControlUiEvent = $false
-    }
+    Sync-PanelComboToMode -Mode $modeNorm
 }
 
 function Invoke-OlympusPanelControlSet {
@@ -1089,9 +1194,8 @@ function Invoke-OlympusPanelControlSet {
 
     $modeNorm = Normalize-OlympusPanelControlModeToken $Mode
     $pipeMode = switch ($modeNorm) {
-        'COMPUTER' { 'OFF' }
-        'LOCAL' { 'LOCAL' }
-        default { 'ON' }
+        'COMPUTER' { 'COMPUTER' }
+        default { 'MANUAL+COMPUTER' }
     }
     $cmd = "SetOlympusPanelControl, $pipeMode"
     if (-not $Quiet) { Add-Log ">> $cmd" }
@@ -1379,7 +1483,10 @@ function Register-RoeEncTick {
         [int]$Direction
     )
 
-    $signed = Get-RoeEncoderTickSign -Direction $Direction
+    if ($Direction -eq 0) { return }
+    # ENC value from Arduino is a direction hint only (+/-). Step size comes from the active GUI preset.
+    $detentSign = if ($Direction -gt 0) { 1 } else { -1 }
+    $signed = Get-RoeEncoderTickSign -Direction $detentSign
     if ($signed -eq 0) { return }
     Register-MotorActivity
     if (-not $script:RoeEncTicks.ContainsKey($Axis)) {
@@ -1389,18 +1496,18 @@ function Register-RoeEncTick {
 }
 
 function Build-RoeMoveDeltasFromAccumulatedTicks {
-    $preset = $script:Presets[$script:ActivePreset]
     $dx = 0.0
     $dy = 0.0
     $dz = 0.0
+    $steps = Get-ActiveKnobStepValues
 
     foreach ($axis in @($script:RoeEncTicks.Keys)) {
-        $ticks = [int]$script:RoeEncTicks[$axis]
-        if ($ticks -eq 0) { continue }
+        $detents = [double]$script:RoeEncTicks[$axis]
+        if ($detents -eq 0) { continue }
         switch ($axis) {
-            'X' { $dx += $preset.StepXY * $ticks }
-            'Y' { $dy += $preset.StepXY * $ticks }
-            'Z' { $dz += $preset.StepZ * $ticks }
+            'X' { $dx += $detents * $steps.StepXY }
+            'Y' { $dy += $detents * $steps.StepXY }
+            'Z' { $dz += $detents * $steps.StepZ }
         }
     }
 
@@ -1897,10 +2004,10 @@ function Get-KeyMapHelpRows {
                 @(']', 'Z plus')
             )
             TapRows = @(
-                @(',', 'Finer speed/step preset'),
-                @('.', 'Coarser speed/step preset')
+                @(',', 'Finer step tier (1-5)'),
+                @('.', 'Coarser step tier (1-5)')
             )
-            Notes = "Capture ON: keys work when another window is focused.`r`nWhen keyboard/ROE motion stops: Abs XYZ updates immediately.`r`nASI / ZoZoLab presets = speed (mm/s); others = step (um).`r`nOlympus: Light path (1PRISM) in GUI  -  1=eyepiece, 2=camera."
+            Notes = "Capture ON: keys work when another window is focused.`r`nWhen keyboard/ROE motion stops: Abs XYZ updates immediately.`r`nStep tiers 1-5: keys use Key XY/Z; ROE knob uses Knob XY/Z.`r`nASI / ZoZoLab tiers = jog speed (mm/s).`r`nOlympus: Light path (1PRISM) in GUI  -  1=eyepiece, 2=camera."
         }
     }
 
@@ -1914,10 +2021,10 @@ function Get-KeyMapHelpRows {
             @('NumPad -', 'Z minus')
         )
         TapRows = @(
-            @('NumPad /', 'Finer speed/step preset'),
-            @('NumPad *', 'Coarser speed/step preset')
+            @('NumPad /', 'Finer step tier (1-5)'),
+            @('NumPad *', 'Coarser step tier (1-5)')
         )
-        Notes = "Numpad ON: keys work when another window is focused.`r`nWhen keyboard/ROE motion stops: Abs XYZ updates immediately.`r`nASI / ZoZoLab presets = speed (mm/s); others = step (um).`r`nOlympus: Light path (1PRISM) in GUI  -  1=eyepiece, 2=camera."
+        Notes = "Numpad ON: keys work when another window is focused.`r`nWhen keyboard/ROE motion stops: Abs XYZ updates immediately.`r`nStep tiers 1-5: keys use Key XY/Z; ROE knob uses Knob XY/Z.`r`nASI / ZoZoLab tiers = jog speed (mm/s).`r`nOlympus: Light path (1PRISM) in GUI  -  1=eyepiece, 2=camera."
     }
 }
 
@@ -1974,22 +2081,14 @@ function Test-MotorMotionIdle {
 function Invoke-AbsPositionRefreshQuiet {
     if ($script:Busy) { return }
     if (-not $script:PipeConnected) { return }
-
-    try {
-        $reply = Send-FlimagePipeCommand -Command 'GetCurrentPosition'
-        Update-MotorPosLabel $reply
-        Add-Log ("<< Abs XYZ: {0}" -f $reply)
-    }
-    catch {
-        Add-Log "!! Abs XYZ failed: $($_.Exception.Message)"
-    }
+    Sync-MotorPosFromFlimage -Quiet
 }
 
 function Invoke-AbsPositionRefreshIfIdle {
     if (-not $script:MotorPosRefreshPending) { return }
     if (-not (Test-MotorMotionIdle)) { return }
     $quietMs = [int]$script:MotorPosRefreshQuietMs
-    if ($quietMs -lt 1) { $quietMs = 100 }
+    if ($quietMs -lt 1) { $quietMs = 500 }
     $elapsedMs = ([datetime]::UtcNow - $script:LastMotorActivityUtc).TotalMilliseconds
     if ($elapsedMs -lt $quietMs) { return }
 
@@ -2102,14 +2201,15 @@ function Switch-StepPreset {
     $script:ActivePreset = $PresetNames[$newIdx]
     Update-StepPresetDisplay
     Export-GuiSettings
-    Add-Log ("Step preset: {0}" -f $script:ActivePreset)
+    Add-Log ("Step tier: {0}" -f $script:ActivePreset)
     if ($script:MotorUsesVectorJog -and (Test-AnyJogKeyDown)) {
         Start-HeldJogIfNeeded
     }
     return $true
 }
 
-Apply-GuiSettings (Import-GuiSettings)
+$script:SavedGuiSettings = Import-GuiSettings
+Apply-GuiSettings $script:SavedGuiSettings
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "FLIMage Motor Pipe GUI"
@@ -2251,12 +2351,24 @@ function Update-JogModeUi {
     }
 }
 
-function Get-ActiveStepValues {
+function Get-ActiveKeyStepValues {
     $preset = $script:Presets[$script:ActivePreset]
     return @{
-        StepXY = [double]$preset.StepXY
-        StepZ  = [double]$preset.StepZ
+        StepXY = [double]$preset.KeyStepXY
+        StepZ  = [double]$preset.KeyStepZ
     }
+}
+
+function Get-ActiveKnobStepValues {
+    $preset = $script:Presets[$script:ActivePreset]
+    return @{
+        StepXY = [double]$preset.KnobStepXY
+        StepZ  = [double]$preset.KnobStepZ
+    }
+}
+
+function Get-ActiveStepValues {
+    return (Get-ActiveKeyStepValues)
 }
 
 function Get-ActiveJogSpeeds {
@@ -2275,12 +2387,13 @@ function Get-ActiveJogSpeeds {
 }
 
 function Update-StepPresetDisplay {
-    $speeds = Get-ActiveJogSpeeds
+    $preset = $script:Presets[$script:ActivePreset]
     if ($script:MotorUsesVectorJog) {
-        $stepDisplayLabel.Text = ("XY={0:F3} Z={1:F3} mm/s" -f $speeds.SpeedXY, $speeds.SpeedZ)
+        $stepDisplayLabel.Text = ("Tier {0}: XY={1:F3} Z={2:F3} mm/s" -f $script:ActivePreset, $preset.VelXY, $preset.VelZ)
     }
     else {
-        $stepDisplayLabel.Text = ("XY={0:F2} Z={1:F2} um" -f $speeds.SpeedXY, $speeds.SpeedZ)
+        $stepDisplayLabel.Text = ('Tier {0}: Key XY={1:F2} Z={2:F2} | Knob XY={3:F2} Z={4:F2} um' -f `
+            $script:ActivePreset, $preset.KeyStepXY, $preset.KeyStepZ, $preset.KnobStepXY, $preset.KnobStepZ)
     }
     foreach ($name in $PresetNames) {
         if ($null -ne $presetRadioButtons[$name]) {
@@ -2554,141 +2667,210 @@ function Set-OlympusTurretControlsEnabled {
     $objGroup.Text = if ($Enabled) { "Objective (1OB)" } else { "Objective (1OB) - off" }
     $prismGroup.Text = if ($Enabled) { "Light path (1PRISM)" } else { "Light path (1PRISM) - off" }
     if ($null -ne $panelGroup) {
-        $panelGroup.Text = if ($Enabled) { "Chassis panel" } else { "Chassis panel - off" }
+        $panelGroup.Text = if ($Enabled) { "Control mode" } else { "Control mode - off" }
     }
 
     $controls = @(
         $filterCombo, $btnFilterGet, $btnFilterSet, $btnFilterLabels,
         $objCombo, $btnObjGet, $btnObjSet, $btnObjLabels,
         $prismRadioEyepiece, $prismRadioCamera, $btnPrismGet, $btnPrismSet,
-        $panelRadioOn, $panelRadioOff, $panelRadioLocal, $btnPanelSync
+        $panelCombo, $btnPanelGet, $btnPanelSet
     )
     foreach ($ctrl in $controls) {
         if ($null -ne $ctrl) {
             $ctrl.Enabled = $Enabled -and (-not $script:Busy)
         }
     }
+    if ($script:CollapsibleSections.Count -gt 0) {
+        Update-CollapsibleLayout
+    }
 }
 
-function Show-StepPresetEditor {
-    param([string]$PresetName)
-
+function Show-StepPresetTableEditor {
     $script:PresetDialogOpen = $true
     Stop-AllHeldJogKeys
 
-    $preset = $script:Presets[$PresetName]
     $isVector = $script:MotorUsesVectorJog
+    $ci = [System.Globalization.CultureInfo]::InvariantCulture
+
     $dlg = New-Object System.Windows.Forms.Form
     if ($isVector) {
-        $dlg.Text = "Set $PresetName speed (ASI)"
+        $dlg.Text = 'Step tier speeds (ASI)'
+        $clientWidth = 340
     }
     else {
-        $dlg.Text = "Set $PresetName step"
+        $dlg.Text = 'Step tier settings'
+        $clientWidth = 520
     }
     $dlg.FormBorderStyle = 'FixedDialog'
     $dlg.MaximizeBox = $false
     $dlg.MinimizeBox = $false
     $dlg.StartPosition = 'CenterParent'
-    $dlg.ClientSize = New-Object System.Drawing.Size 260, 130
+    $dlg.ClientSize = New-Object System.Drawing.Size $clientWidth, 280
     $dlg.KeyPreview = $true
 
-    $xyLabel = New-Object System.Windows.Forms.Label
+    $grid = New-Object System.Windows.Forms.DataGridView
+    $grid.Location = New-Object System.Drawing.Point 12, 12
+    $grid.Size = New-Object System.Drawing.Size ($clientWidth - 24), 190
+    $grid.AllowUserToAddRows = $false
+    $grid.AllowUserToDeleteRows = $false
+    $grid.AllowUserToResizeRows = $false
+    $grid.RowHeadersVisible = $false
+    $grid.ColumnHeadersHeightSizeMode = 'DisableResizing'
+    $grid.AutoSizeColumnsMode = 'Fill'
+    $grid.MultiSelect = $false
+    $grid.BorderStyle = 'FixedSingle'
+    $grid.ColumnHeadersDefaultCellStyle.Font = New-Object System.Drawing.Font(
+        $grid.Font,
+        [System.Drawing.FontStyle]::Bold
+    )
+    $dlg.Controls.Add($grid)
+
+    [void]$grid.Columns.Add('Tier', 'Tier')
+    $grid.Columns['Tier'].ReadOnly = $true
+    $grid.Columns['Tier'].FillWeight = 12
+
     if ($isVector) {
-        $xyLabel.Text = "XY speed (mm/s):"
-        $xyNumeric = New-Object System.Windows.Forms.NumericUpDown
-        $xyNumeric.DecimalPlaces = 3
-        $xyNumeric.Increment = 0.005
-        $xyNumeric.Minimum = 0.001
-        $xyNumeric.Maximum = 2.0
-        $xyNumeric.Value = [decimal]$preset.VelXY
+        [void]$grid.Columns.Add('VelXY', 'XY speed (mm/s)')
+        [void]$grid.Columns.Add('VelZ', 'Z speed (mm/s)')
+        $grid.Columns['VelXY'].FillWeight = 44
+        $grid.Columns['VelZ'].FillWeight = 44
     }
     else {
-        $xyLabel.Text = "Step XY (um):"
-        $xyNumeric = New-Object System.Windows.Forms.NumericUpDown
-        $xyNumeric.DecimalPlaces = 2
-        $xyNumeric.Increment = 0.1
-        $xyNumeric.Minimum = 0.01
-        $xyNumeric.Maximum = 1000
-        $xyNumeric.Value = [decimal]$preset.StepXY
+        [void]$grid.Columns.Add('KeyStepXY', 'Key XY (um)')
+        [void]$grid.Columns.Add('KeyStepZ', 'Key Z (um)')
+        [void]$grid.Columns.Add('KnobStepXY', 'Knob XY (um)')
+        [void]$grid.Columns.Add('KnobStepZ', 'Knob Z (um)')
+        foreach ($colName in @('KeyStepXY', 'KeyStepZ', 'KnobStepXY', 'KnobStepZ')) {
+            $grid.Columns[$colName].FillWeight = 22
+        }
     }
-    $xyLabel.Location = New-Object System.Drawing.Point 12, 18
-    $xyLabel.AutoSize = $true
-    $dlg.Controls.Add($xyLabel)
 
-    $xyNumeric.Location = New-Object System.Drawing.Point 110, 16
-    $xyNumeric.Width = 90
-    $dlg.Controls.Add($xyNumeric)
-
-    $zLabel = New-Object System.Windows.Forms.Label
-    if ($isVector) {
-        $zLabel.Text = "Z speed (mm/s):"
+    foreach ($name in $PresetNames) {
+        $preset = $script:Presets[$name]
+        if ($isVector) {
+            [void]$grid.Rows.Add(
+                $name,
+                $preset.VelXY.ToString('F3', $ci),
+                $preset.VelZ.ToString('F3', $ci)
+            )
+        }
+        else {
+            [void]$grid.Rows.Add(
+                $name,
+                $preset.KeyStepXY.ToString('F2', $ci),
+                $preset.KeyStepZ.ToString('F2', $ci),
+                $preset.KnobStepXY.ToString('F2', $ci),
+                $preset.KnobStepZ.ToString('F2', $ci)
+            )
+        }
     }
-    else {
-        $zLabel.Text = "Step Z (um):"
-    }
-    $zLabel.Location = New-Object System.Drawing.Point 12, 52
-    $zLabel.AutoSize = $true
-    $dlg.Controls.Add($zLabel)
-
-    $zNumeric = New-Object System.Windows.Forms.NumericUpDown
-    if ($isVector) {
-        $zNumeric.DecimalPlaces = 3
-        $zNumeric.Increment = 0.005
-        $zNumeric.Minimum = 0.001
-        $zNumeric.Maximum = 2.0
-        $zNumeric.Value = [decimal]$preset.VelZ
-    }
-    else {
-        $zNumeric.DecimalPlaces = 2
-        $zNumeric.Increment = 0.1
-        $zNumeric.Minimum = 0.01
-        $zNumeric.Maximum = 1000
-        $zNumeric.Value = [decimal]$preset.StepZ
-    }
-    $zNumeric.Location = New-Object System.Drawing.Point 110, 50
-    $zNumeric.Width = 90
-    $dlg.Controls.Add($zNumeric)
 
     $noteLabel = New-Object System.Windows.Forms.Label
-    $noteLabel.Text = "Numpad jog disabled while open."
-    $noteLabel.Location = New-Object System.Drawing.Point 12, 78
-    $noteLabel.AutoSize = $true
+    if ($isVector) {
+        $noteLabel.Text = 'Edit all tiers at once. Numpad jog disabled while open.'
+    }
+    else {
+        $noteLabel.Text = 'Key = keyboard jog; Knob = ROE encoder. Numpad jog disabled while open.'
+    }
+    $noteLabel.Location = New-Object System.Drawing.Point 12, 208
+    $noteLabel.Size = New-Object System.Drawing.Size ($clientWidth - 24), 32
     $noteLabel.ForeColor = [System.Drawing.Color]::DimGray
     $dlg.Controls.Add($noteLabel)
 
     $btnOk = New-Object System.Windows.Forms.Button
-    $btnOk.Text = "OK"
+    $btnOk.Text = 'OK'
     $btnOk.DialogResult = [System.Windows.Forms.DialogResult]::OK
-    $btnOk.Location = New-Object System.Drawing.Point 92, 98
+    $btnOk.Location = New-Object System.Drawing.Point ($clientWidth - 178), 244
     $dlg.Controls.Add($btnOk)
     $dlg.AcceptButton = $btnOk
 
     $btnCancel = New-Object System.Windows.Forms.Button
-    $btnCancel.Text = "Cancel"
+    $btnCancel.Text = 'Cancel'
     $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-    $btnCancel.Location = New-Object System.Drawing.Point 173, 98
+    $btnCancel.Location = New-Object System.Drawing.Point ($clientWidth - 97), 244
     $dlg.Controls.Add($btnCancel)
     $dlg.CancelButton = $btnCancel
 
     $result = $dlg.ShowDialog($form)
     $script:PresetDialogOpen = $false
 
-    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+    if ($result -ne [System.Windows.Forms.DialogResult]::OK) { return }
+
+    $updated = @{}
+    foreach ($name in $PresetNames) {
+        $updated[$name] = @{}
+        foreach ($key in $script:Presets[$name].Keys) {
+            $updated[$name][$key] = $script:Presets[$name][$key]
+        }
+    }
+    foreach ($row in $grid.Rows) {
+        if ($row.IsNewRow) { continue }
+        $tier = [string]$row.Cells['Tier'].Value
+        if (-not ($PresetNames -contains $tier)) { continue }
+
         if ($isVector) {
-            $script:Presets[$PresetName].VelXY = [double]$xyNumeric.Value
-            $script:Presets[$PresetName].VelZ = [double]$zNumeric.Value
-            Update-StepPresetDisplay
-            Export-GuiSettings
-            Add-Log ("Updated {0}: XY={1:F3} Z={2:F3} mm/s" -f $PresetName, $preset.VelXY, $preset.VelZ)
-            if (Test-AnyJogKeyDown) { Start-HeldJogIfNeeded }
+            $velXY = 0.0
+            $velZ = 0.0
+            if (-not [double]::TryParse([string]$row.Cells['VelXY'].Value, [System.Globalization.NumberStyles]::Float, $ci, [ref]$velXY)) {
+                [System.Windows.Forms.MessageBox]::Show($form, "Invalid XY speed for tier $tier.", 'Step tiers', 'OK', 'Warning') | Out-Null
+                return
+            }
+            if (-not [double]::TryParse([string]$row.Cells['VelZ'].Value, [System.Globalization.NumberStyles]::Float, $ci, [ref]$velZ)) {
+                [System.Windows.Forms.MessageBox]::Show($form, "Invalid Z speed for tier $tier.", 'Step tiers', 'OK', 'Warning') | Out-Null
+                return
+            }
+            if ($velXY -lt 0.001 -or $velXY -gt 2.0 -or $velZ -lt 0.001 -or $velZ -gt 2.0) {
+                [System.Windows.Forms.MessageBox]::Show($form, "Tier $tier speed must be 0.001-2.0 mm/s.", 'Step tiers', 'OK', 'Warning') | Out-Null
+                return
+            }
+            $updated[$tier].VelXY = $velXY
+            $updated[$tier].VelZ = $velZ
         }
         else {
-            $script:Presets[$PresetName].StepXY = [double]$xyNumeric.Value
-            $script:Presets[$PresetName].StepZ = [double]$zNumeric.Value
-            Update-StepPresetDisplay
-            Export-GuiSettings
-            Add-Log ("Updated {0}: XY={1:F2}, Z={2:F2} um" -f $PresetName, $preset.StepXY, $preset.StepZ)
+            $keyXY = 0.0
+            $keyZ = 0.0
+            $knobXY = 0.0
+            $knobZ = 0.0
+            $fields = @(
+                @{ Name = 'KeyStepXY'; Ref = [ref]$keyXY; Label = 'Key XY' }
+                @{ Name = 'KeyStepZ'; Ref = [ref]$keyZ; Label = 'Key Z' }
+                @{ Name = 'KnobStepXY'; Ref = [ref]$knobXY; Label = 'Knob XY' }
+                @{ Name = 'KnobStepZ'; Ref = [ref]$knobZ; Label = 'Knob Z' }
+            )
+            foreach ($field in $fields) {
+                $parsed = 0.0
+                if (-not [double]::TryParse([string]$row.Cells[$field.Name].Value, [System.Globalization.NumberStyles]::Float, $ci, [ref]$parsed)) {
+                    [System.Windows.Forms.MessageBox]::Show($form, "Invalid $($field.Label) for tier $tier.", 'Step tiers', 'OK', 'Warning') | Out-Null
+                    return
+                }
+                if ($parsed -lt 0.01 -or $parsed -gt 1000) {
+                    [System.Windows.Forms.MessageBox]::Show($form, "Tier $tier $($field.Label) must be 0.01-1000 um.", 'Step tiers', 'OK', 'Warning') | Out-Null
+                    return
+                }
+                $field.Ref.Value = $parsed
+            }
+            $updated[$tier].KeyStepXY = $keyXY
+            $updated[$tier].KeyStepZ = $keyZ
+            $updated[$tier].KnobStepXY = $knobXY
+            $updated[$tier].KnobStepZ = $knobZ
         }
+    }
+
+    foreach ($name in $PresetNames) {
+        foreach ($key in $updated[$name].Keys) {
+            $script:Presets[$name][$key] = $updated[$name][$key]
+        }
+    }
+
+    Update-StepPresetDisplay
+    Export-GuiSettings
+    if ($isVector) {
+        Add-Log 'Updated step tier speeds (ASI)'
+        if (Test-AnyJogKeyDown) { Start-HeldJogIfNeeded }
+    }
+    else {
+        Add-Log 'Updated step tier table (Key/Knob XY/Z)'
     }
 }
 
@@ -2796,12 +2978,105 @@ function Set-MotorVelocityFromGui {
     }
 }
 
-function Get-MotorPositionFromReply {
+function Format-MotorAxisUm {
+    param(
+        [double]$Value,
+        [int]$IntegerDigits
+    )
+
+    $ci = [System.Globalization.CultureInfo]::InvariantCulture
+    $text = ([math]::Round($Value, 1)).ToString('F1', $ci)
+    $dotIndex = $text.IndexOf('.')
+    if ($dotIndex -lt 0) {
+        return $text.PadLeft($IntegerDigits, ' ')
+    }
+
+    $intPart = $text.Substring(0, $dotIndex)
+    $decPart = $text.Substring($dotIndex + 1)
+    $sign = ''
+    if ($intPart.StartsWith('-', [StringComparison]::Ordinal)) {
+        $sign = '-'
+        $intPart = $intPart.Substring(1)
+    }
+
+    $intPadded = ($sign + $intPart.PadLeft($IntegerDigits, ' '))
+    return ('{0}.{1}' -f $intPadded, $decPart)
+}
+
+function Initialize-MotorPosDeadReckoning {
+    $script:MotorPosDeadX = 0.0
+    $script:MotorPosDeadY = 0.0
+    $script:MotorPosDeadZ = 0.0
+    $script:MotorPosDeadSynced = $false
+    if ($null -ne $motorPosLabel) {
+        $motorPosLabel.Text = 'Pos: --'
+    }
+}
+
+function Set-MotorPosDeadReckoning {
+    param(
+        [double]$X,
+        [double]$Y,
+        [double]$Z
+    )
+    $script:MotorPosDeadX = [math]::Round($X, 2)
+    $script:MotorPosDeadY = [math]::Round($Y, 2)
+    $script:MotorPosDeadZ = [math]::Round($Z, 2)
+    $script:MotorPosDeadSynced = $true
+    Update-MotorPosLabelFromDeadReckoning
+}
+
+function Add-MotorPosDeadReckoningDelta {
+    param(
+        [double]$DeltaX = 0,
+        [double]$DeltaY = 0,
+        [double]$DeltaZ = 0
+    )
+    if (-not $script:MotorPosDeadSynced) { return }
+    if ([math]::Abs($DeltaX) -lt 1e-12 -and [math]::Abs($DeltaY) -lt 1e-12 -and [math]::Abs($DeltaZ) -lt 1e-12) {
+        return
+    }
+    $script:MotorPosDeadX = [math]::Round($script:MotorPosDeadX + $DeltaX, 2)
+    $script:MotorPosDeadY = [math]::Round($script:MotorPosDeadY + $DeltaY, 2)
+    $script:MotorPosDeadZ = [math]::Round($script:MotorPosDeadZ + $DeltaZ, 2)
+    Update-MotorPosLabelFromDeadReckoning
+}
+
+function Update-MotorPosLabelFromDeadReckoning {
+    if ($null -eq $motorPosLabel) { return }
+    if (-not $script:MotorPosDeadSynced) {
+        $motorPosLabel.Text = 'Pos: --'
+        return
+    }
+
+    $xText = Format-MotorAxisUm -Value $script:MotorPosDeadX -IntegerDigits 6
+    $yText = Format-MotorAxisUm -Value $script:MotorPosDeadY -IntegerDigits 6
+    $zText = Format-MotorAxisUm -Value $script:MotorPosDeadZ -IntegerDigits 5
+    $motorPosLabel.Text = ('Pos (um){0}X={1}  Y={2}  Z={3}' -f `
+        [Environment]::NewLine, $xText, $yText, $zText)
+}
+
+function Sync-MotorPosFromFlimage {
+    param([switch]$Quiet)
+
+    if (-not $script:PipeConnected) { return }
+    try {
+        if (-not $Quiet) { Add-Log '>> GetCurrentPosition (sync)' }
+        $reply = Send-FlimagePipeCommand -Command 'GetCurrentPosition' -Quiet:$Quiet
+        if (-not $Quiet) { Add-Log "<< $reply" }
+        Update-MotorPosLabel $reply
+    }
+    catch {
+        if (-not $Quiet) { Add-Log "!! Position sync failed: $($_.Exception.Message)" }
+    }
+}
+
+function Get-ActualMotorPositionFromReply {
     param([string]$Reply)
     if ([string]::IsNullOrWhiteSpace($Reply)) { return $null }
     foreach ($token in @(
-            "MoveMotorRelativeQueued", "MoveMotorRelativeDone", "CurrentPosition",
-            "SetMotorPositionDone", "MotorVectorStopped")) {
+            "CurrentPosition", "CurrentPosition_um",
+            "MoveMotorRelativeDone", "SetMotorPositionDone", "MotorVectorStopped")) {
         $pattern = "{0}\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)" -f [regex]::Escape($token)
         $match = [regex]::Match($Reply, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
         if ($match.Success) {
@@ -2815,14 +3090,19 @@ function Get-MotorPositionFromReply {
     return $null
 }
 
+function Get-MotorPositionFromReply {
+    param([string]$Reply)
+    return (Get-ActualMotorPositionFromReply -Reply $Reply)
+}
+
 function Update-MotorPosLabel {
     param([string]$Reply)
-    $pos = Get-MotorPositionFromReply -Reply $Reply
+    $pos = Get-ActualMotorPositionFromReply -Reply $Reply
     if ($null -ne $pos) {
-        $motorPosLabel.Text = ("Pos (um)`r`nX={0:F1}  Y={1:F1}  Z={2:F1}" -f $pos[0], $pos[1], $pos[2])
+        Set-MotorPosDeadReckoning -X $pos[0] -Y $pos[1] -Z $pos[2]
     }
     elseif ($Reply -match '(?i)^Error') {
-        $motorPosLabel.Text = "Pos: ERR"
+        $motorPosLabel.Text = 'Pos: ERR'
     }
 }
 
@@ -2916,6 +3196,16 @@ function Invoke-MotorJogQuick {
         if (-not $Quiet) { Add-Log ">> $cmd" }
         $reply = Send-FlimagePipeCommand -Command $cmd
         if (-not $Quiet) { Add-Log "<< $reply" }
+        if ($reply -match '(?i)^Error') {
+            Request-MotorPosRefreshAfterIdle
+            return
+        }
+        if (-not $script:MotorPosDeadSynced) {
+            Sync-MotorPosFromFlimage -Quiet
+        }
+        if ($script:MotorPosDeadSynced) {
+            Add-MotorPosDeadReckoningDelta -DeltaX $DeltaX -DeltaY $DeltaY -DeltaZ $DeltaZ
+        }
     }
     catch {
         Set-Status $false $_.Exception.Message
@@ -3017,7 +3307,7 @@ function Set-Busy {
         $filterCombo, $btnFilterGet, $btnFilterSet, $btnFilterLabels,
         $objCombo, $btnObjGet, $btnObjSet, $btnObjLabels,
         $prismRadioEyepiece, $prismRadioCamera, $btnPrismGet, $btnPrismSet,
-        $panelRadioOn, $panelRadioOff, $panelRadioLocal, $btnPanelSync
+        $panelCombo, $btnPanelGet, $btnPanelSet
     )
     foreach ($ctrl in $turretControls) {
         if ($null -ne $ctrl) {
@@ -3185,42 +3475,29 @@ $btnPrismSet.Width = 36
 $prismGroup.Controls.Add($btnPrismSet)
 
 $panelGroup = New-Object System.Windows.Forms.GroupBox
-$panelGroup.Text = "Chassis panel - off"
+$panelGroup.Text = "Control mode - off"
 $panelGroup.Location = New-Object System.Drawing.Point $GuiMargin, 290
-$panelGroup.Size = New-Object System.Drawing.Size $GuiInnerWidth, 52
+$panelGroup.Size = New-Object System.Drawing.Size $GuiInnerWidth, 56
 $form.Controls.Add($panelGroup)
 
-$panelRadioOn = New-Object System.Windows.Forms.RadioButton
-$panelRadioOn.Text = "Panel ON"
-$panelRadioOn.AutoSize = $true
-$panelRadioOn.Location = New-Object System.Drawing.Point 8, 18
-$panelRadioOn.Checked = $true
-$panelGroup.Controls.Add($panelRadioOn)
+$panelCombo = New-Object System.Windows.Forms.ComboBox
+$panelCombo.DropDownStyle = 'DropDownList'
+$panelCombo.Location = New-Object System.Drawing.Point 8, 16
+$panelCombo.Width = 214
+$panelGroup.Controls.Add($panelCombo)
+Initialize-PanelControlCombo
 
-$panelRadioOff = New-Object System.Windows.Forms.RadioButton
-$panelRadioOff.Text = "Panel OFF"
-$panelRadioOff.AutoSize = $true
-$panelRadioOff.Location = New-Object System.Drawing.Point 92, 18
-$panelGroup.Controls.Add($panelRadioOff)
+$btnPanelGet = New-Object System.Windows.Forms.Button
+$btnPanelGet.Text = "Get"
+$btnPanelGet.Location = New-Object System.Drawing.Point 228, 14
+$btnPanelGet.Width = 36
+$panelGroup.Controls.Add($btnPanelGet)
 
-$panelRadioLocal = New-Object System.Windows.Forms.RadioButton
-$panelRadioLocal.Text = "Local"
-$panelRadioLocal.AutoSize = $true
-$panelRadioLocal.Location = New-Object System.Drawing.Point 186, 18
-$panelGroup.Controls.Add($panelRadioLocal)
-
-$panelStatusLabel = New-Object System.Windows.Forms.Label
-$panelStatusLabel.Text = "Mode: --"
-$panelStatusLabel.Location = New-Object System.Drawing.Point 248, 20
-$panelStatusLabel.Width = 120
-$panelStatusLabel.AutoSize = $false
-$panelGroup.Controls.Add($panelStatusLabel)
-
-$btnPanelSync = New-Object System.Windows.Forms.Button
-$btnPanelSync.Text = "Get"
-$btnPanelSync.Location = New-Object System.Drawing.Point 316, 14
-$btnPanelSync.Width = 36
-$panelGroup.Controls.Add($btnPanelSync)
+$btnPanelSet = New-Object System.Windows.Forms.Button
+$btnPanelSet.Text = "Set"
+$btnPanelSet.Location = New-Object System.Drawing.Point 268, 14
+$btnPanelSet.Width = 36
+$panelGroup.Controls.Add($btnPanelSet)
 
 $motorGroup = New-Object System.Windows.Forms.GroupBox
 $motorGroup.Text = "Motor jog"
@@ -3253,6 +3530,7 @@ $jogRepeatTimer.Add_Tick({
 
 $motorPosLabel = New-Object System.Windows.Forms.Label
 $motorPosLabel.Text = "Pos: --"
+$motorPosLabel.Font = New-Object System.Drawing.Font('Consolas', 9)
 $motorPosLabel.Location = New-Object System.Drawing.Point 8, 18
 $motorPosLabel.Size = New-Object System.Drawing.Size 276, 36
 $motorPosLabel.AutoSize = $false
@@ -3265,13 +3543,13 @@ $btnMotorRefresh.Width = 58
 $motorGroup.Controls.Add($btnMotorRefresh)
 
 $presetLabel = New-Object System.Windows.Forms.Label
-$presetLabel.Text = "Step:"
+$presetLabel.Text = "Tier:"
 $presetLabel.Location = New-Object System.Drawing.Point 8, 54
 $presetLabel.AutoSize = $true
 $motorGroup.Controls.Add($presetLabel)
 
 $presetRadioButtons = @{}
-$presetX = 48
+$presetX = 44
 foreach ($presetName in $PresetNames) {
     $radio = New-Object System.Windows.Forms.RadioButton
     $radio.Text = $presetName
@@ -3280,7 +3558,7 @@ foreach ($presetName in $PresetNames) {
     $radio.Tag = $presetName
     $motorGroup.Controls.Add($radio)
     $presetRadioButtons[$presetName] = $radio
-    $presetX += 54
+    $presetX += 32
     $radio.Add_CheckedChanged({
             if (-not $this.Checked) { return }
             $script:ActivePreset = [string]$this.Tag
@@ -3293,15 +3571,15 @@ foreach ($presetName in $PresetNames) {
 }
 
 $btnSetPreset = New-Object System.Windows.Forms.Button
-$btnSetPreset.Text = "Set"
+$btnSetPreset.Text = "Edit"
 $btnSetPreset.Location = New-Object System.Drawing.Point 210, 50
-$btnSetPreset.Width = 36
+$btnSetPreset.Width = 40
 $motorGroup.Controls.Add($btnSetPreset)
 
 $stepDisplayLabel = New-Object System.Windows.Forms.Label
 $stepDisplayLabel.Text = "XY=-- Z=--"
 $stepDisplayLabel.Location = New-Object System.Drawing.Point 8, 76
-$stepDisplayLabel.Size = New-Object System.Drawing.Size 340, 18
+$stepDisplayLabel.Size = New-Object System.Drawing.Size 356, 18
 $stepDisplayLabel.AutoSize = $false
 $motorGroup.Controls.Add($stepDisplayLabel)
 
@@ -3422,10 +3700,12 @@ foreach ($quick in @(
         })
 }
 
+Initialize-CollapsibleLayout
+
 function Update-FilterLabel {
     param([string]$Reply)
     $value = Get-TurretValue -Reply $Reply -Token "FilterTurret"
-    if ($null -eq $value) { $value = Get-OlympusIx2PositionValue -Reply $Reply -CommandToken '1MU' }
+    if ($null -eq $value) { $value = Resolve-OlympusTurretPositionFromReply -Reply $Reply -CommandToken '1MU' }
     if ($null -ne $value) {
         $filterPosLabel.Text = Format-TurretCurrentText -Position $value
         Sync-TurretComboToPosition -Combo $filterCombo -Position $value
@@ -3436,7 +3716,7 @@ function Update-FilterLabel {
 function Update-ObjectiveLabel {
     param([string]$Reply)
     $value = Get-TurretValue -Reply $Reply -Token "ObjectiveTurret"
-    if ($null -eq $value) { $value = Get-OlympusIx2PositionValue -Reply $Reply -CommandToken '1OB' }
+    if ($null -eq $value) { $value = Resolve-OlympusTurretPositionFromReply -Reply $Reply -CommandToken '1OB' }
     if ($null -ne $value) {
         $objPosLabel.Text = Format-TurretCurrentText -Position $value
         Sync-TurretComboToPosition -Combo $objCombo -Position $value
@@ -3451,40 +3731,17 @@ Update-NumpadJogToggleUi
 Update-OlympusPanelControlUi -Mode $script:OlympusPanelControlMode
 Set-OlympusTurretControlsEnabled -Enabled $false -MotorHwName "not connected"
 
-$panelRadioOn.Add_CheckedChanged({
+$panelCombo.Add_SelectedIndexChanged({
         if ($script:SuppressOlympusPanelControlUiEvent) { return }
-        if (-not $panelRadioOn.Checked) { return }
         if (-not $script:PipeConnected) { return }
         if ($script:Busy) { return }
         Set-Busy $true
-        try { Invoke-OlympusPanelControlSet -Mode 'ON' }
+        try { Invoke-OlympusPanelControlSet -Mode (Get-PanelComboMode) }
         catch { Add-Log "!! $($_.Exception.Message)" }
         finally { Set-Busy $false }
     })
 
-$panelRadioOff.Add_CheckedChanged({
-        if ($script:SuppressOlympusPanelControlUiEvent) { return }
-        if (-not $panelRadioOff.Checked) { return }
-        if (-not $script:PipeConnected) { return }
-        if ($script:Busy) { return }
-        Set-Busy $true
-        try { Invoke-OlympusPanelControlSet -Mode 'OFF' }
-        catch { Add-Log "!! $($_.Exception.Message)" }
-        finally { Set-Busy $false }
-    })
-
-$panelRadioLocal.Add_CheckedChanged({
-        if ($script:SuppressOlympusPanelControlUiEvent) { return }
-        if (-not $panelRadioLocal.Checked) { return }
-        if (-not $script:PipeConnected) { return }
-        if ($script:Busy) { return }
-        Set-Busy $true
-        try { Invoke-OlympusPanelControlSet -Mode 'LOCAL' }
-        catch { Add-Log "!! $($_.Exception.Message)" }
-        finally { Set-Busy $false }
-    })
-
-$btnPanelSync.Add_Click({
+$btnPanelGet.Add_Click({
         if ($script:Busy) { return }
         if (-not $script:PipeConnected) {
             Add-Log '!! Connect FLIMage first'
@@ -3492,6 +3749,18 @@ $btnPanelSync.Add_Click({
         }
         Set-Busy $true
         try { Sync-OlympusPanelControlFromFlimage }
+        finally { Set-Busy $false }
+    })
+
+$btnPanelSet.Add_Click({
+        if ($script:Busy) { return }
+        if (-not $script:PipeConnected) {
+            Add-Log '!! Connect FLIMage first'
+            return
+        }
+        Set-Busy $true
+        try { Invoke-OlympusPanelControlSet -Mode (Get-PanelComboMode) }
+        catch { Add-Log "!! $($_.Exception.Message)" }
         finally { Set-Busy $false }
     })
 
@@ -3523,6 +3792,7 @@ $btnConnect.Add_Click({
                 Set-OlympusTurretControlsEnabled -Enabled $hasOlympus -MotorHwName $motorName
                 Set-MotorJogMode -UsesVectorJog (Test-MotorHwUsesVectorJog -MotorHwName $motorName) -MotorHwName $motorName
                 Set-Status $true ("Motor=$motorName")
+                Sync-MotorPosFromFlimage -Quiet
 
                 Add-Log ">> GetMotorVelocity"
                 $velReply = Send-FlimagePipeCommand -Command "GetMotorVelocity"
@@ -3565,6 +3835,7 @@ $btnDisconnect.Add_Click({
         if ($script:MotorUsesVectorJog) {
             Invoke-MotorVectorStop -Quiet
         }
+        Initialize-MotorPosDeadReckoning
         Close-FlimagePipes
         Set-Status $false
         Set-MotorJogMode -UsesVectorJog $false
@@ -3596,11 +3867,7 @@ $btnFilterSet.Add_Click({
             }
             Send-OlympusIx2SequenceWithLog -Ix2Commands (Build-OlympusTurretSetSequence -Ix2SetCommand ("1MU {0}" -f $value)) -OnLastReply {
                 param($r)
-                $done = Get-OlympusIx2PositionValue -Reply $r -CommandToken '1MU'
-                if ($null -ne $done) {
-                    $filterPosLabel.Text = Format-TurretCurrentText -Position $done
-                    Sync-TurretComboToPosition -Combo $filterCombo -Position $done
-                }
+                Update-FilterLabel -Reply $r
             }
         }
         catch {
@@ -3640,14 +3907,7 @@ $btnObjSet.Add_Click({
                 }
                 Add-Log "Connected"
             }
-            Send-OlympusObjectiveSetWithEscape -Position $value -OnSuccess {
-                param($r)
-                $done = Get-OlympusIx2PositionValue -Reply $r -CommandToken '1OB'
-                if ($null -ne $done) {
-                    $objPosLabel.Text = Format-TurretCurrentText -Position $done
-                    Sync-TurretComboToPosition -Combo $objCombo -Position $done
-                }
-            }
+            Send-OlympusObjectiveSetWithEscape -Position $value
         }
         catch {
             Set-Status $false $_.Exception.Message
@@ -3710,7 +3970,7 @@ $btnMotorVelGet.Add_Click({
 $btnMotorVelSet.Add_Click({ Set-MotorVelocityFromGui })
 
 $btnSetPreset.Add_Click({
-        Show-StepPresetEditor -PresetName $script:ActivePreset
+        Show-StepPresetTableEditor
     })
 
 $btnNumpadHelp.Add_Click({ Show-NumpadHelpDialog })
@@ -3780,6 +4040,10 @@ Register-FocusClearOnClick $panelGroup
 Register-FocusClearOnClick $cmdGroup
 Register-FocusClearOnClick $logGroup
 Register-FocusClearOnClick $statusLabel
+
+$form.Add_Load({
+        Update-CollapsibleLayout
+    })
 
 $form.Add_FormClosed({
         if ($null -ne $jogRepeatTimer) { $jogRepeatTimer.Stop() }

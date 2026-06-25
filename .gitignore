@@ -4,7 +4,6 @@
 *.png
 *.ipynb
 *.h5
-*.bat
 *.log
 *.pdf
 DirectionSetting.ini

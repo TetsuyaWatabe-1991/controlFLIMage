@@ -1626,18 +1626,21 @@ if __name__ == "__main__":
     Zstack_ini=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zstep1_128fast.txt"
     # singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging.txt"
     # singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging_test.txt"
-    inipath = r"C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
-    FLIMageCont = Control_flimage(ini_path = inipath, debug_mode=True)
+    inipath_inverted1 = r"C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
+    inipath_laptop = r"C:\Users\WatabeT\Documents\Git\controlFLIMage\DirectionSetting.ini"
+
+    ini_path = inipath_inverted1 if os.path.exists(inipath_inverted1) else inipath_laptop
+    FLIMageCont = Control_flimage(ini_path = ini_path, debug_mode=True)
 
     if False:
         FLIMageCont.flim.sendCommand(f'LoadSetting, {Zstack_ini}')
         FLIMageCont.flim.sendCommand(f'SetDIOPanel, 1, 1')
     # FLIMageCont.flim.sendCommand('SetOverwriteWarningOff')
     # FLIMageCont.flim.sendCommand('StartLoop')
-    for i in range(10):
-        res = FLIMageCont.flim.sendCommand("GetRelativeXYZ")
-        print(res)
-        sleep(0.5)
+    # for i in range(10):
+        # res = FLIMageCont.flim.sendCommand("GetRelativeXYZ")
+        # print(res)
+        # sleep(0.5)
     print("-"*20,"\n","done","\n","-"*20)
     # def get_realtime_value(FLIMageCont):
     #     res = FLIMageCont.flim.sendCommand("GetRealtimeValue")
@@ -1704,5 +1707,11 @@ if __name__ == "__main__":
 #     FLIMageCont.flim.sendCommand('IsGrabbing')
 #     print(datetime.now() - each_acquisition_from)
 # print(i)    
+x,y,z = FLIMageCont.get_position()
 
+FLIMageCont.go_to_absolute_pos_motor_checkstate(260663.0,211856.0,7247.59)
+# FLIMageCont.go_to_absolute_pos_motor_checkstate(x,y,z+5)
+print("done")
+xyz_text = "260663.0,211856.0,7247.59"
+FLIMageCont.flim.sendCommand(f"SetMotorPosition,{xyz_text}")
 # %%

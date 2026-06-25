@@ -2,7 +2,7 @@
 from gui_roi_fast_simple import run_tiff_uncaging_roi
 
 # %% set parameters and read image, define ROI, quantify intensity and lifetime
-ch_1or2 = 1
+ch_1or2 = 2
 z_plus_minus = 2
 uncaging_at_nth = 2
 
