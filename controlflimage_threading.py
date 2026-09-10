@@ -27,6 +27,7 @@ from FLIMageAlignment import flim_files_to_nparray,Align_4d_array,Align_3d_array
 from FLIM_pipeClient import FLIM_Com,FLIM_message_received
 from find_close_remotecontrol import close_remote_control, window_exists_startswith
 from find_yes_overwrite_warning import close_overwrite_warning
+from find_motor_connection_error import close_motor_connection_error
 from multidim_tiff_viewer import threeD_array_click, read_xyz_single
 
 
@@ -698,6 +699,12 @@ class Control_flimage():
             subprocess.Popen(self.flimage_exe)
             sleep(5)
             for i in range(10):
+                # If the stage failed to connect, FLIMage blocks its own splash
+                # screen behind a modal "Motor connection problem!!" MessageBox
+                # before FLIMageMain ever appears -- dismiss it so startup can
+                # proceed instead of looping here until max_error_num is hit.
+                if close_motor_connection_error():
+                    print("Dismissed 'Motor connection problem!!' dialog.")
                 if window_exists_startswith('FLIMage! Version')*window_exists_startswith('FLIM Analysis'):
                     print("FLIMage is opened.")
                     break
@@ -1777,11 +1784,11 @@ if __name__ == "__main__":
 #     FLIMageCont.flim.sendCommand('IsGrabbing')
 #     print(datetime.now() - each_acquisition_from)
 # print(i)    
-x,y,z = FLIMageCont.get_position()
+    x,y,z = FLIMageCont.get_position()
 
-FLIMageCont.go_to_absolute_pos_motor_checkstate(260663.0,211856.0,7247.59)
-# FLIMageCont.go_to_absolute_pos_motor_checkstate(x,y,z+5)
-print("done")
-xyz_text = "260663.0,211856.0,7247.59"
-FLIMageCont.flim.sendCommand(f"SetMotorPosition,{xyz_text}")
-# %%
+    FLIMageCont.go_to_absolute_pos_motor_checkstate(260663.0,211856.0,7247.59)
+    # FLIMageCont.go_to_absolute_pos_motor_checkstate(x,y,z+5)
+    print("done")
+    xyz_text = "260663.0,211856.0,7247.59"
+    FLIMageCont.flim.sendCommand(f"SetMotorPosition,{xyz_text}")
+    # %%

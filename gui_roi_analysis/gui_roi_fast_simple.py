@@ -45,6 +45,7 @@ from gui_integration import (
 )
 from file_selection_gui_tiff_only import launch_file_selection_gui_tiff_only
 from simple_dialog import ask_yes_no_gui, ask_open_path_gui
+from combined_df_path_remap import ensure_combined_df_paths_exist
 
 # -----------------------------------------------------------------------------
 # TEST CONFIG: fixed path, no predefined df, no dialogs
@@ -1723,6 +1724,15 @@ def run_tiff_uncaging_roi(
         print("No data. Exiting.")
         return
 
+    combined_df, _ = ensure_combined_df_paths_exist(
+        combined_df,
+        df_save_path=df_save_path_1,
+        anchors=one_of_filepath_list,
+    )
+    if combined_df is None:
+        print("Path remap cancelled.")
+        return
+
     # Determine whether to skip building full-size stacks.
     # NOTE: When using predefined_df, we must NOT skip rebuild entirely because
     # frame_info.csv (which stores runtime alignment shifts) must be regenerated
@@ -1932,6 +1942,15 @@ def run_tiff_uncaging_roi_no_zstack(
 
     if combined_df is None or len(combined_df) == 0:
         print("No data. Exiting.")
+        return
+
+    combined_df, _ = ensure_combined_df_paths_exist(
+        combined_df,
+        df_save_path=df_save_path_1,
+        anchors=one_of_filepath_list,
+    )
+    if combined_df is None:
+        print("Path remap cancelled.")
         return
 
     print("\n" + "=" * 60)

@@ -43,6 +43,7 @@ from gui_roi_fast_simple import (  # noqa: E402
     save_roi_analysis_error_log,
 )
 from simple_dialog import ask_open_path_gui, ask_yes_no_gui  # noqa: E402
+from combined_df_path_remap import ensure_combined_df_paths_exist  # noqa: E402
 
 DEFAULT_COMBINED_DF_NAME = "combined_df_respan.pkl"
 
@@ -118,11 +119,24 @@ def match_uncaging_record_for_set(
     if len(pre_df) == 0:
         return None
     last_pre = str(pre_df.iloc[-1]["file_path"])
-    target = _norm_path(last_pre)
+    target_base = os.path.basename(last_pre).lower()
+    basename_hit = None
+    try:
+        target = _norm_path(last_pre)
+    except (OSError, ValueError):
+        target = None
     for rec in records:
-        if _norm_path(rec.flim_path) == target:
-            return rec
-    return None
+        rec_path = str(rec.flim_path)
+        if target is not None:
+            try:
+                if _norm_path(rec_path) == target:
+                    return rec
+            except (OSError, ValueError):
+                pass
+        if os.path.basename(rec_path).lower() == target_base:
+            if basename_hit is None:
+                basename_hit = rec
+    return basename_hit
 
 
 def seg_mask_paths(highmag_folder: str, spine_stem: str) -> dict[str, Path]:
@@ -646,6 +660,15 @@ def run_tiff_uncaging_roi_respan(
 
     if combined_df is None or combined_df.empty:
         print("No data.")
+        return None, None
+
+    combined_df, _ = ensure_combined_df_paths_exist(
+        combined_df,
+        df_save_path=df_save_path,
+        anchors=one_of_filepath_list,
+    )
+    if combined_df is None:
+        print("Path remap cancelled.")
         return None, None
 
     if loaded_existing_combined_df and not _has_valid_roi_sets(combined_df):
