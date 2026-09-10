@@ -46,15 +46,25 @@ def long_axis_detection(props,HalfLen_c=0.35):
     return x0,x1,x2,x1_1,x2_1,y0,y1,y2,y1_1,y2_1
 
 def perpendicular_intersection(spine_x, spine_y, 
-                               dend_slope, dend_intercept):        
-    perpendicular_slope = -1 / dend_slope        
-    perpendicular_intercept = spine_y - perpendicular_slope * spine_x        
+                               dend_slope, dend_intercept):
+    """Foot of perpendicular from spine onto dendrite line y = m*x + b.
 
-    x_intersection = ((perpendicular_intercept - dend_intercept) / 
-                      (dend_slope - perpendicular_slope))
+    Handles near-horizontal dendrites (dend_slope ~ 0), where the perpendicular
+    is vertical and x_intersection == spine_x.
+    """
+    if abs(float(dend_slope)) < 1e-12:
+        x_intersection = float(spine_x)
+        y_intersection = float(dend_slope) * x_intersection + float(dend_intercept)
+        return x_intersection, y_intersection
 
-    y_intersection = dend_slope * x_intersection + dend_intercept
-    
+    perpendicular_slope = -1.0 / float(dend_slope)
+    perpendicular_intercept = float(spine_y) - perpendicular_slope * float(spine_x)
+
+    x_intersection = (
+        (perpendicular_intercept - float(dend_intercept))
+        / (float(dend_slope) - perpendicular_slope)
+    )
+    y_intersection = float(dend_slope) * x_intersection + float(dend_intercept)
     return x_intersection, y_intersection
 
 def plot_uncaging_point(props, binary, blur, image, candi_y,
@@ -409,37 +419,45 @@ class Control_flimage():
         self.dend_intercept = dend_intercept
         
 
-    def get_position(self):
+    def get_position(self, n_samples=5, sample_interval_sec=0.05):
+        """
+        Read motor XYZ via GetCurrentPosition.
+
+        n_samples>1 takes a median (legacy robust path). Use n_samples=1 for
+        fast scripting when FLIMage SetMotorPosition already waits for settle.
+        """
+        n_samples = max(1, int(n_samples))
         for i in range(10):
             try:
                 x_list = []
                 y_list = []
                 z_list = []
-                for j in range(5):
-                    CurrentPos=self.flim.sendCommand('GetCurrentPosition') 
-                    a,x_str,y_str,z_str=CurrentPos.split(',')
-                    x,y,z=float(x_str),float(y_str),float(z_str)
+                for j in range(n_samples):
+                    CurrentPos = self.flim.sendCommand('GetCurrentPosition')
+                    a, x_str, y_str, z_str = CurrentPos.split(',')
+                    x, y, z = float(x_str), float(y_str), float(z_str)
                     x_list.append(x)
                     y_list.append(y)
                     z_list.append(z)
-                    sleep(0.05)
-                x = np.median(x_list)
-                y = np.median(y_list)
-                z = np.median(z_list)
-                return x,y,z
-            except:
-                ("ERROR 105, Trouble in getting current position")
+                    if j + 1 < n_samples and sample_interval_sec > 0:
+                        sleep(sample_interval_sec)
+                x = float(np.median(x_list))
+                y = float(np.median(y_list))
+                z = float(np.median(z_list))
+                return x, y, z
+            except Exception:
+                print("ERROR 105, Trouble in getting current position")
                 self.reconnect()
                 print("reconnect done, sleep 10 sec")
                 sleep(10)
         try:
-            CurrentPos=self.flim.sendCommand('GetCurrentPosition') 
-            a,x_str,y_str,z_str=CurrentPos.split(',')
-            x,y,z=float(x_str),float(y_str),float(z_str)
-            return x,y,z
-        except:
+            CurrentPos = self.flim.sendCommand('GetCurrentPosition')
+            a, x_str, y_str, z_str = CurrentPos.split(',')
+            x, y, z = float(x_str), float(y_str), float(z_str)
+            return x, y, z
+        except Exception:
             print("ERROR 106, Trouble in getting current position")
-            return None,None,None
+            return None, None, None
                     
     def go_to_relative_pos_motor(self):
         x,y,z=self.get_position()
@@ -499,11 +517,39 @@ class Control_flimage():
     def go_to_absolute_pos_motor_checkstate(self,dest_x,dest_y,dest_z, 
                                             sq_err_thre = 10, 
                                             first_wait_sec = 2, 
-                                            iter_wait_sec = 1):
-        x,y,z=self.get_position()
+                                            iter_wait_sec = 1,
+                                            fast=False):
+        """
+        Move stage to absolute XYZ (um).
+
+        Legacy path (fast=False): unused pre-read get_position (5 samples),
+        fixed sleep, then poll with 5-sample get_position. Kept for older
+        scripts that rely on the long settle.
+
+        Fast path (fast=True): trust remote SetMotorPosition which now blocks
+        until movement finishes; then SetCenter once. Optional light verify.
+        """
         x_str=str(dest_x)
         y_str=str(dest_y)
         z_str=str(dest_z)
+
+        if fast:
+            print(f"print SetMotorPosition,{x_str},{y_str},{z_str} (fast)")
+            self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
+            dest_xyz = np.array([dest_x, dest_y, dest_z], dtype=float)
+            cur_x, cur_y, cur_z = self.get_position(n_samples=1)
+            if cur_x is not None:
+                current = np.array([cur_x, cur_y, cur_z], dtype=float)
+                sum_sq_err = float(((current - dest_xyz) ** 2).sum())
+                if sum_sq_err > 2:
+                    print(f"Fast motor verify retry (err={sum_sq_err:.2f})")
+                    self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
+            self.flim.sendCommand('SetCenter')
+            print("set center done")
+            return
+
+        # Legacy path. Pre-read position is unused (kept for behavior parity).
+        x,y,z=self.get_position()
                 
         print(f"print SetMotorPosition,{x_str},{y_str},{z_str}")
         self.flim.sendCommand(f"SetMotorPosition,{x_str},{y_str},{z_str}")
@@ -1529,12 +1575,23 @@ class Control_flimage():
                      spine_inipath = False,
                      plot_drift = True,
                      return_failure = False,
-                     overwrite_warning_click_yes = False):
+                     overwrite_warning_click_yes = False,
+                     folder=None,
+                     base_name=None,
+                     file_counter=None):
         self.start=datetime.now()
-        
-        self.folder = self.get_val_sendCommand("State.Files.pathName")
-        self.NameStem = self.get_val_sendCommand("State.Files.baseName")
-        self.childname = self.NameStem + str(int(self.get_val_sendCommand("State.Files.fileCounter"))).zfill(3)+".flim"
+
+        # Optional caller-supplied identity skips three blocking pipe GETs.
+        if folder is not None and base_name is not None and file_counter is not None:
+            self.folder = folder
+            self.NameStem = base_name
+            self.childname = (
+                f"{base_name}{str(int(file_counter)).zfill(3)}.flim"
+            )
+        else:
+            self.folder = self.get_val_sendCommand("State.Files.pathName")
+            self.NameStem = self.get_val_sendCommand("State.Files.baseName")
+            self.childname = self.NameStem + str(int(self.get_val_sendCommand("State.Files.fileCounter"))).zfill(3)+".flim"
         self.TxtWind = TextWindow()
         self.showWindow =True
         if self.defined_dendrite == True:
@@ -1557,8 +1614,13 @@ class Control_flimage():
                     self.flim.sendCommand('SetCenter')
 
             self.flimlist=glob.glob(os.path.join(self.folder,f"{self.NameStem}*.flim"))            
-            
-            if len(self.flimlist)>1:
+
+            need_post_grab_align = (
+                self.track_uncaging
+                or self.drift_control
+                or plot_drift
+            )
+            if len(self.flimlist)>1 and need_post_grab_align:
                 self.align_two_flimfile()
                 self.flim_connect_check()
                 if plot_drift == True:
@@ -1629,9 +1691,15 @@ if __name__ == "__main__":
     # singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging.txt"
     # singleplane_uncaging=r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\Zsingle_128_uncaging_test.txt"
     inipath_inverted1 = r"C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
+    inipath_inverted_lower = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
     inipath_laptop = r"C:\Users\WatabeT\Documents\Git\controlFLIMage\DirectionSetting.ini"
 
-    ini_path = inipath_inverted1 if os.path.exists(inipath_inverted1) else inipath_laptop
+    if os.path.exists(inipath_inverted1):
+        ini_path = inipath_inverted1
+    elif os.path.exists(inipath_inverted_lower):
+        ini_path = inipath_inverted_lower
+    else:
+        ini_path = inipath_laptop
     FLIMageCont = Control_flimage(ini_path = ini_path, debug_mode=True)
 
     if False:

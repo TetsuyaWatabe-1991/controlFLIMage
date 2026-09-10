@@ -4,7 +4,7 @@ from gui_roi_fast_simple import run_tiff_uncaging_roi_no_zstack, create_initial_
 df_save_path_1, out_csv_path = run_tiff_uncaging_roi_no_zstack(
     ch_1or2=2,
     z_plus_minus=1,
-    pre_length=1,
+    pre_length=0,
     photon_threshold=15,
     total_photon_threshold=1000,
     uncaging_frame_num=[32, 33, 34, 35, 55],

@@ -48,7 +48,7 @@ def first_processing_for_flim_files(
     save_tif_TF = True,
     ignore_words = ["for_align"],
     return_error_dict = False,
-    uncaging_frame_num = [33, 34, 35, 55],
+    uncaging_frame_num = [33, 34, 35, 36, 55, 80, 144],
     titration_frame_num = None,
     ) -> pd.DataFrame:
 

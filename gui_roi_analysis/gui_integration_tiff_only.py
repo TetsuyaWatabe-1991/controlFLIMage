@@ -15,6 +15,7 @@ from gui_integration import (
     create_roi_mask_from_params,
     SHIFT_DIRECTION
 )
+from roi_keyframe_utils import expand_uncaging_roi_keyframes
 
 
 def save_roi_mask_from_gui_to_tiff(gui_instance, save_path, header="ROI"):
@@ -41,6 +42,21 @@ def save_roi_mask_from_gui_to_tiff(gui_instance, save_path, header="ROI"):
     
     # Check if GUI instance has frame-specific ROI parameters
     has_frame_specific_params = hasattr(gui_instance, 'frame_roi_parameters') and gui_instance.frame_roi_parameters
+
+    frame_roi_parameters = (
+        gui_instance.frame_roi_parameters if has_frame_specific_params else {}
+    )
+    if (
+        hasattr(gui_instance, "uncaging_keyframe_mode")
+        and gui_instance.uncaging_keyframe_mode
+    ):
+        frame_roi_parameters = expand_uncaging_roi_keyframes(
+            frame_roi_parameters,
+            int(getattr(gui_instance, "n_pre_frames", 0) or 0),
+            int(getattr(gui_instance, "n_unc_frames", 0) or 0),
+            getattr(gui_instance, "uncaging_roi_keyframe_count", None),
+            gui_instance.roi_shape,
+        )
     
     # Collect all ROI masks
     roi_masks = []
@@ -48,9 +64,14 @@ def save_roi_mask_from_gui_to_tiff(gui_instance, save_path, header="ROI"):
     
     for frame_idx in range(num_frames):
         # Get ROI parameters for this frame
-        if has_frame_specific_params and frame_idx in gui_instance.frame_roi_parameters:
-            frame_roi_params = gui_instance.frame_roi_parameters[frame_idx]
+        if hasattr(gui_instance, "_get_effective_roi_params"):
+            frame_roi_params = gui_instance._get_effective_roi_params(frame_idx)
+        elif frame_idx in frame_roi_parameters:
+            frame_roi_params = frame_roi_parameters[frame_idx]
         else:
+            frame_roi_params = gui_instance.roi_parameters
+
+        if not frame_roi_params:
             frame_roi_params = gui_instance.roi_parameters
         
         # Create ROI mask for this frame
@@ -103,6 +124,7 @@ def launch_roi_analysis_gui_tiff_only(
     header="ROI",
     save_tiff_path=None,
     shortcut_host=None,
+    uncaging_roi_keyframe_count=None,
 ):
     """Launch the ROI analysis GUI with TIFF-only saving option.
     
@@ -266,6 +288,16 @@ def launch_roi_analysis_gui_tiff_only(
     file_info['set_label'] = each_set_label
     # Pass TIFF path so GUI can check for existing ROI mask and start in View mode if present
     file_info['tiff_data_path'] = tiff_data_path
+
+    n_pre_frames = 0
+    n_unc_frames = 0
+    if "n_pre_frames" in filtered_df.columns and pd.notna(filtered_df["n_pre_frames"].iloc[0]):
+        n_pre_frames = int(filtered_df["n_pre_frames"].iloc[0])
+    if "n_unc_frames" in filtered_df.columns and pd.notna(filtered_df["n_unc_frames"].iloc[0]):
+        n_unc_frames = int(filtered_df["n_unc_frames"].iloc[0])
+    file_info["n_pre_frames"] = n_pre_frames
+    file_info["n_unc_frames"] = n_unc_frames
+    file_info["uncaging_roi_keyframe_count"] = uncaging_roi_keyframe_count
 
     # Load per-frame info from *_after_align_full_frame_info.csv if present (for per-frame display)
     frame_info_path = os.path.join(

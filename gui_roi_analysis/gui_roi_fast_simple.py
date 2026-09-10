@@ -25,6 +25,9 @@ import sys
 sys.path.append('..\\')
 sys.path.append(os.path.dirname(__file__))
 
+from collections import Counter
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import tifffile
@@ -347,11 +350,420 @@ def rebuild_tiff_with_uncaging_3d(combined_df: pd.DataFrame, ch: int):
     return combined_df
 
 
+def peek_flim_raw_image_shape(flim_path: str) -> tuple[int, ...] | None:
+    """Return FileReader imagearray.shape, or None if the file cannot be read."""
+    try:
+        iminfo = FileReader()
+        iminfo.read_imageFile(flim_path, True)
+        return tuple(np.array(iminfo.image).shape)
+    except Exception:
+        return None
+
+
+def select_majority_shape_files(
+    filelist: list[str],
+    *,
+    shape_by_path: dict[str, tuple[int, ...]] | None = None,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Keep files matching the most common raw image shape.
+
+    Returns (kept_paths, skipped as (path, reason)). When ``shape_by_path`` is
+    given, it is used instead of reading FLIM files (for tests).
+    """
+    skipped: list[tuple[str, str]] = []
+    shaped: list[tuple[str, tuple[int, ...]]] = []
+    for path in filelist:
+        if shape_by_path is not None:
+            shape = shape_by_path.get(path)
+        else:
+            shape = peek_flim_raw_image_shape(path)
+        if shape is None:
+            skipped.append((path, "could not read raw image shape"))
+            continue
+        shaped.append((path, tuple(shape)))
+    if not shaped:
+        return [], skipped
+    counts = Counter(shape for _, shape in shaped)
+    majority_shape, _ = counts.most_common(1)[0]
+    kept: list[str] = []
+    for path, shape in shaped:
+        if shape == majority_shape:
+            kept.append(path)
+        else:
+            skipped.append(
+                (path, f"raw shape {shape} != majority {majority_shape}")
+            )
+    return kept, skipped
+
+
+def aligned_array_index_or_none(
+    file_path: str,
+    file_path_to_array_idx: dict[str, int],
+    n_aligned: int,
+) -> int | None:
+    """Return aligned-stack index, or None if missing or out of range."""
+    if file_path not in file_path_to_array_idx:
+        return None
+    array_idx = int(file_path_to_array_idx[file_path])
+    if array_idx < 0 or array_idx >= int(n_aligned):
+        return None
+    return array_idx
+
+
+def safe_aligned_zproj(
+    aligned_4d: np.ndarray,
+    array_idx: int | None,
+    z_from: int,
+    z_to: int,
+) -> np.ndarray | None:
+    """Max-Z projection of one aligned volume, or None if the index is invalid."""
+    if array_idx is None:
+        return None
+    n_aligned = int(aligned_4d.shape[0])
+    if array_idx < 0 or array_idx >= n_aligned:
+        return None
+    return aligned_4d[array_idx, z_from:z_to, :, :].max(axis=0)
+
+
+def format_roi_error(
+    *,
+    group: Any = "",
+    set_label: Any = "",
+    file: str = "",
+    reason: str,
+) -> str:
+    """Single skip/error line: group, set, file, reason."""
+    return f"group={group} set={set_label} file={file} reason={reason}"
+
+
+def record_roi_error(
+    error_log: list[str] | None,
+    *,
+    group: Any = "",
+    set_label: Any = "",
+    file: str = "",
+    reason: str,
+) -> str:
+    """Print a skip/error line and append it to error_log when provided."""
+    msg = format_roi_error(
+        group=group, set_label=set_label, file=file, reason=reason
+    )
+    print(f"  SKIP: {msg}")
+    if error_log is not None:
+        error_log.append(msg)
+    return msg
+
+
+def format_roi_analysis_errors_block(error_log: list[str]) -> str:
+    """Final ERRORS (N) text block."""
+    lines = [f"ERRORS ({len(error_log)})"]
+    lines.extend(error_log)
+    return "\n".join(lines) + "\n"
+
+
+def print_roi_analysis_errors(error_log: list[str]) -> None:
+    """Print the final ERRORS (N) block."""
+    print("\n" + "=" * 60)
+    print(format_roi_analysis_errors_block(error_log).rstrip("\n"))
+    print("=" * 60)
+
+
+def save_roi_analysis_error_log(
+    session_dir: str,
+    error_log: list[str],
+    *,
+    timestamp: str | None = None,
+) -> str | None:
+    """Write roi_analysis_errors_YYYYMMDD_HHMMSS.txt. Empty log is not written."""
+    if not error_log:
+        return None
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(session_dir, f"roi_analysis_errors_{timestamp}.txt")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(format_roi_analysis_errors_block(error_log))
+    return path
+
+
+def _rebuild_one_set_full_size(
+    *,
+    combined_df: pd.DataFrame,
+    each_set_df: pd.DataFrame,
+    each_set_label: Any,
+    each_group: Any,
+    ch: int,
+    z_plus_minus: int,
+    Z_full: int,
+    Y_full: int,
+    X_full: int,
+    Aligned_4d_array: np.ndarray,
+    file_path_to_array_idx: dict[str, int],
+    n_aligned: int,
+    runtime_shift_map: dict[str, tuple[float, float]],
+    tif_savefolder: str,
+    skip_tiff_if_exists: bool,
+    error_log: list[str] | None,
+) -> None:
+    """Build full-size pre/unc/post TIFFs for one set. Mutates combined_df in place."""
+    uncaging_rows = each_set_df[each_set_df["phase"] == "unc"]
+    if len(uncaging_rows) == 0:
+        return
+    unc_path = uncaging_rows.iloc[0]["file_path"]
+    if not os.path.exists(unc_path):
+        record_roi_error(
+            error_log,
+            group=each_group,
+            set_label=each_set_label,
+            file=os.path.basename(str(unc_path)),
+            reason="uncaging file not found",
+        )
+        return
+    corrected_uncaging_z = int(each_set_df["corrected_uncaging_z"].values[0])
+    z_from = max(0, min(corrected_uncaging_z - z_plus_minus, Z_full - 1))
+    z_to = min(Z_full, corrected_uncaging_z + z_plus_minus + 1)
+    z_to = max(z_to, z_from + 1)
+
+    pre_list = []
+    pre_raw_list = []
+    pre_filenames = []
+    pre_file_paths = []
+    pre_shifts = []
+    for _, row in each_set_df[each_set_df["phase"] == "pre"].sort_values("nth_omit_induction").iterrows():
+        fp = row["file_path"]
+        array_idx = aligned_array_index_or_none(fp, file_path_to_array_idx, n_aligned)
+        zproj = safe_aligned_zproj(Aligned_4d_array, array_idx, z_from, z_to)
+        if zproj is None:
+            if fp in file_path_to_array_idx:
+                record_roi_error(
+                    error_log,
+                    group=each_group,
+                    set_label=each_set_label,
+                    file=os.path.basename(fp),
+                    reason=(
+                        f"aligned index {file_path_to_array_idx[fp]} "
+                        f"out of range (n_aligned={n_aligned})"
+                    ),
+                )
+            continue
+        pre_list.append(zproj)
+        pre_filenames.append(os.path.basename(fp))
+        pre_file_paths.append(fp)
+        if fp in runtime_shift_map:
+            pre_shifts.append(runtime_shift_map[fp])
+        else:
+            pre_shifts.append((float(row.get("shift_y", 0) or 0), float(row.get("shift_x", 0) or 0)))
+        try:
+            pre_raw_list.append(_load_flim_zproj_full(fp, ch, z_from, z_to))
+        except Exception:
+            pre_raw_list.append(zproj.copy())
+    pre_stack = np.stack(pre_list, axis=0) if pre_list else np.empty((0, Y_full, X_full), dtype=np.float32)
+    pre_raw_stack = np.stack(pre_raw_list, axis=0) if pre_raw_list else np.empty((0, Y_full, X_full), dtype=np.float32)
+
+    post_list = []
+    post_raw_list = []
+    post_filenames = []
+    post_file_paths = []
+    post_shifts = []
+    for _, row in each_set_df[each_set_df["phase"] == "post"].sort_values("nth_omit_induction").iterrows():
+        fp = row["file_path"]
+        array_idx = aligned_array_index_or_none(fp, file_path_to_array_idx, n_aligned)
+        zproj = safe_aligned_zproj(Aligned_4d_array, array_idx, z_from, z_to)
+        if zproj is None:
+            if fp in file_path_to_array_idx:
+                record_roi_error(
+                    error_log,
+                    group=each_group,
+                    set_label=each_set_label,
+                    file=os.path.basename(fp),
+                    reason=(
+                        f"aligned index {file_path_to_array_idx[fp]} "
+                        f"out of range (n_aligned={n_aligned})"
+                    ),
+                )
+            continue
+        post_list.append(zproj)
+        post_filenames.append(os.path.basename(fp))
+        post_file_paths.append(fp)
+        if fp in runtime_shift_map:
+            post_shifts.append(runtime_shift_map[fp])
+        else:
+            post_shifts.append((float(row.get("shift_y", 0) or 0), float(row.get("shift_x", 0) or 0)))
+        try:
+            post_raw_list.append(_load_flim_zproj_full(fp, ch, z_from, z_to))
+        except Exception:
+            post_raw_list.append(zproj.copy())
+    post_stack = np.stack(post_list, axis=0) if post_list else np.empty((0, Y_full, X_full), dtype=np.float32)
+    post_raw_stack = np.stack(post_raw_list, axis=0) if post_raw_list else np.empty((0, Y_full, X_full), dtype=np.float32)
+
+    try:
+        unc_frames_full = _load_uncaging_full(unc_path, ch)
+    except Exception as e:
+        print(f"  Set {each_set_label}: _load_uncaging_full failed: {e}")
+        record_roi_error(
+            error_log,
+            group=each_group,
+            set_label=each_set_label,
+            file=os.path.basename(unc_path),
+            reason=f"_load_uncaging_full failed: {e}",
+        )
+        return
+    if not unc_frames_full:
+        record_roi_error(
+            error_log,
+            group=each_group,
+            set_label=each_set_label,
+            file=os.path.basename(unc_path),
+            reason="no uncaging frames",
+        )
+        return
+    unc_stack = np.stack(unc_frames_full, axis=0)
+    if unc_stack.shape[1] != Y_full or unc_stack.shape[2] != X_full:
+        from skimage.transform import resize
+        unc_resized = []
+        for k in range(unc_stack.shape[0]):
+            f = resize(unc_stack[k], (Y_full, X_full), order=1, preserve_range=True).astype(np.float32)
+            unc_resized.append(f)
+        unc_stack = np.stack(unc_resized, axis=0)
+
+    unc_drift_y, unc_drift_x = 0.0, 0.0
+    if pre_stack.shape[0] > 0 and unc_stack.shape[0] > 0:
+        ref_2d = pre_stack[-1].astype(np.float64)
+        query_2d = unc_stack[0].astype(np.float64)
+        try:
+            shift_2d, _, _ = phase_cross_correlation(ref_2d, query_2d, upsample_factor=4)
+            unc_drift_y, unc_drift_x = float(shift_2d[0]), float(shift_2d[1])
+            unc_aligned = []
+            for k in range(unc_stack.shape[0]):
+                f_fft = np.fft.fftn(unc_stack[k].astype(np.float64))
+                f_shifted = _fourier_shift(f_fft, shift_2d)
+                f_aligned = np.fft.ifftn(f_shifted).real.astype(np.float32)
+                unc_aligned.append(f_aligned)
+            unc_stack = np.stack(unc_aligned, axis=0)
+        except Exception as e:
+            print(f"  Set {each_set_label}: uncaging align failed ({e}), using unaligned")
+
+    unc_row_idx = each_set_df[each_set_df["phase"] == "unc"].index[0]
+    combined_df.loc[unc_row_idx, "unc_drift_y"] = unc_drift_y
+    combined_df.loc[unc_row_idx, "unc_drift_x"] = unc_drift_x
+
+    new_stack = np.concatenate([pre_stack, unc_stack, post_stack], axis=0)
+    base_name = f"{each_group}_{each_set_label}_after_align_full"
+    new_tiff_path = os.path.join(tif_savefolder, base_name + ".tif")
+    if not skip_tiff_if_exists or not os.path.exists(new_tiff_path):
+        tifffile.imwrite(new_tiff_path, new_stack.astype(np.float32))
+        print(
+            f"  Set {each_set_label}: saved full-size {base_name}.tif "
+            f"(Pre {pre_stack.shape[0]} + Unc {unc_stack.shape[0]} + Post {post_stack.shape[0]})"
+        )
+    else:
+        print(
+            f"  Set {each_set_label}: {base_name}.tif already exists, "
+            "skipping write (skip_tiff_if_exists=True)"
+        )
+    combined_df.loc[each_set_df.index, "after_align_full_save_path"] = new_tiff_path
+    before_stack = np.concatenate(
+        [pre_raw_stack, np.stack(unc_frames_full, axis=0), post_raw_stack], axis=0
+    )
+    before_base_name = f"{each_group}_{each_set_label}_before_align_full"
+    before_tiff_path = os.path.join(tif_savefolder, before_base_name + ".tif")
+    if not skip_tiff_if_exists or not os.path.exists(before_tiff_path):
+        tifffile.imwrite(before_tiff_path, before_stack.astype(np.float32))
+        print(f"  Set {each_set_label}: saved full-size {before_base_name}.tif (non-aligned)")
+    else:
+        print(f"  Set {each_set_label}: {before_base_name}.tif already exists, skipping write")
+    combined_df.loc[each_set_df.index, "before_align_full_save_path"] = before_tiff_path
+    combined_df.loc[each_set_df.index, "n_pre_frames"] = pre_stack.shape[0]
+    combined_df.loc[each_set_df.index, "n_unc_frames"] = unc_stack.shape[0]
+    combined_df.loc[each_set_df.index, "n_post_frames"] = post_stack.shape[0]
+    print(
+        f"    Frame order: 0-{pre_stack.shape[0]-1}=pre, "
+        f"{pre_stack.shape[0]}-{pre_stack.shape[0]+unc_stack.shape[0]-1}=uncaging, "
+        f"{pre_stack.shape[0]+unc_stack.shape[0]}-{new_stack.shape[0]-1}=post"
+    )
+    unc_basename = os.path.basename(unc_path)
+    iminfo_unc = FileReader()
+    iminfo_unc.read_imageFile(unc_path, False)
+    acq_time_unc = list(iminfo_unc.acqTime) if iminfo_unc.acqTime else []
+    frame_info_rows = []
+    for i in range(pre_stack.shape[0]):
+        acq_str = _get_acq_time_str(pre_file_paths[i], 0) if i < len(pre_file_paths) else ""
+        sy, sx = pre_shifts[i] if i < len(pre_shifts) else (np.nan, np.nan)
+        frame_info_rows.append(
+            {
+                "frame": i,
+                "Z_projection": True,
+                "nth_slice": "",
+                "filename": pre_filenames[i] if i < len(pre_filenames) else "",
+                "phase": "pre",
+                "acq_time_str": acq_str,
+                "z_from": z_from,
+                "z_to": z_to,
+                "shift_y": sy,
+                "shift_x": sx,
+            }
+        )
+    for k in range(unc_stack.shape[0]):
+        acq_str = acq_time_unc[k] if k < len(acq_time_unc) else ""
+        if acq_str:
+            acq_str = str(acq_str).strip()
+        frame_info_rows.append(
+            {
+                "frame": pre_stack.shape[0] + k,
+                "Z_projection": False,
+                "nth_slice": k,
+                "filename": unc_basename,
+                "phase": "uncaging",
+                "acq_time_str": acq_str,
+                "z_from": np.nan,
+                "z_to": np.nan,
+                "shift_y": unc_drift_y,
+                "shift_x": unc_drift_x,
+            }
+        )
+    for i in range(post_stack.shape[0]):
+        acq_str = _get_acq_time_str(post_file_paths[i], 0) if i < len(post_file_paths) else ""
+        sy, sx = post_shifts[i] if i < len(post_shifts) else (np.nan, np.nan)
+        frame_info_rows.append(
+            {
+                "frame": pre_stack.shape[0] + unc_stack.shape[0] + i,
+                "Z_projection": True,
+                "nth_slice": "",
+                "filename": post_filenames[i] if i < len(post_filenames) else "",
+                "phase": "post",
+                "acq_time_str": acq_str,
+                "z_from": z_from,
+                "z_to": z_to,
+                "shift_y": sy,
+                "shift_x": sx,
+            }
+        )
+    datetimes_list = []
+    for r in frame_info_rows:
+        s = r.get("acq_time_str", "") or ""
+        if s:
+            try:
+                datetimes_list.append(_parse_acq_time(s))
+            except Exception:
+                datetimes_list.append(None)
+        else:
+            datetimes_list.append(None)
+    t0 = min((dt for dt in datetimes_list if dt is not None), default=None)
+    for idx, r in enumerate(frame_info_rows):
+        if t0 is not None and datetimes_list[idx] is not None:
+            r["elapsed_time_sec"] = (datetimes_list[idx] - t0).total_seconds()
+        else:
+            r["elapsed_time_sec"] = np.nan
+    frame_info_path = os.path.join(tif_savefolder, base_name + "_frame_info.csv")
+    pd.DataFrame(frame_info_rows).to_csv(frame_info_path, index=False)
+    print(f"    Saved {base_name}_frame_info.csv")
+
+
 def rebuild_tiff_full_size_for_roi(
     combined_df: pd.DataFrame,
     ch: int,
     z_plus_minus: int,
     skip_tiff_if_exists: bool = False,
+    error_log: list[str] | None = None,
 ):
     """
     Build full-size stack per set for ROI definition: Pre Z-proj (full) + Uncaging
@@ -363,6 +775,8 @@ def rebuild_tiff_full_size_for_roi(
             Alignment (load_and_align_data) is always run to regenerate frame_info.csv with
             correct runtime shifts. This is faster when TIFFs are already built but
             frame_info.csv needs to be refreshed.
+        error_log: Optional list; skip/error strings (group, set, file, reason) are appended.
+            Per-group and per-set failures are skipped so the rest of the session continues.
     """
     required = ["corrected_uncaging_z", "small_x_from", "small_x_to"]
     if not all(c in combined_df.columns for c in required):
@@ -382,18 +796,44 @@ def rebuild_tiff_full_size_for_roi(
             if len(filelist) == 0:
                 continue
             try:
-                Aligned_4d_array, shifts, _ = load_and_align_data(filelist, ch=ch - 1)
+                kept_filelist, skipped_shape = select_majority_shape_files(filelist)
+                for skipped_path, reason in skipped_shape:
+                    record_roi_error(
+                        error_log,
+                        group=each_group,
+                        set_label="",
+                        file=os.path.basename(skipped_path),
+                        reason=reason,
+                    )
+                if len(kept_filelist) == 0:
+                    record_roi_error(
+                        error_log,
+                        group=each_group,
+                        set_label="",
+                        file="",
+                        reason="no pre/post files remaining after majority-shape filter",
+                    )
+                    continue
+                Aligned_4d_array, shifts, _ = load_and_align_data(kept_filelist, ch=ch - 1)
             except Exception as e:
                 print(f"  Group {each_group}: load_and_align_data failed: {e}")
+                record_roi_error(
+                    error_log,
+                    group=each_group,
+                    set_label="",
+                    file="",
+                    reason=f"load_and_align_data failed: {e}",
+                )
                 continue
             _, Z_full, Y_full, X_full = Aligned_4d_array.shape
-            # Map file_path -> index in Aligned_4d_array (filelist order); needed when group has multiple sets
-            file_path_to_array_idx = {path: i for i, path in enumerate(filelist)}
-            # Runtime alignment shifts from load_and_align_data (same order as filelist):
+            # Map only files that were actually aligned (kept_filelist order).
+            file_path_to_array_idx = {path: i for i, path in enumerate(kept_filelist)}
+            n_aligned = int(Aligned_4d_array.shape[0])
+            # Runtime alignment shifts from load_and_align_data (same order as kept_filelist):
             # shifts[:, 1] = shift_y, shifts[:, 2] = shift_x
             runtime_shift_map = {}
             try:
-                for i, path in enumerate(filelist):
+                for i, path in enumerate(kept_filelist):
                     if i < len(shifts):
                         runtime_shift_map[path] = (
                             float(shifts[i][1]) if len(shifts[i]) > 1 else 0.0,
@@ -406,167 +846,34 @@ def rebuild_tiff_full_size_for_roi(
                 if each_set_label == -1:
                     continue
                 each_set_df = each_group_df[each_group_df["nth_set_label"] == each_set_label]
-                uncaging_rows = each_set_df[each_set_df["phase"] == "unc"]
-                if len(uncaging_rows) == 0:
-                    continue
-                unc_path = uncaging_rows.iloc[0]["file_path"]
-                if not os.path.exists(unc_path):
-                    continue
-                corrected_uncaging_z = int(each_set_df["corrected_uncaging_z"].values[0])
-                z_from = max(0, min(corrected_uncaging_z - z_plus_minus, Z_full - 1))
-                z_to = min(Z_full, corrected_uncaging_z + z_plus_minus + 1)
-                z_to = max(z_to, z_from + 1)
-
-                # Use each row's file_path -> array index so pre/post order matches group filelist (time series)
-                pre_list = []
-                pre_raw_list = []
-                pre_filenames = []
-                pre_file_paths = []
-                pre_shifts = []
-                for _, row in each_set_df[each_set_df["phase"] == "pre"].sort_values("nth_omit_induction").iterrows():
-                    fp = row["file_path"]
-                    if fp not in file_path_to_array_idx:
-                        continue
-                    array_idx = file_path_to_array_idx[fp]
-                    zproj = Aligned_4d_array[array_idx, z_from:z_to, :, :].max(axis=0)
-                    pre_list.append(zproj)
-                    pre_filenames.append(os.path.basename(fp))
-                    pre_file_paths.append(fp)
-                    if fp in runtime_shift_map:
-                        pre_shifts.append(runtime_shift_map[fp])
-                    else:
-                        pre_shifts.append((float(row.get("shift_y", 0) or 0), float(row.get("shift_x", 0) or 0)))
-                    try:
-                        pre_raw_list.append(_load_flim_zproj_full(fp, ch, z_from, z_to))
-                    except Exception:
-                        pre_raw_list.append(zproj.copy())
-                pre_stack = np.stack(pre_list, axis=0) if pre_list else np.empty((0, Y_full, X_full), dtype=np.float32)
-                pre_raw_stack = np.stack(pre_raw_list, axis=0) if pre_raw_list else np.empty((0, Y_full, X_full), dtype=np.float32)
-
-                post_list = []
-                post_raw_list = []
-                post_filenames = []
-                post_file_paths = []
-                post_shifts = []
-                for _, row in each_set_df[each_set_df["phase"] == "post"].sort_values("nth_omit_induction").iterrows():
-                    fp = row["file_path"]
-                    if fp not in file_path_to_array_idx:
-                        continue
-                    array_idx = file_path_to_array_idx[fp]
-                    zproj = Aligned_4d_array[array_idx, z_from:z_to, :, :].max(axis=0)
-                    post_list.append(zproj)
-                    post_filenames.append(os.path.basename(fp))
-                    post_file_paths.append(fp)
-                    if fp in runtime_shift_map:
-                        post_shifts.append(runtime_shift_map[fp])
-                    else:
-                        post_shifts.append((float(row.get("shift_y", 0) or 0), float(row.get("shift_x", 0) or 0)))
-                    try:
-                        post_raw_list.append(_load_flim_zproj_full(fp, ch, z_from, z_to))
-                    except Exception:
-                        post_raw_list.append(zproj.copy())
-                post_stack = np.stack(post_list, axis=0) if post_list else np.empty((0, Y_full, X_full), dtype=np.float32)
-                post_raw_stack = np.stack(post_raw_list, axis=0) if post_raw_list else np.empty((0, Y_full, X_full), dtype=np.float32)
-
                 try:
-                    unc_frames_full = _load_uncaging_full(unc_path, ch)
+                    _rebuild_one_set_full_size(
+                        combined_df=combined_df,
+                        each_set_df=each_set_df,
+                        each_set_label=each_set_label,
+                        each_group=each_group,
+                        ch=ch,
+                        z_plus_minus=z_plus_minus,
+                        Z_full=Z_full,
+                        Y_full=Y_full,
+                        X_full=X_full,
+                        Aligned_4d_array=Aligned_4d_array,
+                        file_path_to_array_idx=file_path_to_array_idx,
+                        n_aligned=n_aligned,
+                        runtime_shift_map=runtime_shift_map,
+                        tif_savefolder=tif_savefolder,
+                        skip_tiff_if_exists=skip_tiff_if_exists,
+                        error_log=error_log,
+                    )
                 except Exception as e:
-                    print(f"  Set {each_set_label}: _load_uncaging_full failed: {e}")
+                    record_roi_error(
+                        error_log,
+                        group=each_group,
+                        set_label=each_set_label,
+                        file="",
+                        reason=f"{type(e).__name__}: {e}",
+                    )
                     continue
-                if not unc_frames_full:
-                    continue
-                unc_stack = np.stack(unc_frames_full, axis=0)
-                if unc_stack.shape[1] != Y_full or unc_stack.shape[2] != X_full:
-                    from skimage.transform import resize
-                    unc_resized = []
-                    for k in range(unc_stack.shape[0]):
-                        f = resize(unc_stack[k], (Y_full, X_full), order=1, preserve_range=True).astype(np.float32)
-                        unc_resized.append(f)
-                    unc_stack = np.stack(unc_resized, axis=0)
-
-                unc_drift_y, unc_drift_x = 0.0, 0.0
-                if pre_stack.shape[0] > 0 and unc_stack.shape[0] > 0:
-                    ref_2d = pre_stack[-1].astype(np.float64)
-                    query_2d = unc_stack[0].astype(np.float64)
-                    try:
-                        shift_2d, _, _ = phase_cross_correlation(ref_2d, query_2d, upsample_factor=4)
-                        unc_drift_y, unc_drift_x = float(shift_2d[0]), float(shift_2d[1])
-                        unc_aligned = []
-                        for k in range(unc_stack.shape[0]):
-                            f_fft = np.fft.fftn(unc_stack[k].astype(np.float64))
-                            f_shifted = _fourier_shift(f_fft, shift_2d)
-                            f_aligned = np.fft.ifftn(f_shifted).real.astype(np.float32)
-                            unc_aligned.append(f_aligned)
-                        unc_stack = np.stack(unc_aligned, axis=0)
-                    except Exception as e:
-                        print(f"  Set {each_set_label}: uncaging align failed ({e}), using unaligned")
-
-                unc_row_idx = each_set_df[each_set_df["phase"] == "unc"].index[0]
-                combined_df.loc[unc_row_idx, "unc_drift_y"] = unc_drift_y
-                combined_df.loc[unc_row_idx, "unc_drift_x"] = unc_drift_x
-
-                new_stack = np.concatenate([pre_stack, unc_stack, post_stack], axis=0)
-                base_name = f"{each_group}_{each_set_label}_after_align_full"
-                new_tiff_path = os.path.join(tif_savefolder, base_name + ".tif")
-                if not skip_tiff_if_exists or not os.path.exists(new_tiff_path):
-                    tifffile.imwrite(new_tiff_path, new_stack.astype(np.float32))
-                    print(f"  Set {each_set_label}: saved full-size {base_name}.tif (Pre {pre_stack.shape[0]} + Unc {unc_stack.shape[0]} + Post {post_stack.shape[0]})")
-                else:
-                    print(f"  Set {each_set_label}: {base_name}.tif already exists, skipping write (skip_tiff_if_exists=True)")
-                combined_df.loc[each_set_df.index, "after_align_full_save_path"] = new_tiff_path
-                before_stack = np.concatenate([pre_raw_stack, np.stack(unc_frames_full, axis=0), post_raw_stack], axis=0)
-                before_base_name = f"{each_group}_{each_set_label}_before_align_full"
-                before_tiff_path = os.path.join(tif_savefolder, before_base_name + ".tif")
-                if not skip_tiff_if_exists or not os.path.exists(before_tiff_path):
-                    tifffile.imwrite(before_tiff_path, before_stack.astype(np.float32))
-                    print(f"  Set {each_set_label}: saved full-size {before_base_name}.tif (non-aligned)")
-                else:
-                    print(f"  Set {each_set_label}: {before_base_name}.tif already exists, skipping write")
-                combined_df.loc[each_set_df.index, "before_align_full_save_path"] = before_tiff_path
-                combined_df.loc[each_set_df.index, "n_pre_frames"] = pre_stack.shape[0]
-                combined_df.loc[each_set_df.index, "n_unc_frames"] = unc_stack.shape[0]
-                combined_df.loc[each_set_df.index, "n_post_frames"] = post_stack.shape[0]
-                # Frame order for verification: 0..n_pre-1=pre, n_pre..n_pre+n_unc-1=uncaging, then post
-                print(f"    Frame order: 0-{pre_stack.shape[0]-1}=pre, {pre_stack.shape[0]}-{pre_stack.shape[0]+unc_stack.shape[0]-1}=uncaging, {pre_stack.shape[0]+unc_stack.shape[0]}-{new_stack.shape[0]-1}=post")
-                # Per-frame source CSV for easy verification (test use); include acq_time_str and elapsed_time_sec
-                unc_basename = os.path.basename(unc_path)
-                iminfo_unc = FileReader()
-                iminfo_unc.read_imageFile(unc_path, False)
-                acq_time_unc = list(iminfo_unc.acqTime) if iminfo_unc.acqTime else []
-                frame_info_rows = []
-                for i in range(pre_stack.shape[0]):
-                    acq_str = _get_acq_time_str(pre_file_paths[i], 0) if i < len(pre_file_paths) else ""
-                    sy, sx = pre_shifts[i] if i < len(pre_shifts) else (np.nan, np.nan)
-                    frame_info_rows.append({"frame": i, "Z_projection": True, "nth_slice": "", "filename": pre_filenames[i] if i < len(pre_filenames) else "", "phase": "pre", "acq_time_str": acq_str, "z_from": z_from, "z_to": z_to, "shift_y": sy, "shift_x": sx})
-                for k in range(unc_stack.shape[0]):
-                    acq_str = acq_time_unc[k] if k < len(acq_time_unc) else ""
-                    if acq_str:
-                        acq_str = str(acq_str).strip()
-                    frame_info_rows.append({"frame": pre_stack.shape[0] + k, "Z_projection": False, "nth_slice": k, "filename": unc_basename, "phase": "uncaging", "acq_time_str": acq_str, "z_from": np.nan, "z_to": np.nan, "shift_y": unc_drift_y, "shift_x": unc_drift_x})
-                for i in range(post_stack.shape[0]):
-                    acq_str = _get_acq_time_str(post_file_paths[i], 0) if i < len(post_file_paths) else ""
-                    sy, sx = post_shifts[i] if i < len(post_shifts) else (np.nan, np.nan)
-                    frame_info_rows.append({"frame": pre_stack.shape[0] + unc_stack.shape[0] + i, "Z_projection": True, "nth_slice": "", "filename": post_filenames[i] if i < len(post_filenames) else "", "phase": "post", "acq_time_str": acq_str, "z_from": z_from, "z_to": z_to, "shift_y": sy, "shift_x": sx})
-                # elapsed_time_sec: per set, seconds from first moment (min parsed acq time = 0)
-                datetimes_list = []
-                for r in frame_info_rows:
-                    s = r.get("acq_time_str", "") or ""
-                    if s:
-                        try:
-                            datetimes_list.append(_parse_acq_time(s))
-                        except Exception:
-                            datetimes_list.append(None)
-                    else:
-                        datetimes_list.append(None)
-                t0 = min((dt for dt in datetimes_list if dt is not None), default=None)
-                for idx, r in enumerate(frame_info_rows):
-                    if t0 is not None and datetimes_list[idx] is not None:
-                        r["elapsed_time_sec"] = (datetimes_list[idx] - t0).total_seconds()
-                    else:
-                        r["elapsed_time_sec"] = np.nan
-                frame_info_path = os.path.join(tif_savefolder, base_name + "_frame_info.csv")
-                pd.DataFrame(frame_info_rows).to_csv(frame_info_path, index=False)
-                print(f"    Saved {base_name}_frame_info.csv")
 
     return combined_df
 

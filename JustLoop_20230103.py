@@ -1,10 +1,16 @@
 # %%
-# import sys
+import sys
+import os
+file_dir = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.append(file_dir)
 # sys.path.append("../")
 from controlflimage_threading import Control_flimage
 from time import sleep
 
-FLIMageCont = Control_flimage()
+inipath = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
+if not os.path.exists(inipath):
+    inipath = r"C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"
+FLIMageCont = Control_flimage(ini_path = inipath)   
 FLIMageCont.directionMotorY = FLIMageCont.directionMotorY 
 
 # FLIMageCont.set_param(RepeatNum=80, interval_sec=60, ch_1or2=2,

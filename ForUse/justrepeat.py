@@ -6,8 +6,13 @@ Created on Wed Feb  8 09:09:55 2023
 """
 
 import sys
-sys.path.append("../")
+import os
+sys.path.append(os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")))
 from controlflimage_threading import Control_flimage
+import time
+
+
+
 
 # Zstack_ini = r"C:\Users\Yasudalab\Documents\FLIMage\Init_Files\highmag_128_sum8_z1um_x7.txt"
 direction_ini = r"C:\Users\Yasudalab\Documents\Tetsuya_GIT\controlFLIMage\DirectionSetting.ini"

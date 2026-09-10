@@ -6,6 +6,15 @@ import matplotlib.pyplot as plt
 from typing import Optional, Tuple, Dict, Any
 import warnings
 
+
+def _default_fitting_weights(y: np.ndarray) -> np.ndarray:
+    """Poisson-like weights: 1/sqrt(y) where y > 1, else 1.0."""
+    weights = np.ones_like(y, dtype=np.float64)
+    mask = y > 1
+    weights[mask] = 1.0 / np.sqrt(y[mask])
+    return weights
+
+
 class FLIMLifetimeFitter:
     """
     Fluorescence Lifetime Imaging (FLIM) data fitting using exponential-Gaussian convolution models.
@@ -149,7 +158,7 @@ class FLIMLifetimeFitter:
         Dictionary with fitting results
         """
         if weights is None:
-            weights = np.where(y > 1, 1.0 / np.sqrt(y), 1.0)  # Original method - back to this
+            weights = _default_fitting_weights(y)
         
         # Poisson weights using expected counts (commented out - didn't improve much)
         # if weights is None:
@@ -229,7 +238,7 @@ class FLIMLifetimeFitter:
         Dictionary with fitting results
         """
         if weights is None:
-            weights = np.where(y > 1, 1.0 / np.sqrt(y), 1.0)  # Original method - back to this
+            weights = _default_fitting_weights(y)
             
         # Poisson weights using expected counts (commented out - didn't improve much)
         # if weights is None:

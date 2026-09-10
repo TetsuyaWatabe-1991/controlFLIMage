@@ -12,7 +12,7 @@ from datetime import datetime
 
 def get_uncaging_pos_multiple(one_of_file_list, 
                               pre_length = 1,
-                              uncaging_frame_num = [33, 34, 35, 55],  # 55 = common uncaging time-series length
+                              uncaging_frame_num = [33, 34, 35, 36, 55, 80, 144],  # 36=8-ave induction; 80/144 = non-averaged 2Hz/1Hz
                               titration_frame_num = [32]):
     combined_df = pd.DataFrame()
     for each_firstfilepath in one_of_file_list:
@@ -62,7 +62,10 @@ def get_uncaging_pos_multiple(one_of_file_list,
                 uncaging_TF = True        
             else:
                 unknown_TF = True
-                print(file_path,'<- unknown')
+                print(
+                    f"{file_path} <- unknown (n_images={iminfo.n_images}, "
+                    f"not in uncaging_frame_num={uncaging_frame_num})"
+                )
                 
             y_pix = iminfo.statedict["State.Acq.linesPerFrame"]
             x_pix = iminfo.statedict["State.Acq.pixelsPerLine"]
@@ -85,7 +88,6 @@ def get_uncaging_pos_multiple(one_of_file_list,
                 previous_stepZ = each_group_df[each_group_df["nth_omit_induction"] == nth_omit_induction]["stepZ"].iloc[0]
                 z_relative_step_nth = int((z_position - previous_z_position) / previous_stepZ)
             elif unknown_TF:
-                print(file_path,'<- unknown')
                 df_nth_omit_induction = -1
             else:
                 nth_omit_induction +=1

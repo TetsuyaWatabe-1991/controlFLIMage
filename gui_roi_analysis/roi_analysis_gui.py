@@ -19,6 +19,16 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QKeySequence
 
+from roi_keyframe_utils import (
+    build_navigation_stack_indices,
+    expand_uncaging_roi_keyframes,
+    interpolate_roi_params_for_frame,
+    is_uncaging_keyframe_mode,
+    is_uncaging_stack_frame,
+    select_uncaging_keyframe_stack_indices,
+    stack_index_to_navigation_index,
+)
+
 class ROIAnalysisGUI(QMainWindow):
     """Main GUI application for ROI analysis with time series data."""
     
@@ -100,10 +110,211 @@ class ROIAnalysisGUI(QMainWindow):
         # Display intensity: vmax scale in percent (100 = auto from 99th percentile)
         self.vmax_scale = 100
         self._current_base_vmax = None
+
+        self._init_uncaging_keyframe_settings()
         
         self.init_ui()
         self.setup_connections()
         self._install_roi_keyboard_shortcuts()
+
+    def _init_uncaging_keyframe_settings(self):
+        """Configure uncaging keyframe ROI editing from file_info."""
+        self.uncaging_roi_keyframe_count = self.file_info.get("uncaging_roi_keyframe_count")
+        self.n_pre_frames = int(self.file_info.get("n_pre_frames", 0) or 0)
+        self.n_unc_frames = int(self.file_info.get("n_unc_frames", 0) or 0)
+        self.uncaging_keyframe_indices = select_uncaging_keyframe_stack_indices(
+            self.n_pre_frames,
+            self.n_unc_frames,
+            self.uncaging_roi_keyframe_count,
+        )
+        self.uncaging_keyframe_mode = is_uncaging_keyframe_mode(
+            self.uncaging_roi_keyframe_count,
+            self.n_unc_frames,
+        )
+        n_post = max(0, self.total_frames - self.n_pre_frames - self.n_unc_frames)
+        self.navigation_stack_indices = build_navigation_stack_indices(
+            self.n_pre_frames,
+            self.n_unc_frames,
+            n_post,
+            self.uncaging_roi_keyframe_count,
+        )
+        self.current_navigation_index = 0
+        if self.uncaging_keyframe_mode:
+            print(
+                f"Uncaging keyframe mode: navigate {len(self.uncaging_keyframe_indices)} "
+                f"uncaging frames (stack indices {self.uncaging_keyframe_indices}), "
+                f"seek bar positions={len(self.navigation_stack_indices)}"
+            )
+
+    def _configure_navigation_slider(self):
+        """Set seek bar range to navigation positions (fewer bins in keyframe mode)."""
+        n_nav = len(self.navigation_stack_indices)
+        if n_nav <= 0:
+            self.navigation_stack_indices = list(range(self.total_frames))
+            n_nav = self.total_frames
+        self.frame_slider.setMinimum(0)
+        self.frame_slider.setMaximum(max(0, n_nav - 1))
+
+    def _stack_to_navigation_index(self, stack_idx: int) -> int:
+        return stack_index_to_navigation_index(
+            stack_idx, self.navigation_stack_indices
+        )
+
+    def _go_to_navigation_index(self, nav_idx: int):
+        """Move to a seek-bar position and show the corresponding stack frame."""
+        nav_idx = max(0, min(nav_idx, len(self.navigation_stack_indices) - 1))
+        self.current_navigation_index = nav_idx
+        self.current_frame = self.navigation_stack_indices[nav_idx]
+        self.update_frame_display()
+
+    def _sync_slider_to_current_frame(self):
+        """Update seek bar without triggering on_frame_changed."""
+        self._updating_slider = True
+        if self.uncaging_keyframe_mode:
+            self.frame_slider.setValue(self._stack_to_navigation_index(self.current_frame))
+        else:
+            self.frame_slider.setValue(self.current_frame)
+        self._updating_slider = False
+
+    def _format_frame_info_label(self) -> str:
+        """Build the navigation label above the seek bar."""
+        if self.uncaging_keyframe_mode:
+            nav_idx = self._stack_to_navigation_index(self.current_frame)
+            n_nav = len(self.navigation_stack_indices)
+            phase = ""
+            if self.frame_info_df is not None and "phase" in self.frame_info_df.columns:
+                if self.current_frame < len(self.frame_info_df):
+                    phase = str(self.frame_info_df.iloc[self.current_frame].get("phase", ""))
+            phase_suffix = f", {phase}" if phase else ""
+            return (
+                f"Frame {nav_idx + 1}/{n_nav} "
+                f"(stack {self.current_frame + 1}/{self.total_frames}{phase_suffix})"
+            )
+        return f"Frame {self.current_frame + 1}/{self.total_frames}"
+
+    def _is_roi_frame_editable(self, frame_idx: int) -> bool:
+        """Return False for interpolated uncaging frames in keyframe mode."""
+        if self.is_defining_roi:
+            return True
+        if not self.uncaging_keyframe_mode:
+            return True
+        if not is_uncaging_stack_frame(frame_idx, self.n_pre_frames, self.n_unc_frames):
+            return True
+        return frame_idx in self.uncaging_keyframe_indices
+
+    def _is_uncaging_keyframe_stack_frame(self, frame_idx: int) -> bool:
+        """Return True when frame_idx is an editable uncaging keyframe in keyframe mode."""
+        return (
+            self.uncaging_keyframe_mode
+            and frame_idx in self.uncaging_keyframe_indices
+        )
+
+    def _prune_non_keyframe_uncaging_roi_params(self):
+        """Drop stale per-frame ROI entries for non-keyframe uncaging stack indices."""
+        if not self.uncaging_keyframe_mode:
+            return
+        unc_start = self.n_pre_frames
+        unc_end = unc_start + self.n_unc_frames
+        stale = [
+            idx
+            for idx in self.frame_roi_parameters
+            if unc_start <= idx < unc_end
+            and idx not in self.uncaging_keyframe_indices
+        ]
+        for idx in stale:
+            del self.frame_roi_parameters[idx]
+
+    def _get_effective_roi_params(self, frame_idx: int) -> dict | None:
+        """Return ROI params for display/quant, including interpolated uncaging frames."""
+        if (
+            self.uncaging_keyframe_mode
+            and is_uncaging_stack_frame(frame_idx, self.n_pre_frames, self.n_unc_frames)
+            and frame_idx not in self.uncaging_keyframe_indices
+        ):
+            interpolated = interpolate_roi_params_for_frame(
+                frame_idx,
+                self.uncaging_keyframe_indices,
+                self.frame_roi_parameters,
+                self.roi_shape,
+            )
+            if interpolated is not None:
+                return interpolated
+
+        if frame_idx in self.frame_roi_parameters:
+            return self.frame_roi_parameters[frame_idx]
+
+        if self.roi_parameters:
+            return self.roi_parameters
+        return None
+
+    def _frame_2d_from_stack(self, frame_idx: int) -> np.ndarray:
+        """Return 2D image for a stack frame index."""
+        frame_data = self.after_align_tiff_data[frame_idx]
+        if len(frame_data.shape) == 3:
+            return frame_data.max(axis=0)
+        if len(frame_data.shape) == 2:
+            return frame_data
+        frame_2d = frame_data
+        while len(frame_2d.shape) > 2:
+            frame_2d = frame_2d.max(axis=0)
+        return frame_2d
+
+    def _compute_intensity_stats_for_frame(
+        self, frame_idx: int
+    ) -> tuple[float, float, float]:
+        """Return mean, max, sum intensity for one stack frame."""
+        frame_2d = self._frame_2d_from_stack(frame_idx)
+        roi_params_for_frame = self._get_effective_roi_params(frame_idx) or {}
+        roi_mask = self.create_roi_mask_with_params(frame_2d.shape, roi_params_for_frame)
+        if np.any(roi_mask):
+            roi_values = frame_2d[roi_mask]
+            return (
+                float(np.mean(roi_values)),
+                float(np.max(roi_values)),
+                float(np.sum(roi_values)),
+            )
+        return 0.0, 0.0, 0.0
+
+    def _refresh_uncaging_intensity_slice(self):
+        """Recalculate intensity_data for uncaging stack frames only (with interpolation)."""
+        if not self.uncaging_keyframe_mode or self.n_unc_frames <= 0:
+            return
+        self._prune_non_keyframe_uncaging_roi_params()
+        unc_start = self.n_pre_frames
+        unc_end = unc_start + self.n_unc_frames
+        for frame_idx in range(unc_start, unc_end):
+            mean_val, max_val, sum_val = self._compute_intensity_stats_for_frame(frame_idx)
+            if frame_idx < len(self.intensity_data["mean"]):
+                self.intensity_data["mean"][frame_idx] = mean_val
+                self.intensity_data["max"][frame_idx] = max_val
+                self.intensity_data["sum"][frame_idx] = sum_val
+
+    def _refresh_intensities_after_roi_edit(self):
+        """Recalculate intensity trace after ROI edit (phase-aware, lightweight)."""
+        if self.is_defining_roi:
+            return
+        if self._is_uncaging_keyframe_stack_frame(self.current_frame):
+            self._refresh_uncaging_intensity_slice()
+        else:
+            self.update_current_frame_intensity()
+        self.update_intensity_display()
+        self.update_plot()
+
+    def _refresh_intensity_after_drag_or_nudge(self):
+        """Lightweight intensity refresh during drag/nudge on current frame."""
+        if self.is_defining_roi:
+            return
+        self.update_current_frame_intensity()
+        self.update_intensity_display()
+        self.update_plot()
+
+    def _should_inherit_roi_on_navigation(self, leaving_frame: int | None) -> bool:
+        """Return True when Define mode should carry ROI position to the next frame."""
+        if getattr(self, "view_mode", False):
+            return False
+        if leaving_frame is None or leaving_frame == self.current_frame:
+            return False
+        return bool(self.roi_parameters)
         
     def init_ui(self):
         """Initialize the user interface."""
@@ -636,6 +847,8 @@ class ROIAnalysisGUI(QMainWindow):
         """Handle mouse press events for ROI creation and interaction."""
         if event.inaxes != self.image_ax:
             return
+        if not self.is_defining_roi and not self._is_roi_frame_editable(self.current_frame):
+            return
             
         # Round coordinates to integers for pixel-perfect positioning
         x, y = self.round_to_int(event.xdata, event.ydata)
@@ -807,58 +1020,44 @@ class ROIAnalysisGUI(QMainWindow):
         self.back_to_maxproj_button.setEnabled(True)
         self.complete_analysis_button.setEnabled(True)
         
+        self._configure_navigation_slider()
+
         # Initialize frame tracking for frame-specific ROI mode
-        self.previous_frame = 0
+        self.previous_frame = self.navigation_stack_indices[0] if self.navigation_stack_indices else 0
         
-        # Set ROI parameters for the first frame only (others will inherit when visited)
+        # Set ROI parameters for the first frame and uncaging keyframes when applicable
         if self.roi_parameters:
-            self.frame_roi_parameters[0] = self.roi_parameters.copy()
-            print(f"Initialized ROI parameters for frame 0: {self.roi_parameters}")
+            if self.uncaging_keyframe_mode:
+                for idx in self.uncaging_keyframe_indices:
+                    self.frame_roi_parameters[idx] = self.roi_parameters.copy()
+                if 0 not in self.frame_roi_parameters:
+                    self.frame_roi_parameters[0] = self.roi_parameters.copy()
+                print(
+                    f"Initialized ROI parameters for uncaging keyframes: "
+                    f"{self.uncaging_keyframe_indices}"
+                )
+                self._prune_non_keyframe_uncaging_roi_params()
+            else:
+                self.frame_roi_parameters[0] = self.roi_parameters.copy()
+                print(f"Initialized ROI parameters for frame 0: {self.roi_parameters}")
         
         # Calculate intensity for all frames
         self.calculate_all_intensities()
         
-        # Display first frame
-        self.display_time_series_frame(0)
-        self.update_plot()
+        # Display first navigable frame
+        self._go_to_navigation_index(0)
         
     def calculate_all_intensities(self):
         """Calculate intensity values for all frames."""
+        if self.uncaging_keyframe_mode:
+            self._prune_non_keyframe_uncaging_roi_params()
         self.intensity_data = {'mean': [], 'max': [], 'sum': []}
         
         for frame_idx in range(self.total_frames):
-            frame_data = self.after_align_tiff_data[frame_idx]
-            
-            # Handle different dimensions for frame data
-            if len(frame_data.shape) == 3:
-                frame_2d = frame_data.max(axis=0)
-            elif len(frame_data.shape) == 2:
-                frame_2d = frame_data
-            else:
-                frame_2d = frame_data
-                while len(frame_2d.shape) > 2:
-                    frame_2d = frame_2d.max(axis=0)
-            
-            # Get ROI parameters for this frame
-            if self.use_frame_specific_rois and frame_idx in self.frame_roi_parameters:
-                # Use frame-specific ROI parameters
-                roi_params_for_frame = self.frame_roi_parameters[frame_idx]
-            else:
-                # Use global ROI parameters
-                roi_params_for_frame = self.roi_parameters
-            
-            # Calculate intensity with frame-specific or global ROI
-            roi_mask = self.create_roi_mask_with_params(frame_2d.shape, roi_params_for_frame)
-            
-            if np.any(roi_mask):
-                roi_values = frame_2d[roi_mask]
-                self.intensity_data['mean'].append(np.mean(roi_values))
-                self.intensity_data['max'].append(np.max(roi_values))
-                self.intensity_data['sum'].append(np.sum(roi_values))
-            else:
-                self.intensity_data['mean'].append(0)
-                self.intensity_data['max'].append(0)
-                self.intensity_data['sum'].append(0)
+            mean_val, max_val, sum_val = self._compute_intensity_stats_for_frame(frame_idx)
+            self.intensity_data['mean'].append(mean_val)
+            self.intensity_data['max'].append(max_val)
+            self.intensity_data['sum'].append(sum_val)
         
         self.update_intensity_display()
         
@@ -947,23 +1146,51 @@ class ROIAnalysisGUI(QMainWindow):
                 self.plot_ax.plot(self.current_frame + 1, 
                                 self.intensity_data[plot_type][self.current_frame],
                                 'ko', markersize=8)
+
+            if self.uncaging_keyframe_mode:
+                for kf_idx in self.uncaging_keyframe_indices:
+                    if kf_idx < len(self.intensity_data[plot_type]):
+                        self.plot_ax.plot(
+                            kf_idx + 1,
+                            self.intensity_data[plot_type][kf_idx],
+                            'ro',
+                            markersize=6,
+                        )
         
+        title_suffix = ""
         self.plot_ax.set_xlabel('Frame')
         self.plot_ax.set_ylabel('Intensity')
-        self.plot_ax.set_title(f"Frame {self.current_frame + 1}/{self.total_frames}")
+        if self.uncaging_keyframe_mode:
+            nav_idx = self._stack_to_navigation_index(self.current_frame)
+            self.plot_ax.set_title(
+                f"Nav {nav_idx + 1}/{len(self.navigation_stack_indices)} "
+                f"(stack {self.current_frame + 1}/{self.total_frames}){title_suffix}"
+            )
+        else:
+            self.plot_ax.set_title(
+                f"Frame {self.current_frame + 1}/{self.total_frames}{title_suffix}"
+            )
         self.plot_ax.grid(True, color='lightgray', linewidth=0.5)
         self.plot_figure.tight_layout(pad=0.5)
         self.plot_canvas.draw()
         
     def prev_frame(self):
-        """Go to previous frame."""
-        if self.current_frame > 0:
+        """Go to previous navigable frame."""
+        if self.uncaging_keyframe_mode:
+            nav_idx = self._stack_to_navigation_index(self.current_frame)
+            if nav_idx > 0:
+                self._go_to_navigation_index(nav_idx - 1)
+        elif self.current_frame > 0:
             self.current_frame -= 1
             self.update_frame_display()
             
     def next_frame(self):
-        """Go to next frame."""
-        if self.current_frame < self.total_frames - 1:
+        """Go to next navigable frame."""
+        if self.uncaging_keyframe_mode:
+            nav_idx = self._stack_to_navigation_index(self.current_frame)
+            if nav_idx < len(self.navigation_stack_indices) - 1:
+                self._go_to_navigation_index(nav_idx + 1)
+        elif self.current_frame < self.total_frames - 1:
             self.current_frame += 1
             self.update_frame_display()
             
@@ -972,66 +1199,62 @@ class ROIAnalysisGUI(QMainWindow):
         # Prevent recursive calls
         if hasattr(self, '_updating_slider') and self._updating_slider:
             return
-            
-        self.current_frame = value
-        self.update_frame_display()
+
+        if self.uncaging_keyframe_mode:
+            self._go_to_navigation_index(value)
+        else:
+            self.current_frame = value
+            self.update_frame_display()
         
     def update_frame_display(self):
         """Update the frame display."""
-        # Save current ROI parameters for previous frame (frame-specific mode always enabled)
-        if (hasattr(self, 'previous_frame') and 
+        leaving_frame = self.previous_frame if hasattr(self, "previous_frame") else None
+
+        # Save current ROI parameters for previous frame when that frame is editable
+        if (leaving_frame is not None and
             self.roi_parameters and 
-            self.previous_frame is not None):
-            self.frame_roi_parameters[self.previous_frame] = self.roi_parameters.copy()
-            print(f"Saved ROI parameters for frame {self.previous_frame}: {self.roi_parameters}")
+            self._is_roi_frame_editable(leaving_frame)):
+            self.frame_roi_parameters[leaving_frame] = self.roi_parameters.copy()
+            print(f"Saved ROI parameters for frame {leaving_frame}: {self.roi_parameters}")
         
         # Store current frame as previous frame for next update
         self.previous_frame = self.current_frame
         
-        # Update slider without triggering on_frame_changed
-        self._updating_slider = True
-        self.frame_slider.setValue(self.current_frame)
-        self._updating_slider = False
+        self._sync_slider_to_current_frame()
         
-        self.frame_info_label.setText(f"Frame {self.current_frame + 1}/{self.total_frames}")
+        self.frame_info_label.setText(self._format_frame_info_label())
 
         if self.frame_info_df is not None and hasattr(self, 'file_info_display'):
             self.file_info_display.setText(self._build_file_info_text_for_frame(self.current_frame))
         
-        # Load ROI parameters for current frame (frame-specific mode always enabled)
-        if self.current_frame in self.frame_roi_parameters:
-            # Check if we should inherit the latest ROI position instead of using saved position
-            if (hasattr(self, 'previous_frame') and 
-                self.previous_frame is not None and 
-                self.previous_frame in self.frame_roi_parameters and
-                self.roi_parameters):
-                # If we have a current ROI position that might be more recent, use it
-                self.frame_roi_parameters[self.current_frame] = self.roi_parameters.copy()
-                print(f"Updated ROI parameters for frame {self.current_frame} with latest position: {self.roi_parameters}")
-            else:
-                # Use saved ROI parameters for this frame
-                self.roi_parameters = self.frame_roi_parameters[self.current_frame].copy()
-                print(f"Loaded saved ROI parameters for frame {self.current_frame}: {self.roi_parameters}")
-            
-            # Recreate ROI object with loaded/updated parameters
+        if self._should_inherit_roi_on_navigation(leaving_frame):
+            self.frame_roi_parameters[self.current_frame] = self.roi_parameters.copy()
+            print(
+                f"Carried forward ROI from frame {leaving_frame} "
+                f"to frame {self.current_frame}"
+            )
             self.recreate_roi_from_parameters()
+            if not self.is_defining_roi:
+                if self._is_uncaging_keyframe_stack_frame(self.current_frame):
+                    self._refresh_uncaging_intensity_slice()
+                    self.update_intensity_display()
+                    self.update_plot()
+                else:
+                    self.update_current_frame_intensity()
         else:
-            # If no saved ROI parameters for this frame, inherit from current position
-            if self.roi_parameters:
-                # Save current ROI parameters to this frame (inherit from previous position)
+            effective_params = self._get_effective_roi_params(self.current_frame)
+            if effective_params is not None:
+                self.roi_parameters = effective_params.copy()
+                self.recreate_roi_from_parameters()
+            elif self.roi_parameters and self._is_roi_frame_editable(self.current_frame):
                 self.frame_roi_parameters[self.current_frame] = self.roi_parameters.copy()
                 print(f"Inherited ROI parameters for frame {self.current_frame}: {self.roi_parameters}")
-                # Recalculate intensity immediately for inherited ROI
-                if not self.is_defining_roi:
-                    self.update_current_frame_intensity()
             else:
                 print(f"No ROI parameters available for frame {self.current_frame}")
         
         if not self.is_defining_roi:
             self.display_time_series_frame(self.current_frame)
             self.update_roi_display_params()
-            # Always recalculate intensity for current frame (important for frame switching)
-            self.update_current_frame_intensity()
             self.update_intensity_display()
             self.update_plot()
             
@@ -1158,6 +1381,15 @@ class ROIAnalysisGUI(QMainWindow):
         
     def finish_roi_move(self):
         """Finish moving the ROI."""
+        if (
+            not self.is_defining_roi
+            and self.roi_parameters
+        ):
+            self.frame_roi_parameters[self.current_frame] = self.roi_parameters.copy()
+            if self._is_uncaging_keyframe_stack_frame(self.current_frame):
+                self._refresh_uncaging_intensity_slice()
+                self.update_intensity_display()
+                self.update_plot()
         self.is_moving_roi = False
         self.drag_start_pos = None
         
@@ -1283,12 +1515,10 @@ class ROIAnalysisGUI(QMainWindow):
         # Update parameters display
         self.update_roi_display_params()
         
-        # Update intensity for current frame only (frame-specific mode always enabled)
+        # Update intensity for current frame only during drag (unc slice on mouse release)
         if not self.is_defining_roi:
-            # Update intensity for current frame only
-            self.update_current_frame_intensity()
-            self.update_intensity_display()
-            self.update_plot()
+            self.frame_roi_parameters[self.current_frame] = self.roi_parameters.copy()
+            self._refresh_intensity_after_drag_or_nudge()
     
     def update_roi_display_params(self):
         """Update the ROI parameters display text."""
@@ -1345,9 +1575,19 @@ class ROIAnalysisGUI(QMainWindow):
     def complete_analysis(self):
         """Complete the analysis and close the window."""
         if self.roi_parameters:
-            # Save current frame ROI parameters (frame-specific mode always enabled)
-            self.frame_roi_parameters[self.current_frame] = self.roi_parameters.copy()
-            print(f"Saved final ROI parameters for frame {self.current_frame}")
+            if self._is_roi_frame_editable(self.current_frame):
+                self.frame_roi_parameters[self.current_frame] = self.roi_parameters.copy()
+                print(f"Saved final ROI parameters for frame {self.current_frame}")
+
+            if self.uncaging_keyframe_mode:
+                self._prune_non_keyframe_uncaging_roi_params()
+                self.frame_roi_parameters = expand_uncaging_roi_keyframes(
+                    self.frame_roi_parameters,
+                    self.n_pre_frames,
+                    self.n_unc_frames,
+                    self.uncaging_roi_keyframe_count,
+                    self.roi_shape,
+                )
             
             # Set analysis completed flag
             self.analysis_completed = True
@@ -1464,6 +1704,8 @@ class ROIAnalysisGUI(QMainWindow):
         """Move ROI by 1 pixel in Define mode only (not Review mode)."""
         if getattr(self, "view_mode", False):
             return
+        if not self._is_roi_frame_editable(self.current_frame):
+            return
         if not self.roi_parameters:
             return
         h, w = self._image_hw_for_roi()
@@ -1499,50 +1741,37 @@ class ROIAnalysisGUI(QMainWindow):
 
         if not self.is_defining_roi:
             self.frame_roi_parameters[self.current_frame] = self.roi_parameters.copy()
+            if self._is_uncaging_keyframe_stack_frame(self.current_frame):
+                self._refresh_intensities_after_roi_edit()
+            else:
+                self._refresh_intensity_after_drag_or_nudge()
         self.recreate_roi_from_parameters()
         if self.is_defining_roi:
             self.display_max_proj()
         else:
             self.display_time_series_frame(self.current_frame)
         self.update_roi_display_params()
-        if not self.is_defining_roi:
-            self.update_current_frame_intensity()
-            self.update_intensity_display()
-            self.update_plot()
 
     def update_current_frame_intensity(self):
         """Update intensity for current frame only (for frame-specific ROI mode)."""
-        # Get current frame data
-        frame_data = self.after_align_tiff_data[self.current_frame]
-        
-        # Handle different dimensions for frame data
-        if len(frame_data.shape) == 3:
-            frame_2d = frame_data.max(axis=0)
-        elif len(frame_data.shape) == 2:
-            frame_2d = frame_data
-        else:
-            frame_2d = frame_data
-            while len(frame_2d.shape) > 2:
-                frame_2d = frame_2d.max(axis=0)
-        
-        # Calculate intensity with current ROI
-        roi_mask = self.create_roi_mask_with_params(frame_2d.shape, self.roi_parameters)
-        
-        if np.any(roi_mask):
-            roi_values = frame_2d[roi_mask]
-            mean_val = np.mean(roi_values)
-            max_val = np.max(roi_values)
-            sum_val = np.sum(roi_values)
-        else:
-            mean_val = max_val = sum_val = 0
-        
+        mean_val, max_val, sum_val = self._compute_intensity_stats_for_frame(
+            self.current_frame
+        )
+
         # Update intensity data for current frame
         if self.current_frame < len(self.intensity_data['mean']):
             self.intensity_data['mean'][self.current_frame] = mean_val
             self.intensity_data['max'][self.current_frame] = max_val
             self.intensity_data['sum'][self.current_frame] = sum_val
-        
-        print(f"[INTENSITY UPDATE] Frame {self.current_frame}: mean={mean_val:.2f}, max={max_val:.2f}, sum={sum_val:.2f}, ROI area={np.sum(roi_mask)} pixels")
+
+        roi_params = self._get_effective_roi_params(self.current_frame) or self.roi_parameters
+        roi_mask = self.create_roi_mask_with_params(
+            self._frame_2d_from_stack(self.current_frame).shape, roi_params
+        )
+        print(
+            f"[INTENSITY UPDATE] Frame {self.current_frame}: mean={mean_val:.2f}, "
+            f"max={max_val:.2f}, sum={sum_val:.2f}, ROI area={np.sum(roi_mask)} pixels"
+        )
 
 def main():
     """Main function to run the GUI application."""

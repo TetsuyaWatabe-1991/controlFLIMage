@@ -299,39 +299,140 @@ def plot_max_proj_uncaging(
             plt.close()
 
 
+LEGACY_GCAMP_NFRAMES = (4, 32, 33, 34, 55)
+
+
+def uncaging_pre_post_frame_slices(statedict, n_frames):
+    """
+    Return (pre_slice, post_slice) from uncaging metadata, or None if invalid.
+
+    Pre = frames [0 : FramesBeforeUncage]
+    Post = frames [FramesBeforeUncage : FramesBeforeUncage + Uncage_FrameInterval]
+    (frames after pulse 1 until before pulse 2).
+    """
+    try:
+        n_pre = int(statedict["State.Uncaging.FramesBeforeUncage"])
+        interval = int(statedict["State.Uncaging.Uncage_FrameInterval"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if n_pre < 1 or interval < 1:
+        return None
+    if int(n_frames) < n_pre + interval:
+        return None
+    return slice(0, n_pre), slice(n_pre, n_pre + interval)
+
+
+def statedict_supports_meta_gcamp_ff0(statedict, n_frames, n_slices=1):
+    """True if metadata-driven Pre/Post F/F0 windows fit this acquisition."""
+    if int(n_slices) > 1:
+        return False
+    return uncaging_pre_post_frame_slices(statedict, n_frames) is not None
+
+
+def _sum_gcamp_frames(imagearray, frame_slice, ch=0):
+    """Sum lifetime then time over frame_slice for one channel -> 2D (Y, X)."""
+    block = imagearray[frame_slice, 0, ch, :, :, :]
+    # (T, Y, X, tau) or (Y, X, tau) if slice yields one frame
+    lifetime_sum = block.sum(axis=-1)
+    if lifetime_sum.ndim == 3:
+        return lifetime_sum.sum(axis=0)
+    return lifetime_sum
+
+
+def gcamp_pre_post_from_uncaging_meta(imagearray, statedict):
+    """
+    Build (GCpre, GCunc) 2D intensity maps from FramesBeforeUncage metadata.
+
+    Each window is summed then divided by its frame count (mean intensity) so
+    unequal Pre/Post lengths (e.g. 8 vs 2) still yield F/F0 ≈ 1 when
+    per-frame fluorescence is unchanged.
+
+    Returns None if metadata windows are unavailable or out of range.
+    """
+    slices = uncaging_pre_post_frame_slices(statedict, imagearray.shape[0])
+    if slices is None:
+        return None
+    pre_sl, post_sl = slices
+    n_pre = int(pre_sl.stop) - int(pre_sl.start)
+    n_post = int(post_sl.stop) - int(post_sl.start)
+    if n_pre < 1 or n_post < 1:
+        return None
+    gc_pre = _sum_gcamp_frames(imagearray, pre_sl, ch=0) / float(n_pre)
+    gc_unc = _sum_gcamp_frames(imagearray, post_sl, ch=0) / float(n_post)
+    if gc_pre.ndim != 2 or gc_unc.ndim != 2:
+        return None
+    return gc_pre, gc_unc
+
+
+def legacy_gcamp_pre_post(imagearray):
+    """Legacy hardcoded Pre/Post for known nFrames shapes. Returns None if unknown."""
+    n = imagearray.shape[0]
+    if n in (4, 33, 34):
+        gc_pre = imagearray[1, 0, 0, :, :, :].sum(axis=-1)
+        gc_unc = imagearray[2, 0, 0, :, :, :].sum(axis=-1)
+        return gc_pre, gc_unc
+    if n == 32:
+        gc_pre = imagearray[8 * 1 + 1 : 8 * 2, 0, 0, :, :, :].sum(axis=-1).sum(axis=0)
+        gc_unc = imagearray[8 * 2 + 1 : 8 * 3, 0, 0, :, :, :].sum(axis=-1).sum(axis=0)
+        return gc_pre, gc_unc
+    if n == 55:
+        gc_pre = imagearray[4, 0, 0, :, :, :].sum(axis=-1)
+        gc_unc = imagearray[5, 0, 0, :, :, :].sum(axis=-1)
+        return gc_pre, gc_unc
+    return None
+
+
 def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0, 
                     from_Thorlab_to_coherent_factor = 1/3,
                     vmin = 1, vmax = 10, cmap='inferno', 
-                    acceptable_image_shape_0th_list = [4,32, 33,34,55],
+                    acceptable_image_shape_0th_list = None,
                     GCaMP_intensity_threshold = 0,
                     plot_RFP_also = False,
                     show=None):
+    if acceptable_image_shape_0th_list is None:
+        acceptable_image_shape_0th_list = list(LEGACY_GCAMP_NFRAMES)
+
     uncaging_iminfo = FileReader()
     uncaging_iminfo.read_imageFile(each_file, True) 
     
     imagearray=np.array(uncaging_iminfo.image)
-    
-    if (imagearray.shape)[0] not in acceptable_image_shape_0th_list:
-        print("Image shape is not expected size.  ",imagearray.shape)
+    statedict = uncaging_iminfo.statedict
+    n_frames = imagearray.shape[0]
+    n_slices = int(statedict.get("State.Acq.nSlices", 1) or 1)
+
+    use_legacy = n_frames in acceptable_image_shape_0th_list
+    meta_pair = None if use_legacy else gcamp_pre_post_from_uncaging_meta(imagearray, statedict)
+    if not use_legacy and meta_pair is None:
+        print("Image shape is not expected size.  ", imagearray.shape)
+        return
+    if n_slices > 1 and not use_legacy:
+        print("Image shape is not expected size.  ", imagearray.shape)
         return
     
-    uncaging_x_y_0to1 = uncaging_iminfo.statedict["State.Uncaging.Position"]
-    uncaging_pow = uncaging_iminfo.statedict["State.Uncaging.Power"]
-    pulseWidth = uncaging_iminfo.statedict["State.Uncaging.pulseWidth"]
+    uncaging_x_y_0to1 = statedict["State.Uncaging.Position"]
+    uncaging_pow = statedict["State.Uncaging.Power"]
+    pulseWidth = statedict["State.Uncaging.pulseWidth"]
     center_y = imagearray.shape[-2] * uncaging_x_y_0to1[1]
     center_x = imagearray.shape[-3] * uncaging_x_y_0to1[0]
     
-    if imagearray.shape[0] in [4, 33, 34]:
-        GCpre = imagearray[1,0,0,:,:,:].sum(axis=-1)
-        GCunc = imagearray[2,0,0,:,:,:].sum(axis=-1)
-        RFPpre = imagearray[0, 0, 1, :, :, :].sum(axis=-1)
-    elif imagearray.shape[0] in [32]:
-        GCpre = imagearray[8*1 + 1 : 8*2, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
-        GCunc = imagearray[8*2 + 1 : 8*3, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
-        RFPpre = imagearray[8*1 + 1 : 8*2, 0, 1, :, :, :].sum(axis=-1).sum(axis=0)
-    elif imagearray.shape[0] in [55]:
-        GCpre = imagearray[4,0,0,:,:,:].sum(axis=-1)
-        GCunc = imagearray[5,0,0,:,:,:].sum(axis=-1)
+    RFPpre = None
+    if use_legacy:
+        if n_frames in [4, 33, 34]:
+            GCpre = imagearray[1,0,0,:,:,:].sum(axis=-1)
+            GCunc = imagearray[2,0,0,:,:,:].sum(axis=-1)
+            RFPpre = imagearray[0, 0, 1, :, :, :].sum(axis=-1)
+        elif n_frames in [32]:
+            GCpre = imagearray[8*1 + 1 : 8*2, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+            GCunc = imagearray[8*2 + 1 : 8*3, 0,0,:,:,:].sum(axis=-1).sum(axis=0)
+            RFPpre = imagearray[8*1 + 1 : 8*2, 0, 1, :, :, :].sum(axis=-1).sum(axis=0)
+        elif n_frames in [55]:
+            GCpre = imagearray[4,0,0,:,:,:].sum(axis=-1)
+            GCunc = imagearray[5,0,0,:,:,:].sum(axis=-1)
+    else:
+        GCpre, GCunc = meta_pair
+        if plot_RFP_also and imagearray.shape[2] > 1:
+            pre_sl, _ = uncaging_pre_post_frame_slices(statedict, n_frames)
+            RFPpre = _sum_gcamp_frames(imagearray, pre_sl, ch=1)
     assert len(GCpre.shape) == 2 #Image should be 2D
 
 
@@ -369,7 +470,7 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
     color_fue(savefolder = savefolder,
               vmin =vmin, vmax=vmax, cmap=cmap, label_text = "F/F0")
     
-    if plot_RFP_also:        
+    if plot_RFP_also and RFPpre is not None:
         plt.imshow(RFPpre, cmap='gray', vmin=0)
         plt.plot(center_x, center_y, 'co', markersize=4)
         plt.title("RFP")

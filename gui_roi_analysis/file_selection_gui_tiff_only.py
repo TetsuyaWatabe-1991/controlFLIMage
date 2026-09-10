@@ -16,9 +16,18 @@ from PyQt5.QtCore import QTimer
 class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
     """Extended FileSelectionGUI that saves ROI masks to TIFF files only."""
     
-    def __init__(self, combined_df, df_save_path_2=None, additional_columns=None, save_auto=True, parent=None):
+    def __init__(
+        self,
+        combined_df,
+        df_save_path_2=None,
+        additional_columns=None,
+        save_auto=True,
+        parent=None,
+        uncaging_roi_keyframe_count=None,
+    ):
         """Initialize with TIFF-only saving enabled."""
         super().__init__(combined_df, df_save_path_2, additional_columns, save_auto, parent)
+        self.uncaging_roi_keyframe_count = uncaging_roi_keyframe_count
         self.save_to_dataframe = False  # Disable dataframe saving
         self.save_roi_to_tiff = True   # Enable TIFF saving
         # Store row mapping for quick lookup: (group_id, set_label) -> row_idx
@@ -375,6 +384,7 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
                     header=roi_type,
                     save_tiff_path=tiff_save_path,
                     shortcut_host=self,
+                    uncaging_roi_keyframe_count=self.uncaging_roi_keyframe_count,
                 )
                 if not isinstance(launch_result, dict):
                     self._chain_abort = True
@@ -531,6 +541,7 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
                 header=roi_type,
                 save_tiff_path=tiff_save_path,
                 shortcut_host=self,
+                uncaging_roi_keyframe_count=self.uncaging_roi_keyframe_count,
             )
             if isinstance(launch_result, dict):
                 ek = launch_result.get("exit_kind", "cancel")
@@ -755,7 +766,13 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
         return -1
 
 
-def launch_file_selection_gui_tiff_only(combined_df, df_save_path_2=None, additional_columns=None, save_auto=True):
+def launch_file_selection_gui_tiff_only(
+    combined_df,
+    df_save_path_2=None,
+    additional_columns=None,
+    save_auto=True,
+    uncaging_roi_keyframe_count=None,
+):
     """Launch the file selection GUI with TIFF-only ROI saving
     
     Args:
@@ -763,6 +780,8 @@ def launch_file_selection_gui_tiff_only(combined_df, df_save_path_2=None, additi
         df_save_path_2: Optional path to save the DataFrame automatically (not used for ROI masks)
         additional_columns: Optional list of column names to display in addition to the standard columns
         save_auto: Whether to auto-save dataframe (not used for ROI masks)
+        uncaging_roi_keyframe_count: Number of representative uncaging frames for ROI editing.
+            None or >= n_unc uses legacy all-frame editing.
     
     Returns:
         FileSelectionGUITiffOnly instance
@@ -778,7 +797,13 @@ def launch_file_selection_gui_tiff_only(combined_df, df_save_path_2=None, additi
             print("Created new QApplication instance")
         
         print("Creating FileSelectionGUITiffOnly instance...")
-        gui = FileSelectionGUITiffOnly(combined_df, df_save_path_2, additional_columns, save_auto)
+        gui = FileSelectionGUITiffOnly(
+            combined_df,
+            df_save_path_2,
+            additional_columns,
+            save_auto,
+            uncaging_roi_keyframe_count=uncaging_roi_keyframe_count,
+        )
         print("Showing GUI window...")
         gui.show()
         

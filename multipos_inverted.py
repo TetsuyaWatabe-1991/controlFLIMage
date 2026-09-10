@@ -9,6 +9,7 @@ import time
 import os
 import glob
 import pathlib
+import tempfile
 import pandas as pd
 import copy
 from FLIMageAlignment import  align_two_flimfile
@@ -29,6 +30,7 @@ class Multiarea_from_lowmag():
         self.lowmag_iminfo = FileReader()
         self.lowmag_iminfo.read_imageFile(self.lowmag_path, True)
         self.lowmag_magnification = self.lowmag_iminfo.statedict['State.Acq.zoom']
+        self._files_folder = None
         # latestpath = self.latest_path()
         # self.lowmag_iminfo = FileReader()
         # self.lowmag_iminfo.read_imageFile(latestpath, True)
@@ -74,6 +76,29 @@ class Multiarea_from_lowmag():
         iminfo.read_imageFile(flim_path, True)
         self._set_corrected_lowmag_from_iminfo(iminfo)
 
+    def _files_folder_fallback(self) -> str:
+        """Directory containing the reference lowmag file on disk."""
+        return os.path.dirname(os.path.abspath(self.lowmag_path))
+
+    def files_folder(self, FLIMageCont=None) -> str:
+        """Output folder for lowmag/highmag series.
+
+        Prefer FLIMage's current ``State.Files.pathName`` so save location is not
+        locked to the reference .flim tag. Fall back to the reference file folder.
+        """
+        if FLIMageCont is not None:
+            try:
+                path = FLIMageCont.get_val_sendCommand("State.Files.pathName")
+                if path:
+                    path = str(path).strip().strip('"').strip("'")
+                    if os.path.isdir(path):
+                        self._files_folder = path
+            except Exception:
+                pass
+        if self._files_folder:
+            return self._files_folder
+        return self._files_folder_fallback()
+
     def first_lowmag_path(self) -> str:
         """Reference lowmag FLIM passed at construction (e.g. *_001.flim)."""
         return self.lowmag_path
@@ -116,10 +141,11 @@ class Multiarea_from_lowmag():
         return counter
     
     def latest_path(self):
-        low_flimlist = glob.glob(os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"],
+        folder = self.files_folder()
+        low_flimlist = glob.glob(os.path.join(folder,
                                               self.lowmag_basename+"[0-9][0-9][0-9].flim"))        
         low_maxcount = self.get_max_flimfiles(low_flimlist)
-        latestpath = os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"], 
+        latestpath = os.path.join(folder, 
                                   self.lowmag_basename + str(low_maxcount).zfill(3) + ".flim")
         return latestpath
 
@@ -142,7 +168,7 @@ class Multiarea_from_lowmag():
 
     def first_highmag_flim_for_pos(self, pos_id) -> str:
         """Earliest existing highmag FLIM for one position (e.g. *_highmag_1_001.flim)."""
-        folder = self.lowmag_iminfo.statedict["State.Files.pathName"]
+        folder = self.files_folder()
         pattern = os.path.join(
             folder,
             f"{self.lowmag_basename}_highmag_{pos_id}_[0-9][0-9][0-9].flim",
@@ -157,7 +183,13 @@ class Multiarea_from_lowmag():
         return float(iminfo.statedict["State.Acq.zoom"])
 
     def resolve_high_mag_zoom(self, pos_id) -> float:
-        """Use zoom from the position's reference highmag FLIM, or an explicit script value."""
+        """Prefer explicit script zoom; else zoom from the position's reference FLIM."""
+        if self.high_mag_zoom is not None:
+            print(
+                f"high_mag zoom from script setting pos_id={pos_id}: "
+                f"{self.high_mag_zoom}"
+            )
+            return float(self.high_mag_zoom)
         ref_flim = self.first_highmag_flim_for_pos(pos_id)
         if ref_flim:
             zoom = self.zoom_from_flim(ref_flim)
@@ -166,12 +198,6 @@ class Multiarea_from_lowmag():
                 f"{zoom} ({os.path.basename(ref_flim)})"
             )
             return zoom
-        if self.high_mag_zoom is not None:
-            print(
-                f"high_mag zoom from script setting pos_id={pos_id}: "
-                f"{self.high_mag_zoom}"
-            )
-            return float(self.high_mag_zoom)
         raise ValueError(
             f"No existing highmag FLIM for pos_id={pos_id} "
             f"({self.lowmag_basename}_highmag_{pos_id}_*.flim) and high_mag_zoom "
@@ -180,7 +206,7 @@ class Multiarea_from_lowmag():
         )
 
     def get_first_high_mag_flim(self):
-        folder = self.lowmag_iminfo.statedict["State.Files.pathName"]
+        folder = self.files_folder()
         pattern = os.path.join(
             folder,
             f"{self.lowmag_basename}_highmag_*_[0-9][0-9][0-9].flim",
@@ -190,16 +216,18 @@ class Multiarea_from_lowmag():
             return ""
         return highmag_flimlist[0]
 
-    def count_flimfiles(self) -> int:
-        low_flimlist = glob.glob(os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"],
+    def count_flimfiles(self, FLIMageCont=None) -> int:
+        folder = self.files_folder(FLIMageCont)
+        low_flimlist = glob.glob(os.path.join(folder,
                                               self.lowmag_basename+"[0-9][0-9][0-9].flim"))
         self.low_counter = self.get_max_plus_one_flimfiles(low_flimlist)    
-        self.low_max_plus1_flim = os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"], 
+        self.low_max_plus1_flim = os.path.join(folder, 
                                              self.lowmag_basename + str(self.low_counter).zfill(3) + ".flim")
         return self.low_counter
 
-    def count_high_mag_flimfiles(self, pos_id, return_first_flim = False) -> int:
-        highmag_flimlist = glob.glob(os.path.join(self.lowmag_iminfo.statedict["State.Files.pathName"],
+    def count_high_mag_flimfiles(self, pos_id, return_first_flim = False, FLIMageCont=None) -> int:
+        folder = self.files_folder(FLIMageCont)
+        highmag_flimlist = glob.glob(os.path.join(folder,
                                               f"{self.lowmag_basename}_highmag_{pos_id}_"+"[0-9][0-9][0-9].flim"))
         counter = self.get_max_plus_one_flimfiles(highmag_flimlist)    
         return counter
@@ -207,16 +235,78 @@ class Multiarea_from_lowmag():
                                               # f"{self.lowmag_basename}_highmag_{pos_id}_" + str(self.low_counter).zfill(3) + ".flim")
 
 
-    def send_lowmag_acq_info(self, FLIMageCont):
-        FLIMageCont.flim.sendCommand(f'LoadSetting, {self.lowmag_path}')
-        FLIMageCont.flim.sendCommand(f'State.Acq.power = {self.lowmag_iminfo.statedict["State.Acq.power"]}')
-        FLIMageCont.flim.sendCommand(f'State.Files.pathName = "{self.lowmag_iminfo.statedict["State.Files.pathName"]}"')
-        FLIMageCont.flim.sendCommand(f'State.Files.baseName = "{self.lowmag_basename}"')
-        low_counter = self.count_flimfiles()
-        FLIMageCont.flim.sendCommand(f'State.Files.fileCounter = {low_counter}')
-        FLIMageCont.flim.sendCommand(f'State.Acq.zoom = {self.lowmag_iminfo.statedict["State.Acq.zoom"]}')
-        FLIMageCont.flim.sendCommand('SetScanMirrorXY_um, 0, 0')
-        FLIMageCont.flim.sendCommand('SetCenter')
+    def send_lowmag_acq_info(
+        self,
+        FLIMageCont,
+        use_load_setting_lite=True,
+        use_bulk_overlay=True,
+        n_frames_per_slice=1,
+    ):
+        """
+        Restore lowmag acquisition settings before an align/lowmag grab.
+
+        Fast path (default): LoadSettingLite + one ApplySetupOverlayLite txt
+        that sets power/baseName/counter/zoom/nSlices/sliceStep and forces
+        nFrames/nAveFrame for single-frame-per-slice Z stacks.
+
+        Note: some lowmag .flim files store nFrames==nSlices (bad metadata).
+        Loading that file alone would acquire nFrames frames at every Z.
+        Always override nFrames to n_frames_per_slice (default 1).
+        """
+        self.files_folder(FLIMageCont)
+        low_counter = self.count_flimfiles(FLIMageCont)
+        d = self.lowmag_iminfo.statedict
+
+        load_cmd = "LoadSettingLite" if use_load_setting_lite else "LoadSetting"
+        FLIMageCont.flim.sendCommand(f"{load_cmd}, {self.lowmag_path}")
+
+        power = d["State.Acq.power"]
+        zoom = d["State.Acq.zoom"]
+        n_slices = d["State.Acq.nSlices"]
+        slice_step = d["State.Acq.sliceStep"]
+        # Never trust nFrames from the template .flim for this workflow.
+        n_frames = int(n_frames_per_slice)
+
+        if use_bulk_overlay:
+            overlay_path = os.path.join(
+                tempfile.gettempdir(),
+                f"flimage_lowmag_overlay_{os.getpid()}.txt",
+            )
+            with open(overlay_path, "w", encoding="utf-8") as f:
+                f.write("FLIMimage parameters\n")
+                f.write(f"State.Acq.power = {power}\n")
+                f.write(f'State.Files.baseName = "{self.lowmag_basename}"\n')
+                f.write(f"State.Files.fileCounter = {low_counter}\n")
+                f.write(f"State.Acq.zoom = {zoom}\n")
+                f.write(f"State.Acq.nSlices = {n_slices}\n")
+                f.write(f"State.Acq.sliceStep = {slice_step}\n")
+                f.write("State.Acq.ZStack = True\n")
+                f.write(f"State.Acq.nFrames = {n_frames}\n")
+                f.write("State.Acq.nAveFrame = 1\n")
+                f.write("State.Acq.nAveragedFrames = 1\n")
+                f.write("State.Acq.aveFrame = False\n")
+                f.write("State.Acq.aveFrameA = [False, False]\n")
+                f.write("State.Acq.nAveSlice = 1\n")
+                f.write("State.Acq.aveSlice = False\n")
+            FLIMageCont.flim.sendCommand(f"ApplySetupOverlayLite, {overlay_path}")
+        else:
+            FLIMageCont.flim.sendCommand(f"State.Acq.power = {power}")
+            FLIMageCont.flim.sendCommand(
+                f'State.Files.baseName = "{self.lowmag_basename}"'
+            )
+            FLIMageCont.flim.sendCommand(f"State.Files.fileCounter = {low_counter}")
+            FLIMageCont.flim.sendCommand(f"State.Acq.zoom = {zoom}")
+            FLIMageCont.flim.sendCommand(f"State.Acq.nSlices = {n_slices}")
+            FLIMageCont.flim.sendCommand(f"State.Acq.sliceStep = {slice_step}")
+            FLIMageCont.flim.sendCommand("State.Acq.ZStack = True")
+            FLIMageCont.flim.sendCommand(f"State.Acq.nFrames = {n_frames}")
+            FLIMageCont.flim.sendCommand("State.Acq.nAveFrame = 1")
+            FLIMageCont.flim.sendCommand("State.Acq.nAveragedFrames = 1")
+            FLIMageCont.flim.sendCommand("State.Acq.aveFrame = False")
+            FLIMageCont.flim.sendCommand("State.Acq.aveFrameA = [False, False]")
+
+        FLIMageCont.flim.sendCommand("SetScanMirrorXY_um, 0, 0")
+        FLIMageCont.flim.sendCommand("SetCenter")
     
     def highmag_motor_destination_um(self, FLIMageCont, pos_id) -> tuple[float, float, float]:
         """Absolute motor XYZ for a highmag field from corrected lowmag center + CSV offset."""
@@ -227,10 +317,24 @@ class Multiarea_from_lowmag():
         dest_z = cz + FLIMageCont.directionMotorZ * off["z_um"]
         return dest_x, dest_y, dest_z
 
-    def go_to_highmag_motor_pos(self, FLIMageCont, pos_id) -> tuple[float, float, float]:
+    def go_to_highmag_motor_pos(
+        self,
+        FLIMageCont,
+        pos_id,
+        first_wait_sec=None,
+        iter_wait_sec=None,
+        fast=False,
+    ):
         """Move the stage to the absolute highmag motor position for pos_id."""
         dest_x, dest_y, dest_z = self.highmag_motor_destination_um(FLIMageCont, pos_id)
-        FLIMageCont.go_to_absolute_pos_motor_checkstate(dest_x, dest_y, dest_z)
+        kwargs = {"fast": fast}
+        if first_wait_sec is not None:
+            kwargs["first_wait_sec"] = first_wait_sec
+        if iter_wait_sec is not None:
+            kwargs["iter_wait_sec"] = iter_wait_sec
+        FLIMageCont.go_to_absolute_pos_motor_checkstate(
+            dest_x, dest_y, dest_z, **kwargs
+        )
         return dest_x, dest_y, dest_z
 
     def update_corrected_lowmag_from_highmag_pos(self, FLIMageCont, pos_id) -> None:
@@ -257,7 +361,7 @@ class Multiarea_from_lowmag():
         mismatched: list[int] = []
         for pos_id in self.high_mag_relpos_dict:
             pattern = os.path.join(
-                self.lowmag_iminfo.statedict["State.Files.pathName"],
+                self.files_folder(),
                 f"{self.lowmag_basename}_highmag_{pos_id}_*.flim",
             )
             ref_paths = sorted(
@@ -292,24 +396,67 @@ class Multiarea_from_lowmag():
                 )
         return mismatched
 
-    def send_highmag_acq_info(self, FLIMageCont, pos_id, use_galvo = True):
-        FLIMageCont.flim.sendCommand(f'LoadSetting, {self.high_mag_setting_path}')
-        FLIMageCont.flim.sendCommand(f'State.Files.baseName = "{self.lowmag_basename}_highmag_{pos_id}_"')
+    def send_highmag_acq_info(
+        self,
+        FLIMageCont,
+        pos_id,
+        use_galvo=True,
+        load_setting=True,
+        use_load_setting_lite=False,
+        first_wait_sec=None,
+        iter_wait_sec=None,
+        fast_motor=False,
+    ):
+        """
+        Apply highmag acquisition settings and move to the field.
+
+        Args:
+            load_setting: If False, skip LoadSetting (reuse current FLIMage Acq).
+            use_load_setting_lite: If True, use remote LoadSettingLite (skip GUI).
+            first_wait_sec / iter_wait_sec: Optional shorter motor settle waits
+                when use_galvo is False and fast_motor is False.
+            fast_motor: Use go_to_absolute_pos_motor_checkstate(fast=True).
+
+        Returns:
+            (dest_xyz_or_None, file_counter). Absolute motor XYZ when use_galvo
+            is False; file_counter is the next FLIM index for this highmag id.
+        """
+        self.files_folder(FLIMageCont)
+        if load_setting:
+            cmd = "LoadSettingLite" if use_load_setting_lite else "LoadSetting"
+            FLIMageCont.flim.sendCommand(f"{cmd}, {self.high_mag_setting_path}")
+
+        namestem = f"{self.lowmag_basename}_highmag_{pos_id}_"
         zoom = self.resolve_high_mag_zoom(pos_id)
-        FLIMageCont.flim.sendCommand(f'State.Acq.zoom = {zoom}')
-        counter = self.count_high_mag_flimfiles(pos_id = pos_id)
-        FLIMageCont.flim.sendCommand(f'State.Files.fileCounter = {counter}')
-        FLIMageCont.relative_zyx_um = [(-1)*self.high_mag_relpos_dict[pos_id]["z_um"],
-                                       (-1)*self.high_mag_relpos_dict[pos_id]["y_um"],
-                                       (-1)*self.high_mag_relpos_dict[pos_id]["x_um"]]
-        
+        counter = self.count_high_mag_flimfiles(pos_id=pos_id, FLIMageCont=FLIMageCont)
+
+        # One ReSetup/FillGUI for baseName + zoom + counter (not three).
+        FLIMageCont.flim.sendCommand("BeginStateBatch")
+        FLIMageCont.flim.sendCommand(f'State.Files.baseName = "{namestem}"')
+        FLIMageCont.flim.sendCommand(f"State.Acq.zoom = {zoom}")
+        FLIMageCont.flim.sendCommand(f"State.Files.fileCounter = {counter}")
+        FLIMageCont.flim.sendCommand("EndStateBatch")
+
+        FLIMageCont.relative_zyx_um = [
+            (-1) * self.high_mag_relpos_dict[pos_id]["z_um"],
+            (-1) * self.high_mag_relpos_dict[pos_id]["y_um"],
+            (-1) * self.high_mag_relpos_dict[pos_id]["x_um"],
+        ]
+
+        dest = None
         if use_galvo:
-            FLIMageCont.go_to_absolute_pos_um_galvo(z_move = True)
+            FLIMageCont.go_to_absolute_pos_um_galvo(z_move=True)
+            FLIMageCont.flim.sendCommand("SetCenter")
         else:
-            # LoadSetting may restore motor XYZ from the template FLIM; always goto the
-            # absolute destination derived from corrected lowmag center + CSV offset.
-            self.go_to_highmag_motor_pos(FLIMageCont, pos_id)
-        FLIMageCont.flim.sendCommand('SetCenter')
+            # Absolute motor path already calls SetCenter inside checkstate.
+            dest = self.go_to_highmag_motor_pos(
+                FLIMageCont,
+                pos_id,
+                first_wait_sec=first_wait_sec,
+                iter_wait_sec=iter_wait_sec,
+                fast=fast_motor,
+            )
+        return dest, counter
     
     def update_pos_fromcurrent(self, FLIMageCont):
         self.corrected_lowmag_xyz_um = FLIMageCont.get_position()

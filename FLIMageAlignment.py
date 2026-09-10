@@ -16,11 +16,12 @@ from datetime import datetime
 from skimage.transform import resize
 from utility.mpl_show import resolve_show
 
-# "roi_adjacent": ROI-local phase correlation + adjacent-frame cumulative (default)
-# "traditional": frame-0 reference + fourier_shift (legacy)
-DEFAULT_ALIGN_METHOD = "roi_adjacent"
+# "traditional": full-FOV frame-0 reference + fourier_shift (default; motor/two-file)
+# "roi_adjacent": ROI-local phase correlation + adjacent-frame cumulative
+# roi_adjacent can latch onto local features and accumulate runaway shifts.
+DEFAULT_ALIGN_METHOD = "traditional"
 MOTOR_ALIGN_METHOD = "traditional"
-POST_ACQUISITION_ALIGN_METHOD = "roi_adjacent"
+POST_ACQUISITION_ALIGN_METHOD = "traditional"
 DEFAULT_ROI_HALF_ZYX = (2, 30, 30)  # matches gui_integration.process_small_region
 
 def get_flimfile_list(one_file_path):
@@ -236,8 +237,8 @@ def _align_stack(
     Align a time-series stack (T, Z, Y, X) or (T, Y, X).
 
     method:
-      - "roi_adjacent": adjacent-frame cumulative shifts (default)
-      - "traditional": frame-0 reference with fourier_shift
+      - "traditional": frame-0 reference with fourier_shift (default)
+      - "roi_adjacent": adjacent-frame cumulative shifts
     """
     n_time = Tiff_MultiArray.shape[0]
     first_vol = Tiff_MultiArray[0]

@@ -108,7 +108,13 @@ class ROIAnalysisGUIWithViewMode(ROIAnalysisGUI):
                 # Show first frame that has ROI (in case frame 0 has no ROI)
                 if hasattr(self, "frame_slider") and self.frame_slider is not None:
                     self.current_frame = first_frame
-                    self.frame_slider.setValue(first_frame)
+                    if self.uncaging_keyframe_mode:
+                        self._configure_navigation_slider()
+                        self.frame_slider.setValue(
+                            self._stack_to_navigation_index(first_frame)
+                        )
+                    else:
+                        self.frame_slider.setValue(first_frame)
             else:
                 mask_2d = np.asarray(roi_stack) > 0
                 params = self._mask_to_roi_parameters(mask_2d)
@@ -122,6 +128,8 @@ class ROIAnalysisGUIWithViewMode(ROIAnalysisGUI):
                 linewidth=2, edgecolor="red", facecolor="none"
             )
             self.enable_time_series_mode()
+            if self.uncaging_keyframe_mode:
+                self._prune_non_keyframe_uncaging_roi_params()
             self.view_mode = True
             if hasattr(self, "view_mode_checkbox"):
                 self.view_mode_checkbox.blockSignals(True)
@@ -217,16 +225,20 @@ class ROIAnalysisGUIWithViewMode(ROIAnalysisGUI):
             return
         # View mode: update UI and load ROI for current frame only (never overwrite)
         self.previous_frame = self.current_frame
-        self._updating_slider = True
-        self.frame_slider.setValue(self.current_frame)
-        self._updating_slider = False
-        self.frame_info_label.setText(f"Frame {self.current_frame + 1}/{self.total_frames}")
+        self._sync_slider_to_current_frame()
         if self.view_mode:
-            self.frame_info_label.setText(f"Review Mode Frame {self.current_frame + 1}/{self.total_frames}")
+            self.frame_info_label.setText(
+                f"Review Mode {self._format_frame_info_label()}"
+            )
+            self.frame_info_label.setStyleSheet("color: red; font-weight: bold;")
+        else:
+            self.frame_info_label.setText(self._format_frame_info_label())
+            self.frame_info_label.setStyleSheet("")
         if self.frame_info_df is not None and hasattr(self, "file_info_display"):
             self.file_info_display.setText(self._build_file_info_text_for_frame(self.current_frame))
-        if self.current_frame in self.frame_roi_parameters:
-            self.roi_parameters = self.frame_roi_parameters[self.current_frame].copy()
+        effective_params = self._get_effective_roi_params(self.current_frame)
+        if effective_params is not None:
+            self.roi_parameters = effective_params.copy()
             self.recreate_roi_from_parameters()
         if not self.is_defining_roi:
             self.display_time_series_frame(self.current_frame)
@@ -236,20 +248,26 @@ class ROIAnalysisGUIWithViewMode(ROIAnalysisGUI):
             self.update_plot()
 
     def on_mouse_press(self, event):
-        """In View mode, ignore mouse press (no ROI edit)."""
+        """In View mode or interpolated uncaging frames, ignore mouse press."""
         if self.view_mode:
+            return
+        if not self.is_defining_roi and not self._is_roi_frame_editable(self.current_frame):
             return
         super().on_mouse_press(event)
 
     def on_mouse_release(self, event):
-        """In View mode, ignore mouse release (no ROI edit)."""
+        """In View mode or interpolated uncaging frames, ignore mouse release."""
         if self.view_mode:
+            return
+        if not self.is_defining_roi and not self._is_roi_frame_editable(self.current_frame):
             return
         super().on_mouse_release(event)
 
     def on_mouse_move(self, event):
-        """In View mode, ignore mouse move (no ROI drag)."""
+        """In View mode or interpolated uncaging frames, ignore mouse move."""
         if self.view_mode:
+            return
+        if not self.is_defining_roi and not self._is_roi_frame_editable(self.current_frame):
             return
         super().on_mouse_move(event)
 

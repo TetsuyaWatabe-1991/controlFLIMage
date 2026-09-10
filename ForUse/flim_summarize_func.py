@@ -4,6 +4,8 @@ Created on Sat Mar 28 15:44:15 2026
 
 @author: WatabeT
 """
+from __future__ import annotations
+
 import sys
 from collections import defaultdict
 
@@ -102,4 +104,32 @@ def reshape_axes_to_2d(axes: Any, n_rows: int, n_cols: int) -> np.ndarray:
         return axes_arr
 
     raise ValueError(f"Unexpected axes array shape: {axes_arr.shape}")
+
+
+def select_ltp_post_frames(
+    post_df: pd.DataFrame,
+    *,
+    time_col: str = "aligned_time_sec",
+    window_min: list[float] | tuple[float, float] = (25.0, 35.0),
+    pad_sec: float = 60.0,
+) -> tuple[pd.DataFrame, str]:
+    """Select post frames for LTP quantification around ``window_min``.
+
+    Uses an inclusive window plus ``pad_sec`` so a point a few seconds outside
+    25-35 min is still used. If nothing falls in that window, return the single
+    frame closest to the window center. Do not average all later times (that
+    mixes ~80 min points into the 30 min LTP metric).
+    """
+    if post_df is None or len(post_df) == 0:
+        empty = post_df if post_df is not None else pd.DataFrame()
+        return empty, "none"
+    t0 = float(window_min[0]) * 60.0
+    t1 = float(window_min[1]) * 60.0
+    t = post_df[time_col].astype(float)
+    in_win = post_df[(t >= (t0 - pad_sec)) & (t <= (t1 + pad_sec))]
+    if len(in_win) > 0:
+        return in_win, "window"
+    center = 0.5 * (t0 + t1)
+    nearest_idx = (t - center).abs().idxmin()
+    return post_df.loc[[nearest_idx]], "nearest"
 

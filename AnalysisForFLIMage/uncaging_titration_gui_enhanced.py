@@ -17,15 +17,16 @@ Created on: 2025
 @author: Enhanced Analysis Tool
 """
 
-import sys
-sys.path.append(r"..\\")
-from datetime import datetime
 import os
+import sys
+sys.path.append(os.path.dirname(__file__))
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+from datetime import datetime
 import glob
 import pandas as pd
 import numpy as np
 from FLIMageAlignment import get_flimfile_list
-from FLIMageFileReader2 import FileReader
 import matplotlib.pyplot as plt
 from scipy.ndimage import median_filter
 from skimage.draw import polygon
@@ -39,6 +40,43 @@ from PIL import Image, ImageTk
 import io
 import json
 from typing import Tuple, List, Dict, Optional
+
+_FORUSE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ForUse")
+if _FORUSE_DIR not in sys.path:
+    sys.path.append(_FORUSE_DIR)
+from flim_analysis_utils import process_flim_image
+
+
+def _extract_gc_pre_unc_td(imagearray: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Match flim_analysis_utils.process_flim_image / plot_GCaMP_F_F0 frame rules."""
+    n_frames = imagearray.shape[0]
+    if n_frames in (4, 33, 34):
+        gc_pre = imagearray[1, 0, 0, :, :, :].sum(axis=-1)
+        gc_unc = imagearray[2, 0, 0, :, :, :].sum(axis=-1)
+        td_pre = imagearray[0, 0, 1, :, :, :].sum(axis=-1)
+    elif n_frames == 32:
+        gc_pre = imagearray[8 * 1 + 1 : 8 * 2, 0, 0, :, :, :].sum(axis=-1).sum(axis=0)
+        gc_unc = imagearray[8 * 2 + 1 : 8 * 3, 0, 0, :, :, :].sum(axis=-1).sum(axis=0)
+        td_pre = imagearray[8 * 1 + 1 : 8 * 2, 0, 1, :, :, :].sum(axis=-1).sum(axis=0)
+    else:
+        raise ValueError(f"Unsupported n_frames={n_frames}")
+    return gc_pre, gc_unc, td_pre
+
+
+def _roi_ff0_from_maps(
+    gc_pre_med: np.ndarray,
+    gc_unc_med: np.ndarray,
+    mask: np.ndarray,
+) -> tuple[float, float, float]:
+    """
+    ROI metrics: intensity = sum over mask pixels; F/F0 = sum(unc) / sum(pre).
+    """
+    pre_vals = gc_pre_med[mask]
+    unc_vals = gc_unc_med[mask]
+    pre_sum = float(np.sum(pre_vals)) if pre_vals.size else 0.0
+    unc_sum = float(np.sum(unc_vals)) if unc_vals.size else 0.0
+    roi_ff0 = unc_sum / pre_sum if pre_sum > 0 else 0.0
+    return pre_sum, unc_sum, roi_ff0
 
 
 # Functions copied from GCaMPanalysis_tkinter_file_selection.py to avoid import issues
@@ -255,7 +293,8 @@ def create_default_rois(image_shape: Tuple[int, int]) -> Tuple[np.ndarray, np.nd
 
 def analyze_uncaging_titration(filelist: List[str], pow_slope: float, 
                                pow_intcpt: float, quality_threshold: float = 0.3,
-                               ignore_defined_roi: bool = False
+                               ignore_defined_roi: bool = False,
+                               skip_confirmation_dialog: bool = False,
                                ):
     """
     Analyze uncaging titration data with enhanced GUI features.
@@ -265,6 +304,8 @@ def analyze_uncaging_titration(filelist: List[str], pow_slope: float,
         pow_slope: Power calibration slope
         pow_intcpt: Power calibration intercept
         quality_threshold: Threshold for image quality detection
+        ignore_defined_roi: If True, ignore saved ROI and prompt for new ROIs
+        skip_confirmation_dialog: If True, reuse existing ROI JSON and skip tkinter confirm
     """
     # Group files by pattern
     grouped_files = defaultdict(list)
@@ -315,27 +356,25 @@ def analyze_uncaging_titration(filelist: List[str], pow_slope: float,
             basename = os.path.basename(each_file)
             
             try:
-                # Load and process image data
-                uncaging_iminfo = FileReader()
-                uncaging_iminfo.read_imageFile(each_file, True)
-                imagearray = np.array(uncaging_iminfo.image)
-                uncaging_x_y_0to1 = uncaging_iminfo.statedict["State.Uncaging.Position"]
-                uncaging_pow = uncaging_iminfo.statedict["State.Uncaging.Power"]
-                pulseWidth = int(uncaging_iminfo.statedict["State.Uncaging.pulseWidth"])
-                center_y = imagearray.shape[-2] * uncaging_x_y_0to1[1]
-                center_x = imagearray.shape[-3] * uncaging_x_y_0to1[0]
-                
-                # Get images for pre and uncaging time points
-                GCpre = imagearray[0,0,0,:,:,:].sum(axis=-1)  # First frame
-                GCunc = imagearray[3,0,0,:,:,:].sum(axis=-1)  # Uncaging frame
-                Tdpre = imagearray[0,0,1,:,:,:].sum(axis=-1)
-                
-                GC_pre_med = median_filter(GCpre, size=3)
-                GC_unc_med = median_filter(GCunc, size=3)
-                
-                pow_mw = pow_slope * uncaging_pow + pow_intcpt
-                pow_mw_coherent = pow_mw/3
-                pow_mw_round = round(pow_mw_coherent, 1)
+                # Same pre/unc frame selection as plot_GCaMP_F_F0 (32-frame titration, etc.)
+                flim_data = process_flim_image(
+                    each_file,
+                    pow_slope,
+                    pow_intcpt,
+                    from_Thorlab_to_coherent_factor=1 / 3,
+                )
+                if flim_data is None:
+                    print(f"Skipped unsupported shape: {each_file}")
+                    continue
+
+                Tdpre = flim_data["Tdpre"]
+                center_x = flim_data["center_x"]
+                center_y = flim_data["center_y"]
+                pow_mw_round = flim_data["pow_mw_round"]
+                pulseWidth = int(flim_data["pulseWidth"])
+                gc_pre, gc_unc, _ = _extract_gc_pre_unc_td(flim_data["imagearray"])
+                GC_pre_med = median_filter(gc_pre, size=3)
+                GC_unc_med = median_filter(gc_unc, size=3)
                 
                 # Handle ROI definition only for the first file in each group
                 if first_file_in_group:
@@ -346,8 +385,13 @@ def analyze_uncaging_titration(filelist: List[str], pow_slope: float,
                     while re_define_roi and should_continue_analysis:
                         is_good_quality = detect_image_quality(GC_pre_med, quality_threshold)
                         
+                        roi_exists = (
+                            not ignore_defined_roi
+                            and os.path.exists(roi_file)
+                            and (skip_confirmation_dialog or os.path.exists(roi_image_file))
+                        )
                         # Check if we can reuse existing ROIs
-                        if os.path.exists(roi_file) and os.path.exists(roi_image_file):
+                        if roi_exists:
                             print(f"Found existing ROI for group {group}")
                             roi_points, roi_points_spine = load_roi_info_enhanced(roi_file)
                             
@@ -412,13 +456,12 @@ def analyze_uncaging_titration(filelist: List[str], pow_slope: float,
                         mask, mask_spine = get_roi_masks(roi_points, roi_points_spine, GC_pre_med.shape)
                         
                         # Calculate results for the first file
-                        pre_mean_intensity = round(GC_pre_med[mask].sum(), 1)
-                        post_mean_intensity = round(GC_unc_med[mask].sum(), 1)
-                        dend_F_F0 = post_mean_intensity / pre_mean_intensity if pre_mean_intensity > 0 else 0
-                        
-                        pre_spine_intensity = round(GC_pre_med[mask_spine].sum(), 1)
-                        post_spine_intensity = round(GC_unc_med[mask_spine].sum(), 1)
-                        spine_F_F0 = post_spine_intensity / pre_spine_intensity if pre_spine_intensity > 0 else 0
+                        pre_mean_intensity, post_mean_intensity, dend_F_F0 = _roi_ff0_from_maps(
+                            GC_pre_med, GC_unc_med, mask
+                        )
+                        pre_spine_intensity, post_spine_intensity, spine_F_F0 = _roi_ff0_from_maps(
+                            GC_pre_med, GC_unc_med, mask_spine
+                        )
                         
                         # Store results in dictionary for GUI display
                         results_dict[each_file] = {
@@ -436,25 +479,29 @@ def analyze_uncaging_titration(filelist: List[str], pow_slope: float,
                             'is_low_quality': not is_good_quality
                         }
                         
-                        # Show dialog for confirmation
-                        dialog = NextFileDialog(roi_image_file, results_dict[each_file])
-                        result = dialog.show()
-                        
-                        if result is None:
-                            print(f"\nAnalysis terminated by user.")
-                            should_continue_analysis = False
-                            break
-                        elif result:
+                        # Show dialog for confirmation (interactive mode only)
+                        if skip_confirmation_dialog:
                             re_define_roi = False
                             first_file_in_group = False
                         else:
-                            re_define_roi = True
-                            if os.path.exists(roi_file):
-                                os.remove(roi_file)
-                            if os.path.exists(roi_image_file):
-                                os.remove(roi_image_file)
-                            results_dict.pop(each_file, None)
-                            continue
+                            dialog = NextFileDialog(roi_image_file, results_dict[each_file])
+                            result = dialog.show()
+                            
+                            if result is None:
+                                print(f"\nAnalysis terminated by user.")
+                                should_continue_analysis = False
+                                break
+                            elif result:
+                                re_define_roi = False
+                                first_file_in_group = False
+                            else:
+                                re_define_roi = True
+                                if os.path.exists(roi_file):
+                                    os.remove(roi_file)
+                                if os.path.exists(roi_image_file):
+                                    os.remove(roi_image_file)
+                                results_dict.pop(each_file, None)
+                                continue
                         
                         # Add to CSV result string
                         result_txt += f"{group},{pow_mw_round},{pre_mean_intensity},{post_mean_intensity},{dend_F_F0:.2f},{pre_spine_intensity},{post_spine_intensity},{spine_F_F0:.2f},{roi_file},{roi_image_file}\n"
@@ -470,13 +517,12 @@ def analyze_uncaging_titration(filelist: List[str], pow_slope: float,
                         continue
                     
                     # Calculate results using the same ROI
-                    pre_mean_intensity = round(GC_pre_med[mask].sum(), 1)
-                    post_mean_intensity = round(GC_unc_med[mask].sum(), 1)
-                    dend_F_F0 = post_mean_intensity / pre_mean_intensity if pre_mean_intensity > 0 else 0
-                    
-                    pre_spine_intensity = round(GC_pre_med[mask_spine].sum(), 1)
-                    post_spine_intensity = round(GC_unc_med[mask_spine].sum(), 1)
-                    spine_F_F0 = post_spine_intensity / pre_spine_intensity if pre_spine_intensity > 0 else 0
+                    pre_mean_intensity, post_mean_intensity, dend_F_F0 = _roi_ff0_from_maps(
+                        GC_pre_med, GC_unc_med, mask
+                    )
+                    pre_spine_intensity, post_spine_intensity, spine_F_F0 = _roi_ff0_from_maps(
+                        GC_pre_med, GC_unc_med, mask_spine
+                    )
                     
                     # Store results in dictionary
                     results_dict[each_file] = {
@@ -523,12 +569,12 @@ def analyze_uncaging_titration(filelist: List[str], pow_slope: float,
 
 if __name__ == "__main__":
     # Configuration parameters
-    pow_slope = 0.158
-    pow_intcpt = 0.139
+    pow_slope = 0.327
+    pow_intcpt = 0.1652
     quality_threshold = 0.1  # Adjust based on your image quality requirements
     
     # File list - modify this path as needed
-    filelist = glob.glob(r"\\RY-LAB-WS04\ImagingData\Tetsuya\20250612\NoMg_dend*um_*.flim")
+    filelist = glob.glob(r"G:\ImagingData\Tetsuya\20260703\grin1_ko_gavestinel\*.flim")
     
     # Alternative example paths (uncomment as needed):
     # filelist = glob.glob(r"G:\ImagingData\Tetsuya\20250506\E4_roomair_*.flim")

@@ -21,12 +21,21 @@ from skimage.draw import polygon as draw_polygon
 from skimage.measure import find_contours, regionprops
 
 _CONTROLFLIMAGE = Path(__file__).resolve().parents[2]
-_RESPAN_ROOT = _CONTROLFLIMAGE.parent / "ongoing" / "RESPAN"
-for _path in (str(_CONTROLFLIMAGE), str(_RESPAN_ROOT)):
+_MUSHROOM_DETECTOR = Path(__file__).resolve().parent
+for _path in (str(_CONTROLFLIMAGE), str(_MUSHROOM_DETECTOR)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
+from respan_runner.bootstrap import ensure_respan_syspath  # noqa: E402
+
+ensure_respan_syspath()
+
 from scipy import ndimage  # noqa: E402
+from z_edge_reject import (  # noqa: E402
+    Z_EDGE_REJECT_SLICES,
+    ini_excluded_for_auto_rating,
+    z_index_in_edge_reject_slices,
+)
 
 # Legacy one-sided defaults (used when use_bandpass=False).
 MIN_SHAFT_TO_HEAD_UM = 0.5
@@ -59,14 +68,16 @@ SPINE_OUTLINE_DILATION_PX = 4
 SHAFT_OUTLINE_DILATION_PX = 2
 SEG_MASK_SUBFOLDER = "seg_masks"
 EDGE_EXCLUDE_PERCENT = 10.0
-BG_INTENSITY_PERCENTILE = 50.0
+BG_INTENSITY_PERCENTILE = 70.0
 BG_MEDIAN_FILTER_SIZE = 3
-BG_SEARCH_RADIUS_SCALE = 2.0
+BG_SEARCH_RADIUS_SCALE = 4.0
 BG_MASK_RADIUS_SCALE = 1.0
 BG_EDGE_EXCLUDE_PERCENT = 15.0
 BG_EXCLUSION_RADIUS_SCALE = 2.0
 MIN_BG_CIRCLE_RADIUS_PX = 1.0
 BG_RADIUS_SHRINK_STEP_PX = 1.0
+BG_CIRCLE_MIN_INSIDE_FRACTION = 0.70
+BG_APPROX_OFFSET_SCALES = (1.0, 1.5, 2.0, 2.5, 3.5, 5.0, 7.0)
 MUSHROOM_ASSIGN_SUMMARY_FILENAME = "mushroom_spine_assign_summary.csv"
 # RESPAN Validation_Vols channel order (Z, C, Y, X).
 VOL_CH_NEURON = 0
@@ -186,6 +197,14 @@ def respan_run_dir(flim_path: Path) -> Path:
     return flim_path.parent / "respan_runs" / flim_path.stem
 
 
+def respan_run_dir_for_channel(flim_path: Path, channel: int) -> Path:
+    """RESPAN run folder matching run_from_flim / _run_subfolder_name layout."""
+    from respan_runner.paths import run_subfolder_name_from_tiff
+
+    tiff_path, _ = respan_export_paths(flim_path, channel)
+    return flim_path.parent / "respan_runs" / run_subfolder_name_from_tiff(tiff_path)
+
+
 def respan_export_paths(flim_path: Path, channel: int = 2) -> tuple[Path, Path]:
     export_dir = flim_path.parent / "deepd3_annotation_stacks"
     stem = _flim_export_stem(flim_path, channel)
@@ -216,7 +235,7 @@ def load_respan_volumes(run_dir: Path, tiff_stem: str) -> dict[str, np.ndarray] 
 
 def respan_outputs_ready(flim_path: Path, channel: int = 2) -> bool:
     """True when RESPAN segmentation export exists (CSV may be absent if no spines)."""
-    run_dir = respan_run_dir(flim_path)
+    run_dir = respan_run_dir_for_channel(flim_path, channel)
     tiff_path, json_path = respan_export_paths(flim_path, channel)
     label_path = run_dir / "Validation_Data" / "Segmentation_Labels" / tiff_path.name
     return (
@@ -234,8 +253,8 @@ def ensure_respan_analysis(
     nnunet_fold: str | int = "all",
 ) -> tuple[Path, Path]:
     """Run RESPAN from FLIM if outputs are missing."""
-    from run_batch_stacks import _resolve_nnunet_fold  # noqa: E402
-    from run_from_flim import run_from_flim  # noqa: E402
+    from respan_runner.run_batch_stacks import _resolve_nnunet_fold  # noqa: E402
+    from respan_runner.run_from_flim import run_from_flim  # noqa: E402
 
     resolved_fold = _resolve_nnunet_fold(nnunet_fold)
     if str(nnunet_fold) != resolved_fold:
@@ -859,11 +878,41 @@ def circle_fully_inside_mask(
     allowed_mask: np.ndarray,
 ) -> bool:
     """True when every pixel in the circle lies inside allowed_mask."""
+    return circle_fraction_inside_mask(
+        center_y, center_x, radius_px, allowed_mask
+    ) >= 1.0 - 1e-12
+
+
+def circle_fraction_inside_mask(
+    center_y: float,
+    center_x: float,
+    radius_px: float,
+    allowed_mask: np.ndarray,
+) -> float:
+    """Fraction of circle pixels that lie inside allowed_mask."""
     if radius_px <= 0:
-        return False
+        return 0.0
     allowed = np.asarray(allowed_mask, dtype=bool)
     circle = build_circle_mask_2d(allowed.shape, center_y, center_x, radius_px)
-    return bool(np.all(allowed[circle]))
+    n_circle = int(circle.sum())
+    if n_circle == 0:
+        return 0.0
+    return float(allowed[circle].sum()) / float(n_circle)
+
+
+def circle_mostly_inside_mask(
+    center_y: float,
+    center_x: float,
+    radius_px: float,
+    allowed_mask: np.ndarray,
+    *,
+    min_fraction: float = BG_CIRCLE_MIN_INSIDE_FRACTION,
+) -> bool:
+    """True when at least min_fraction of the circle lies inside allowed_mask."""
+    return (
+        circle_fraction_inside_mask(center_y, center_x, radius_px, allowed_mask)
+        >= min_fraction
+    )
 
 
 def mask_centroid_yx(mask_2d: np.ndarray) -> tuple[float, float]:
@@ -962,7 +1011,7 @@ def _bg_circle_valid_center(
     placement_mask: np.ndarray,
     exclusion_mask: np.ndarray,
 ) -> bool:
-    return circle_fully_inside_mask(
+    return circle_mostly_inside_mask(
         center_y, center_x, required_radius_px, placement_mask
     ) and not circle_overlaps_mask(center_y, center_x, bg_radius_px, exclusion_mask)
 
@@ -988,7 +1037,7 @@ def _find_bg_center_approximate(
     for trial_radius_px in _iter_bg_trial_radii_px(base_radius_px):
         mask_radius_px = trial_radius_px * mask_radius_scale
         search_radius_px = max(trial_radius_px * search_radius_scale, mask_radius_px * 1.5)
-        for scale in (1.0, 1.5, 2.0, 2.5):
+        for scale in BG_APPROX_OFFSET_SCALES:
             offset_px = search_radius_px * scale
             for dy, dx in offsets:
                 cy = ref_cy + dy * offset_px
@@ -1053,6 +1102,34 @@ def _find_bg_center_exhaustive(
         if best_center is not None:
             return best_center, mask_radius_px
     return None, base_radius_px * mask_radius_scale
+
+
+def _find_bg_center_largest_component_centroid(
+    placement_mask: np.ndarray,
+    exclusion_mask: np.ndarray,
+    bg_radius_px: float,
+) -> tuple[tuple[float, float] | None, float]:
+    """Fallback: centroid of the largest connected component of placement & ~exclusion."""
+    allowed = np.asarray(placement_mask, dtype=bool) & ~np.asarray(
+        exclusion_mask, dtype=bool
+    )
+    radius_px = max(float(bg_radius_px), MIN_BG_CIRCLE_RADIUS_PX)
+    if not allowed.any():
+        return None, radius_px
+    labeled, n_labels = ndimage.label(allowed)
+    if n_labels < 1:
+        return None, radius_px
+    sizes = np.atleast_1d(
+        ndimage.sum(allowed, labeled, index=np.arange(1, n_labels + 1))
+    )
+    largest_label = int(np.argmax(sizes)) + 1
+    component = labeled == largest_label
+    cy, cx = mask_centroid_yx(component)
+    if _bg_circle_valid_center(
+        cy, cx, radius_px, radius_px, placement_mask, exclusion_mask
+    ):
+        return (float(cy), float(cx)), radius_px
+    return None, radius_px
 
 
 def compute_background_circle_roi(
@@ -1122,6 +1199,13 @@ def compute_background_circle_roi(
             image_shape,
             search_radius_scale=search_radius_scale,
             mask_radius_scale=mask_radius_scale,
+        )
+
+    if best_center is None:
+        best_center, mask_radius_px = _find_bg_center_largest_component_centroid(
+            placement_mask,
+            exclusion_mask,
+            MIN_BG_CIRCLE_RADIUS_PX,
         )
 
     if best_center is not None:
@@ -2465,6 +2549,7 @@ def detect_mushroom_from_flim_respan(
     save_z_triplets: bool = True,
     save_per_mushroom_z_triplets: bool = False,
     auto_rate: bool = True,
+    z_edge_reject_slices: int = Z_EDGE_REJECT_SLICES,
 ) -> list[dict[str, Any]]:
     """Run RESPAN on a FLIM file, keep mushroom spines only, and save markers."""
     flim_path = Path(flim_path)
@@ -2473,6 +2558,7 @@ def detect_mushroom_from_flim_respan(
 
     from mushroom_bandpass import SEG_AREA_UM2_BAND, format_band
 
+    z_edge_reject_slices = max(0, int(z_edge_reject_slices))
     print("FLIM:", flim_path)
     if use_bandpass:
         print("Mushroom band-pass:")
@@ -2487,6 +2573,11 @@ def detect_mushroom_from_flim_respan(
         f"(vs all RESPAN candidates)"
     )
     print(f"Edge exclusion: outer {edge_exclude_percent:g}% margin")
+    if z_edge_reject_slices > 0:
+        print(
+            f"Z-edge reject: first/last {z_edge_reject_slices} slice(s) "
+            "(force excluded=1 regardless of auto-rating)"
+        )
     print(
         f"Shaft-fit filter: >= {MIN_SHAFT_FIT_PIXELS_IN_RADIUS} dendrite pixels "
         f"within {SHAFT_FIT_RADIUS_UM:g} um of anchor"
@@ -2495,7 +2586,7 @@ def detect_mushroom_from_flim_respan(
     tiff_path, json_path = ensure_respan_analysis(
         flim_path, channel=channel, rerun=rerun_respan
     )
-    run_dir = respan_run_dir(flim_path)
+    run_dir = respan_run_dir_for_channel(flim_path, channel)
     csv_path = run_dir / "Tables" / f"{tiff_path.stem}_detected_spines.csv"
     label_path = run_dir / "Validation_Data" / "Segmentation_Labels" / tiff_path.name
 
@@ -2691,8 +2782,14 @@ def detect_mushroom_from_flim_respan(
             )
             saved_parts.append("png")
 
+        z_edge_forced_reject = z_index_in_edge_reject_slices(
+            head_zyx[0], zyx.shape[0], z_edge_reject_slices
+        )
         if save_per_spine_ini:
-            ini_excluded = ini_excluded_for_auto_rating(auto_rating)
+            ini_excluded = ini_excluded_for_auto_rating(
+                auto_rating,
+                force_excluded=z_edge_forced_reject,
+            )
             save_spine_dend_info(
                 [round(head_zyx[0]), round(head_zyx[1]), round(head_zyx[2])],
                 geom["dend_slope"],
@@ -2729,6 +2826,11 @@ def detect_mushroom_from_flim_respan(
             rating_note = ""
             if auto_rating is not None:
                 rating_note = f", auto-rating {auto_rating} ({auto_rating_label})"
+            if z_edge_forced_reject:
+                rating_note += (
+                    f", Z-edge reject (Z={int(round(head_zyx[0]))}/"
+                    f"{int(zyx.shape[0]) - 1}, n_edge={z_edge_reject_slices})"
+                )
             print(
                 f"  saved mushroom {', '.join(saved_parts)} "
                 f"{stem} (RESPAN spine {spine_id}, "
@@ -2885,7 +2987,7 @@ def detect_spines_from_flim_respan(
         rerun=rerun_respan,
         nnunet_fold=nnunet_fold,
     )
-    run_dir = respan_run_dir(flim_path)
+    run_dir = respan_run_dir_for_channel(flim_path, channel)
     csv_path = run_dir / "Tables" / f"{tiff_path.stem}_detected_spines.csv"
     label_path = run_dir / "Validation_Data" / "Segmentation_Labels" / tiff_path.name
 
@@ -3182,7 +3284,7 @@ def load_flim_respan_review_bundle(
             "Run run_respan_spine_manager.py first."
         )
 
-    run_dir = respan_run_dir(flim_path)
+    run_dir = respan_run_dir_for_channel(flim_path, channel)
     tiff_path, json_path = respan_export_paths(flim_path, channel=channel)
     csv_path = run_dir / "Tables" / f"{tiff_path.stem}_detected_spines.csv"
     label_path = run_dir / "Validation_Data" / "Segmentation_Labels" / tiff_path.name
@@ -3226,6 +3328,43 @@ def load_flim_respan_review_bundle(
     }
 
 
+def get_spine_outline_mask_2d(
+    bundle: dict[str, Any],
+    spine_id: int,
+    *,
+    cache: dict[int, np.ndarray] | None = None,
+) -> np.ndarray | None:
+    """Build cached 2D dilated spine outline for review GUI contours."""
+    spine_id = int(spine_id)
+    if cache is not None and spine_id in cache:
+        return cache[spine_id]
+
+    row = bundle["detected_rows"].get(spine_id)
+    if row is None:
+        return None
+
+    class_labels_zyx = bundle["class_labels_zyx"]
+    respan_volumes = bundle.get("respan_volumes")
+    head_z = float(row["z"])
+    head_y = float(row["y"])
+    head_x = float(row["x"])
+
+    if respan_volumes is not None:
+        spine_mask_3d, _ = spine_instance_masks(respan_volumes, spine_id, head_z)
+    else:
+        spine_mask_3d = _spine_mask_3d(class_labels_zyx, head_z, head_y, head_x)
+
+    z_center = int(np.clip(round(head_z), 0, spine_mask_3d.shape[0] - 1))
+    z0, z1 = _z_window_indices(z_center, spine_mask_3d.shape[0], SHAFT_Z_HALF_WINDOW)
+    target_spine_mip = np.any(spine_mask_3d[z0:z1], axis=0)
+    shaft_mip_binary = shaft_mask_mip_near_z(class_labels_zyx, head_z)
+    outline_mask = build_spine_outline_mask_2d(target_spine_mip, shaft_mip_binary)
+
+    if cache is not None:
+        cache[spine_id] = outline_mask
+    return outline_mask
+
+
 def upsert_feature_csv_row(
     savefolder: str | Path,
     base_name: str,
@@ -3244,30 +3383,6 @@ def upsert_feature_csv_row(
     rows.sort(key=lambda r: int(r.get("spine_index", 0)))
     pd.DataFrame(rows).to_csv(out_path, index=False, encoding="utf-8")
     return str(out_path)
-
-
-def ini_excluded_for_auto_rating(
-    auto_rating: int | None,
-    *,
-    manual_excluded: int | None = None,
-    force_excluded: bool = False,
-    auto_accept_min_rating: int = 4,
-) -> int:
-    """
-    Decide ini excluded flag (0=accepted, 1=rejected/pending).
-
-    Manual accept/reject (manual_excluded) always wins. Batch default: auto_rating>=4
-    is accepted; rating<3 is rejected; rating 3 or unrated stays pending (excluded=1).
-    """
-    if force_excluded:
-        return 1
-    if manual_excluded is not None:
-        return int(manual_excluded)
-    if auto_rating is not None and int(auto_rating) >= int(auto_accept_min_rating):
-        return 0
-    if auto_rating is not None and int(auto_rating) < 3:
-        return 1
-    return 1
 
 
 def export_single_mushroom_spine(

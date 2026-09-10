@@ -35,9 +35,12 @@ from file_selection_gui_tiff_only import launch_file_selection_gui_tiff_only  # 
 from gui_roi_fast_simple import (  # noqa: E402
     ROI_MASK_RAW_SUFFIX,
     ROI_TYPES,
+    print_roi_analysis_errors,
     quantify_intensity_from_flim,
     rebuild_tiff_full_size_for_roi,
+    record_roi_error,
     save_drift_corrected_roi_masks,
+    save_roi_analysis_error_log,
 )
 from simple_dialog import ask_open_path_gui, ask_yes_no_gui  # noqa: E402
 
@@ -302,10 +305,14 @@ def create_roi_masks_from_seg_masks(
     combined_df: pd.DataFrame,
     *,
     require_all_three: bool = True,
+    skip_if_roi_mask_exists: bool = True,
 ) -> None:
     """
     Write Type-A ROI masks (*_roi_mask.tif) from seg_masks for every set.
     Spine / DendriticShaft / Background come from imaging-time seg_masks.
+
+    When skip_if_roi_mask_exists is True, existing *_roi_mask.tif files are left
+    unchanged so manually saved ROIs survive workflow re-runs.
     """
     required_cols = [
         "filepath_without_number",
@@ -375,6 +382,12 @@ def create_roi_masks_from_seg_masks(
                     out_path = os.path.join(
                         tiff_dir, f"{base_name}_{roi_type}_roi_mask.tif"
                     )
+                    if skip_if_roi_mask_exists and os.path.exists(out_path):
+                        print(
+                            f"    {base_name}: {roi_type} skip "
+                            f"(existing ROI mask)"
+                        )
+                        continue
                     tifffile.imwrite(
                         out_path, stack.astype(np.uint8), photometric="minisblack"
                     )
@@ -423,19 +436,76 @@ def _prepare_combined_df_for_roi_gui(combined_df: pd.DataFrame) -> pd.DataFrame:
     return combined_df
 
 
-def _launch_roi_review_gui(combined_df: pd.DataFrame, df_save_path: str) -> pd.DataFrame:
+def _has_valid_roi_sets(combined_df: pd.DataFrame) -> bool:
+    """True if at least one set is labeled for ROI (nth_set_label >= 0)."""
+    if combined_df is None or combined_df.empty:
+        return False
+    if "nth_set_label" not in combined_df.columns:
+        return False
+    return bool(
+        (
+            (combined_df["nth_set_label"] >= 0)
+            & combined_df["nth_set_label"].notna()
+        ).any()
+    )
+
+
+def _has_full_size_stack_paths(combined_df: pd.DataFrame) -> bool:
+    """True if rebuild already stored full-size TIFF paths and frame counts."""
+    if "after_align_full_save_path" not in combined_df.columns:
+        return False
+    if "n_pre_frames" not in combined_df.columns:
+        return False
+    return bool(combined_df["after_align_full_save_path"].notna().any())
+
+
+def _print_no_valid_set_diagnostics(combined_df: pd.DataFrame) -> None:
+    """Explain why the ROI GUI would be empty (usually unknown uncaging n_images)."""
+    print("ERROR: no valid ROI sets (nth_set_label >= 0). Skipping empty GUI.")
+    if "nth_set_label" in combined_df.columns:
+        print(f"  nth_set_label unique: {combined_df['nth_set_label'].unique()}")
+    if "phase" in combined_df.columns:
+        print(
+            f"  phase counts: {combined_df['phase'].value_counts(dropna=False).to_dict()}"
+        )
+    if "unknown_frame" in combined_df.columns:
+        unk = combined_df[combined_df["unknown_frame"] == True]
+        if len(unk) > 0:
+            print(
+                "  Files classified as unknown (n_images not in uncaging_frame_num):"
+            )
+            for path in unk["file_path"].tolist():
+                print(f"    {os.path.basename(str(path))}")
+            print(
+                "  Add those files' n_images to uncaging_frame_num and re-run "
+                "first_processing (do not reuse this pickle)."
+            )
+    if "uncaging_frame" in combined_df.columns:
+        n_unc = int((combined_df["uncaging_frame"] == True).sum())
+        print(f"  uncaging_frame True count: {n_unc}")
+
+
+def _launch_roi_review_gui(
+    combined_df: pd.DataFrame,
+    df_save_path: str,
+    *,
+    uncaging_roi_keyframe_count: int | None = None,
+) -> pd.DataFrame:
     """Open TIFF ROI GUI so the user can review or edit pre-filled seg_mask ROIs."""
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)
-    launch_file_selection_gui_tiff_only(
+    # Keep a Python reference; dropping it lets Qt destroy the window immediately.
+    file_selection_gui = launch_file_selection_gui_tiff_only(
         combined_df,
         df_save_path,
         additional_columns=["dt"],
         save_auto=False,
+        uncaging_roi_keyframe_count=uncaging_roi_keyframe_count,
     )
     app.exec_()
     print("ROI review/edit (full-size) finished.")
+    _ = file_selection_gui
     if os.path.exists(df_save_path):
         return pd.read_pickle(df_save_path)
     return combined_df
@@ -456,6 +526,9 @@ def run_tiff_uncaging_roi_respan(
     titration_frame_num: list[int] | None = None,
     flim_path: str | None = None,
     skip_roi_gui: bool = False,
+    uncaging_roi_keyframe_count: int | None = None,
+    overwrite_seg_roi_masks: bool = False,
+    skip_lifetime_analysis: bool = False,
 ) -> tuple[str, str] | tuple[None, None]:
     """
     Full ROI quantification for respan highmag data using pre-built seg_masks.
@@ -468,9 +541,11 @@ def run_tiff_uncaging_roi_respan(
       1) Pre-fill Spine / DendriticShaft / Background from seg_masks
       2) ROI GUI for review and edits (unless skip_roi_gui=True)
       3) Drift-corrected masks and FLIM quantification
+
+    Set skip_lifetime_analysis=True to quantify intensity only (lifetime/total_photon as NaN).
     """
     if uncaging_frame_num is None:
-        uncaging_frame_num = [33, 34, 35, 55]
+        uncaging_frame_num = [33, 34, 35, 36, 55, 80, 144]
     if titration_frame_num is None:
         titration_frame_num = []
 
@@ -486,6 +561,9 @@ def run_tiff_uncaging_roi_respan(
         f"photon_threshold: {photon_threshold}",
         f"total_photon_threshold: {total_photon_threshold}",
         f"skip_roi_gui: {skip_roi_gui}",
+        f"uncaging_roi_keyframe_count: {uncaging_roi_keyframe_count}",
+        f"overwrite_seg_roi_masks: {overwrite_seg_roi_masks}",
+        f"skip_lifetime_analysis: {skip_lifetime_analysis}",
         "=" * 60,
     ]
 
@@ -570,88 +648,140 @@ def run_tiff_uncaging_roi_respan(
         print("No data.")
         return None, None
 
-    skip_full_size_build = False
-    skip_tiff_if_exists = False
-    if use_predefined_df and loaded_existing_combined_df:
-        skip_tiff_if_exists = True
-        print(
-            "Predefined df mode: running rebuild with skip_tiff_if_exists=True "
-            "(refresh frame_info.csv, skip TIFF write if exists)"
-        )
-    elif loaded_existing_combined_df:
-        skip_full_size_build = ask_yes_no_gui(
-            "Skip 'Building full-size stacks for ROI definition' and use existing stack paths?"
+    if loaded_existing_combined_df and not _has_valid_roi_sets(combined_df):
+        _print_no_valid_set_diagnostics(combined_df)
+        raise RuntimeError(
+            "Loaded combined_df has no valid ROI sets (nth_set_label >= 0). "
+            "Do not reuse this pickle; re-run first_processing after fixing "
+            "uncaging_frame_num."
         )
 
-    if skip_full_size_build:
-        print("Skipped building full-size stacks for ROI definition.")
-    else:
-        print("\n" + "=" * 60)
-        print(
-            f"Building full-size stacks (global_align={global_align_method}, "
-            f"local_align={local_align_mode})"
-        )
-        print("=" * 60)
-        with _patch_load_and_align(global_align_method):
-            combined_df = rebuild_tiff_full_size_for_roi(
-                combined_df,
-                ch_1or2,
-                z_plus_minus,
-                skip_tiff_if_exists=skip_tiff_if_exists,
-            )
-        combined_df = augment_frame_info_local_adjacent(
-            combined_df,
-            ch_1or2=ch_1or2,
-            z_plus_minus=z_plus_minus,
-            local_half_size=local_crop_half_size,
-            local_align_mode=local_align_mode,
-        )
-    combined_df.to_pickle(df_save_path)
-    combined_df.to_csv(df_save_path.replace(".pkl", ".csv"))
-
-    combined_df = _prepare_combined_df_for_roi_gui(combined_df)
-    combined_df.to_pickle(df_save_path)
-    combined_df.to_csv(df_save_path.replace(".pkl", ".csv"))
-
-    create_roi_masks_from_seg_masks(combined_df)
-
-    if skip_roi_gui:
-        print("skip_roi_gui=True: skip ROI review GUI.")
-    else:
-        print("\nLaunching ROI GUI (seg_masks pre-filled; review and edit as needed)...")
-        combined_df = _launch_roi_review_gui(combined_df, df_save_path)
-
-    print("\nSaving drift-corrected ROI masks (Type B)...")
-    save_drift_corrected_roi_masks(combined_df)
-    combined_df.to_pickle(df_save_path)
-    combined_df.to_csv(df_save_path.replace(".pkl", ".csv"))
-
-    if "reject" not in combined_df.columns:
-        combined_df["reject"] = 0
-    else:
-        combined_df["reject"] = (
-            (combined_df["reject"] == True) | (combined_df["reject"] == 1)
-        ).astype(int)
-
+    error_log: list[str] = []
+    session_dir = os.path.dirname(df_save_path)
     out_csv = df_save_path.replace(".pkl", "_intensity_lifetime_all_frames.csv")
-    print("Quantifying intensity and lifetime from FLIM...")
-    quantify_intensity_from_flim(
-        combined_df,
-        ch_1or2,
-        z_plus_minus,
-        out_csv,
-        photon_threshold=photon_threshold,
-        total_photon_threshold=total_photon_threshold,
-    )
 
-    summary.append(f"df_save_path: {df_save_path}")
-    summary.append(f"out_csv_path: {out_csv}")
-    summary.append("finished at " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    summary_text = "\n".join(summary) + "\n"
-    print(summary_text)
+    try:
+        skip_full_size_build = False
+        skip_tiff_if_exists = False
+        if use_predefined_df and loaded_existing_combined_df:
+            skip_tiff_if_exists = True
+            print(
+                "Predefined df mode: running rebuild with skip_tiff_if_exists=True "
+                "(refresh frame_info.csv, skip TIFF write if exists)"
+            )
+        elif loaded_existing_combined_df:
+            if _has_full_size_stack_paths(combined_df):
+                skip_full_size_build = ask_yes_no_gui(
+                    "Skip 'Building full-size stacks for ROI definition' and use existing stack paths?"
+                )
+            else:
+                print(
+                    "Existing combined_df has no full-size TIFF stacks "
+                    "(missing after_align_full_save_path / n_pre_frames). "
+                    "Will build them instead of skipping."
+                )
 
-    summary_path = os.path.join(os.path.dirname(df_save_path), "summary_str_respan.txt")
-    with open(summary_path, "w", encoding="utf-8") as fh:
-        fh.write(summary_text)
+        if skip_full_size_build:
+            print("Skipped building full-size stacks for ROI definition.")
+        else:
+            print("\n" + "=" * 60)
+            print(
+                f"Building full-size stacks (global_align={global_align_method}, "
+                f"local_align={local_align_mode})"
+            )
+            print("=" * 60)
+            with _patch_load_and_align(global_align_method):
+                combined_df = rebuild_tiff_full_size_for_roi(
+                    combined_df,
+                    ch_1or2,
+                    z_plus_minus,
+                    skip_tiff_if_exists=skip_tiff_if_exists,
+                    error_log=error_log,
+                )
+            combined_df = augment_frame_info_local_adjacent(
+                combined_df,
+                ch_1or2=ch_1or2,
+                z_plus_minus=z_plus_minus,
+                local_half_size=local_crop_half_size,
+                local_align_mode=local_align_mode,
+            )
+        combined_df.to_pickle(df_save_path)
+        combined_df.to_csv(df_save_path.replace(".pkl", ".csv"))
 
-    return df_save_path, out_csv
+        combined_df = _prepare_combined_df_for_roi_gui(combined_df)
+        combined_df.to_pickle(df_save_path)
+        combined_df.to_csv(df_save_path.replace(".pkl", ".csv"))
+
+        if not _has_valid_roi_sets(combined_df):
+            _print_no_valid_set_diagnostics(combined_df)
+            raise RuntimeError(
+                "No valid ROI sets (nth_set_label >= 0). "
+                "Uncaging files were not detected; TIFF stacks were not built."
+            )
+
+        create_roi_masks_from_seg_masks(
+            combined_df,
+            skip_if_roi_mask_exists=not overwrite_seg_roi_masks,
+        )
+
+        if skip_roi_gui:
+            print("skip_roi_gui=True: skip ROI review GUI.")
+        else:
+            print("\nLaunching ROI GUI (seg_masks pre-filled; review and edit as needed)...")
+            combined_df = _launch_roi_review_gui(
+                combined_df,
+                df_save_path,
+                uncaging_roi_keyframe_count=uncaging_roi_keyframe_count,
+            )
+
+        print("\nSaving drift-corrected ROI masks (Type B)...")
+        save_drift_corrected_roi_masks(combined_df)
+        combined_df.to_pickle(df_save_path)
+        combined_df.to_csv(df_save_path.replace(".pkl", ".csv"))
+
+        if "reject" not in combined_df.columns:
+            combined_df["reject"] = 0
+        else:
+            combined_df["reject"] = (
+                (combined_df["reject"] == True) | (combined_df["reject"] == 1)
+            ).astype(int)
+
+        if skip_lifetime_analysis:
+            print("Quantifying intensity from FLIM (lifetime skipped)...")
+        else:
+            print("Quantifying intensity and lifetime from FLIM...")
+        quantify_intensity_from_flim(
+            combined_df,
+            ch_1or2,
+            z_plus_minus,
+            out_csv,
+            photon_threshold=photon_threshold,
+            total_photon_threshold=total_photon_threshold,
+            skip_lifetime_analysis=skip_lifetime_analysis,
+        )
+
+        summary.append(f"df_save_path: {df_save_path}")
+        summary.append(f"out_csv_path: {out_csv}")
+        summary.append("finished at " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        summary_text = "\n".join(summary) + "\n"
+        print(summary_text)
+
+        summary_path = os.path.join(session_dir, "summary_str_respan.txt")
+        with open(summary_path, "w", encoding="utf-8") as fh:
+            fh.write(summary_text)
+
+        return df_save_path, out_csv
+    except Exception as e:
+        record_roi_error(
+            error_log,
+            group="",
+            set_label="",
+            file="",
+            reason=f"workflow failed: {type(e).__name__}: {e}",
+        )
+        raise
+    finally:
+        print_roi_analysis_errors(error_log)
+        saved_errors = save_roi_analysis_error_log(session_dir, error_log)
+        if saved_errors:
+            print(f"Wrote error log: {saved_errors}")
