@@ -1,0 +1,5 @@
+label,projection,orientation,measured_axis,x0_px,y0_px,x1_px,y1_px,width_px,fwhm_um,fwhm_px,gaussian_fwhm_um,peak_intensity,background,half_max,pixel_size_um,ok
+L1,z_proj,horizontal,X,0,32,63,32,1,0.709028,7.090283,0.706446,1025.000000,25.000000,525.000000,0.100000,1
+L2,z_proj,vertical,Y,32,0,32,63,1,0.709028,7.090283,0.706446,1025.000000,25.000000,525.000000,0.100000,1
+L3,y_proj,horizontal,X,0,20,63,20,1,0.709028,7.090283,0.706446,1025.000000,25.000000,525.000000,0.100000,1
+L4,y_proj,vertical,Z,32,0,32,40,1,7.046235,14.092470,7.064460,1025.000000,28.865920,526.932960,0.500000,1

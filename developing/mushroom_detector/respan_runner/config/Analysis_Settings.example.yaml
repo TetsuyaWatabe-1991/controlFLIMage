@@ -1,0 +1,70 @@
+# Lab example for RESPAN batch/GUI runs.
+# Copy into each dataset subfolder as Analysis_Settings.yaml and edit paths/resolution.
+
+Parameters:
+    input_resXY: 0.102
+    input_resZ: 1.0
+    model_resXY: 0.102
+    model_resZ: 1.0
+
+Analysis:
+    tiles_for_prediction: (2,3,3)
+    roi_volume_size: 4
+    GPU_block_size: (150,500,500)
+    erode_shape: (0.5,2,2)
+    remove_touching_boarders: False
+    validation_format: tif
+    validation_scale: (1,1)
+    validation_jpeg_comp: 100
+    additional_logging: False
+
+# nnU-Net subprocess Python (required for headless/batch runs).
+internal_py_path: "CHANGE_ME/miniconda3/envs/respan_nnunet/python.exe"
+
+# Point to downloaded pretrained model folder after Google Form download.
+# segmentation_model_path: "CHANGE_ME/RESPAN_model_folder"
+
+Vaa3D:
+    path: null
+
+Channel1:
+    restore: False
+    rest_model_path: None
+    rest_type: ("care", 100)
+Channel2:
+    restore: False
+    rest_model_path: None
+    rest_type: ("care", 100)
+Channel3:
+    restore: False
+    rest_model_path: None
+    rest_type: ("care", 100)
+Channel4:
+    restore: False
+    rest_model_path: None
+    rest_type: ("care", 100)
+
+SelfNet:
+    model_path: null
+
+Refinement:
+    model_path: null
+    model_resXY: 0.065
+    model_resZ: 0.065
+
+SpuriousNeck:
+    path_length_min_um: 1.0
+    nnunet_support_min: 0.2
+    intensity_ratio_min: 0.4
+    require_intensity: False
+    exclude_mode: neck_only
+    keep_head_if_flagged: False
+    drop_disconnected_neck_fragments: True
+    drop_wrong_direction_neck_fragments: True
+    neck_direction_tolerance_um: 0.2
+    trim_necks_touching_other_spines: False
+    keep_partial_spines: True
+    partial_spine_dist_threshold_vox: 2.0
+
+recover_filopodia: False
+min_spine_head_voxels: 2
