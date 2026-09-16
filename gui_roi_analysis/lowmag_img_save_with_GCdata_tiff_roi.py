@@ -16,7 +16,12 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from scipy.ndimage import median_filter, shift as ndimage_shift
 from skimage.segmentation import find_boundaries
 
-sys.path.append("..\\")
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_CONTROLFLIMAGE_DIR = os.path.dirname(_SCRIPT_DIR)
+for _p in (_CONTROLFLIMAGE_DIR, _SCRIPT_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 from FLIMageFileReader2 import FileReader
 from simple_dialog import ask_yes_no_gui, ask_open_path_gui
 
@@ -50,8 +55,11 @@ def _is_set_rejected(rows: pd.DataFrame) -> bool:
     """Return True when this set is marked rejected in combined_df."""
     if "reject" not in rows.columns or len(rows) == 0:
         return False
-    reject_val = rows["reject"].iloc[0]
-    return reject_val is True or reject_val == 1 or str(reject_val).lower() in ("true", "1")
+
+    def _is_reject_val(val) -> bool:
+        return val is True or val == 1 or str(val).lower() in ("true", "1")
+
+    return bool(rows["reject"].map(_is_reject_val).any())
 
 
 def _reject_comment(rows: pd.DataFrame) -> str:
@@ -367,30 +375,17 @@ def _load_roi_mask_from_tiff(
     return _apply_inverse_drift_to_mask(frame, row, set_df)
 
 
-def plt_zpro_with_roi_tiff(
-    mask_row: pd.Series,
-    roi_types,
-    color_dict,
-    vmax: float,
-    vmin: float,
-    highmag_side_length_um: float,
-    roi_cache: Dict[Tuple[str, str, str], Optional[np.ndarray]],
-    set_df: Optional[pd.DataFrame] = None,
-    ch_1or2: int = 1,
-) -> None:
+def _flim_zproj_from_row(mask_row: pd.Series, ch_1or2: int = 1) -> np.ndarray:
+    """Max-Z projection of photon-summed intensity from one FLIM file row."""
     flim_filepath = mask_row["file_path"]
     iminfo = FileReader()
     iminfo.read_imageFile(flim_filepath, True)
     six_dim = np.array(iminfo.image)
 
-    # Backward compatibility:
-    # Some combined_df variants do not have z_from/z_to columns.
     if "z_from" in mask_row.index and "z_to" in mask_row.index:
         z_from = int(mask_row["z_from"])
         z_to = int(mask_row["z_to"])
     else:
-        # Fallback: use small z-window around corrected_uncaging_z if available,
-        # otherwise use full z range.
         z_len = six_dim.shape[0]
         corrected_uncaging_z = mask_row.get("corrected_uncaging_z", None)
         if corrected_uncaging_z is not None and not pd.isna(corrected_uncaging_z):
@@ -402,10 +397,70 @@ def plt_zpro_with_roi_tiff(
         else:
             z_from, z_to = 0, z_len
 
-    # Final safety clamp
     z_from = max(0, min(z_from, six_dim.shape[0] - 1))
     z_to = max(z_from + 1, min(z_to, six_dim.shape[0]))
-    z_projection = six_dim[z_from:z_to, 0, ch_1or2 - 1, :, :, :].sum(axis=-1).max(axis=0)
+    return six_dim[z_from:z_to, 0, ch_1or2 - 1, :, :, :].sum(axis=-1).max(axis=0)
+
+
+def _spine_mask_from_row(
+    mask_row: pd.Series,
+    roi_cache: Dict[Tuple[str, str, str], Optional[np.ndarray]],
+    set_df: Optional[pd.DataFrame] = None,
+) -> Optional[np.ndarray]:
+    """Spine ROI mask in raw-FLIM coordinates, or None."""
+    mask_col = "Spine_shifted_mask"
+    if mask_col in mask_row.index and isinstance(mask_row[mask_col], np.ndarray):
+        return np.asarray(mask_row[mask_col]).astype(bool)
+    mask = _load_roi_mask_from_tiff(mask_row, "Spine", roi_cache, set_df=set_df)
+    if mask is None:
+        return None
+    return np.asarray(mask).astype(bool)
+
+
+def _intensity_range_from_last_pre_spine(
+    pre_row: pd.Series,
+    set_df: pd.DataFrame,
+    roi_cache: Dict[Tuple[str, str, str], Optional[np.ndarray]],
+    ch_1or2: int,
+    fallback_vmin: float,
+    fallback_vmax: float,
+) -> Tuple[float, float]:
+    """vmin from last-pre Z-proj min; vmax from max inside Spine ROI."""
+    try:
+        z_projection = _flim_zproj_from_row(pre_row, ch_1or2=ch_1or2)
+    except Exception as exc:
+        print(f"[DEBUG] spine vmax fallback (zproj failed): {exc}")
+        return fallback_vmin, fallback_vmax
+
+    vmin = float(np.nanmin(z_projection))
+    spine_mask = _spine_mask_from_row(pre_row, roi_cache, set_df=set_df)
+    if (
+        spine_mask is not None
+        and spine_mask.shape == z_projection.shape
+        and np.any(spine_mask)
+    ):
+        spine_max = float(np.nanmax(z_projection[spine_mask]))
+        if np.isfinite(spine_max) and spine_max > vmin:
+            return vmin, spine_max
+    print("[DEBUG] spine vmax fallback (no Spine ROI overlap on last pre)")
+    vmax = float(np.nanmax(z_projection)) / 3.0
+    if not np.isfinite(vmax) or vmax <= vmin:
+        return fallback_vmin, fallback_vmax
+    return vmin, vmax
+
+
+def plt_zpro_with_roi_tiff(
+    mask_row: pd.Series,
+    roi_types,
+    color_dict,
+    vmax: float,
+    vmin: float,
+    highmag_side_length_um: float,
+    roi_cache: Dict[Tuple[str, str, str], Optional[np.ndarray]],
+    set_df: Optional[pd.DataFrame] = None,
+    ch_1or2: int = 1,
+) -> None:
+    z_projection = _flim_zproj_from_row(mask_row, ch_1or2=ch_1or2)
 
     plt.imshow(
         z_projection,
@@ -699,6 +754,7 @@ def main() -> None:
     skip_no_phase_count = 0
     skip_no_lowmag_count = 0
     skip_no_tiff_count = 0
+    rejected_saved_count = 0
     for each_label in combined_df_reject_bad_data_df["label"].dropna().unique():
         total_labels += 1
         each_label_df = combined_df_reject_bad_data_df[
@@ -762,15 +818,15 @@ def main() -> None:
             before_unc_nth = 0
         before_unc_nth = max(0, min(before_unc_nth, before_align_txy.shape[0] - 1))
         before_uncaging_zproj = before_align_txy[before_unc_nth, :, :]
-        vmax = before_uncaging_zproj.max() / 3
-        vmin = before_uncaging_zproj.min()
+        crop_vmax = before_uncaging_zproj.max() / 3
+        crop_vmin = before_uncaging_zproj.min()
 
         lowmag_row = lowmag_df[lowmag_df["lowmag_file_path"] == valid_rows["lowmag_file_path"].iloc[0]].iloc[0]
         lowmag_zoom = lowmag_row["statedict"]["State.Acq.zoom"]
         lowmag_side_length_um = lowmag_row["statedict"]["State.Acq.FOV_default"][0] / lowmag_zoom
         lowmag_z_um = lowmag_row["statedict"]["State.Acq.sliceStep"]
-        lowmag_vmax = vmax * (lowmag_row["statedict"]["State.Acq.nAveFrame"] / 3)
-        lowmag_vmin = vmin * (lowmag_row["statedict"]["State.Acq.nAveFrame"] / 3)
+        lowmag_vmax = crop_vmax * (lowmag_row["statedict"]["State.Acq.nAveFrame"] / 3)
+        lowmag_vmin = crop_vmin * (lowmag_row["statedict"]["State.Acq.nAveFrame"] / 3)
 
         # Compute highmag FOV position on lowmag image using motor positions.
         # State.Motor.motorPosition[x, y, z]: x,y = center of FOV; z = bottom of Z stack.
@@ -789,6 +845,14 @@ def main() -> None:
             _hmag_dy = highmag_motor_xy[1] - lowmag_motor_xy[1]
 
         pre_row = pre_df.iloc[-1]
+        hmag_vmin, hmag_vmax = _intensity_range_from_last_pre_spine(
+            pre_row,
+            valid_rows,
+            roi_cache,
+            ch_1or2,
+            fallback_vmin=float(crop_vmin),
+            fallback_vmax=float(crop_vmax),
+        )
         unc_x_um, unc_y_um, trimmed_high_x_um, trimmed_high_y_um = _uncaging_marker_um_from_row(
             pre_row, before_uncaging_zproj.shape, highmag_side_length_um,
         )
@@ -803,9 +867,15 @@ def main() -> None:
         fig_dim = [2, 4]
         fig = plt.figure(figsize=(4 * fig_dim[1], 4 * fig_dim[0]))
         fig.suptitle(each_label)
-        if _is_set_rejected(valid_rows):
+        label_all_rows = combined_df_reject_bad_data_df[
+            combined_df_reject_bad_data_df["label"] == each_label
+        ]
+        rejected = _is_set_rejected(label_all_rows) or _is_set_rejected(valid_rows)
+        if rejected:
             reject_line = "REJECTED"
-            reject_comment = _reject_comment(valid_rows)
+            reject_comment = _reject_comment(label_all_rows)
+            if not reject_comment:
+                reject_comment = _reject_comment(valid_rows)
             if reject_comment:
                 reject_line = f"{reject_line}  ({reject_comment})"
             fig.text(
@@ -864,7 +934,7 @@ def main() -> None:
 
         plt.subplot(fig_dim[0], fig_dim[1], 3)
         plt_zpro_with_roi_tiff(
-            pre_row, roi_types, color_dict, vmax, vmin, highmag_side_length_um, roi_cache,
+            pre_row, roi_types, color_dict, hmag_vmax, hmag_vmin, highmag_side_length_um, roi_cache,
             set_df=valid_rows, ch_1or2=ch_1or2,
         )
         plt.title("Pre with ROI")
@@ -872,14 +942,14 @@ def main() -> None:
         plt.subplot(fig_dim[0], fig_dim[1], 4)
         post_row = post_df.iloc[0]
         plt_zpro_with_roi_tiff(
-            post_row, roi_types, color_dict, vmax, vmin, highmag_side_length_um, roi_cache,
+            post_row, roi_types, color_dict, hmag_vmax, hmag_vmin, highmag_side_length_um, roi_cache,
             set_df=valid_rows, ch_1or2=ch_1or2,
         )
         plt.title("Post with ROI")
 
         plt.subplot(fig_dim[0], fig_dim[1], 5)
         plt.imshow(
-            before_uncaging_zproj, cmap="gray", vmin=vmin * 2, vmax=vmax * 2,
+            before_uncaging_zproj, cmap="gray", vmin=crop_vmin * 2, vmax=crop_vmax * 2,
             extent=(0, trimmed_high_x_um, trimmed_high_y_um, 0),
         )
         if unc_x_um is not None and unc_y_um is not None:
@@ -933,15 +1003,16 @@ def main() -> None:
         else:
             late_row = late_candidate.iloc[0]
         plt_zpro_with_roi_tiff(
-            late_row, roi_types, color_dict, vmax, vmin, highmag_side_length_um, roi_cache,
+            late_row, roi_types, color_dict, hmag_vmax, hmag_vmin, highmag_side_length_um, roi_cache,
             set_df=valid_rows, ch_1or2=ch_1or2,
         )
         plt.title("Late post with ROI")
 
         plt.tight_layout()
         unique_id += 1
-        wo_date_savefolder = os.path.join(savefolder, "wo_date")
-        with_date_savefolder = os.path.join(savefolder, "with_date")
+        dest_root = os.path.join(savefolder, "rejected") if rejected else savefolder
+        wo_date_savefolder = os.path.join(dest_root, "wo_date")
+        with_date_savefolder = os.path.join(dest_root, "with_date")
         os.makedirs(wo_date_savefolder, exist_ok=True)
         os.makedirs(with_date_savefolder, exist_ok=True)
         savepath_wo_date = os.path.join(wo_date_savefolder, f"{os.path.basename(each_label)}_{unique_id}.png")
@@ -951,12 +1022,14 @@ def main() -> None:
         plt.savefig(savepath_with_date, dpi=150, bbox_inches="tight")
         plt.close()
         plotted_labels += 1
+        if rejected:
+            rejected_saved_count += 1
 
     print(
         "[DEBUG] plotting summary: "
         f"total_labels={total_labels}, plotted={plotted_labels}, "
         f"skip_no_phase={skip_no_phase_count}, skip_no_lowmag={skip_no_lowmag_count}, "
-        f"skip_no_tiff={skip_no_tiff_count}"
+        f"skip_no_tiff={skip_no_tiff_count}, rejected_saved={rejected_saved_count}"
     )
     if plotted_labels == 0:
         print("[DEBUG] No output image created. Check lowmag mapping and phase names in combined_df.")

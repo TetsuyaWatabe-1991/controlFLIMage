@@ -11,7 +11,7 @@ F1 — Analysis Complete
 F2 — Previous frame
 F3 — Next frame
 F4 — Review mode on/off
-F5 — (reserved)
+F5 — Redo current ROI (back to max proj, default shape for this ROI type)
 F6 — Cancel, then Launch All on previous set
 F7 — (reserved)
 F8 — Cancel, then Launch All on next set

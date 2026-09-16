@@ -27,6 +27,10 @@ skip_lifetime_analysis = False
 # induction (~33 or 36 averaged frames), common TS (55), uncaging_2Hz30pulses (80), uncaging1hz (144)
 uncaging_frame_num = [33, 34, 35, 36, 55, 80, 144]
 
+# Default False keeps the original (slower) path. True: skip repeated FLIM decode,
+# header-only shape peek, intensity cache, no PNG/small TIFF, lighter align.
+fast_mode = True
+
 print("Running respan ROI analysis.\nExplorer will pop up to select the FLIM file.")
 df_save_path_1, out_csv_path = run_tiff_uncaging_roi_respan(
     ch_1or2=ch_1or2,
@@ -39,6 +43,7 @@ df_save_path_1, out_csv_path = run_tiff_uncaging_roi_respan(
     uncaging_roi_keyframe_count=uncaging_roi_keyframe_count,
     overwrite_seg_roi_masks=overwrite_seg_roi_masks,
     skip_lifetime_analysis=skip_lifetime_analysis,
+    fast_mode=fast_mode,
     # predefined_df_path=r"G:\ImagingData\Tetsuya\20260610\auto3\combined_df_respan.pkl",
     # flim_path=r"G:\ImagingData\Tetsuya\20260610\auto3\pos3__highmag_1_002.flim",
 )

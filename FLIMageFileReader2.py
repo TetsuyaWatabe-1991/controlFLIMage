@@ -171,7 +171,12 @@ class FileReader:
      
     
                     
-    def decode_FLIM(self, flim):        
+    def decode_FLIM(self, flim, intensity_only=False):
+        def _maybe_sum_tau(arr):
+            if intensity_only and arr.ndim >= 3:
+                return arr.sum(axis=-1, keepdims=True)
+            return arr
+
         image = []
         if (self.ImageFormat == 'ZLinear' or self.ImageFormat == 'Linear' or self.ImageFormat == 'ChTime_YX'):      
             flim1 = []
@@ -188,7 +193,7 @@ class FileReader:
                     for i in range(0, self.nChannels):
                         offset2 = offset + self.n_time[i]
                         if self.n_time[i] > 0:
-                            imageC.append(image1[:,:,offset:offset2])
+                            imageC.append(_maybe_sum_tau(image1[:,:,offset:offset2]))
                         else:
                             imageC.append(np.zeros(1)) #If not acquired, it return 0 value.
                         offset = offset2
@@ -200,9 +205,10 @@ class FileReader:
                         if self.n_time[i] > 0:
                             # Handle both 1D and 2D arrays (tifffile may return 1D)
                             if flim_each.ndim == 1:
-                                imageC.append(np.reshape(flim_each[offset : offset2], (self.height, self.width,  self.n_time[i]), 'C'))
+                                decoded = np.reshape(flim_each[offset : offset2], (self.height, self.width,  self.n_time[i]), 'C')
                             else:
-                                imageC.append(np.reshape(flim_each[0, offset : offset2], (self.height, self.width,  self.n_time[i]), 'C'))
+                                decoded = np.reshape(flim_each[0, offset : offset2], (self.height, self.width,  self.n_time[i]), 'C')
+                            imageC.append(_maybe_sum_tau(decoded))
                         else:
                             imageC.append(np.zeros(1)) #If not acquired, it return 0 value.
                         offset = offset2
@@ -210,10 +216,12 @@ class FileReader:
                 image.append(imageC)
         else: #I don't think there will any images with this format, but just in case.
             image1 = np.reshape(flim, (self.nChannels, self.height, self.width, self.n_time[0]), 'C')
+            if intensity_only:
+                image1 = image1.sum(axis=-1, keepdims=True)
             image = [np.split(image1, self.nChannels, 0)]
         return image
                     
-    def read_imageFile(self, file_path, readImage = True):
+    def read_imageFile(self, file_path, readImage = True, intensity_only=False):
         self.filename = file_path
         self.n_images = 1
         self.acqTime = []
@@ -258,7 +266,7 @@ class FileReader:
                 if (os.path.splitext(file_path)[-1] == '.flim'):
                     # Read first page image
                     flim = np.array(first_page.asarray()).astype(np.ushort) #Sometimes image is stored in 8bit.
-                    self.image.append(self.decode_FLIM(flim))
+                    self.image.append(self.decode_FLIM(flim, intensity_only=intensity_only))
                     self.flim = True
                 else:
                     self.image.append(np.array(first_page.asarray()))
@@ -298,7 +306,7 @@ class FileReader:
                 if readImage:
                     if self.flim:
                         flim = np.array(page.asarray()).astype(np.ushort) #Sometimes image is stored in 8bit.
-                        self.image.append(self.decode_FLIM(flim))            
+                        self.image.append(self.decode_FLIM(flim, intensity_only=intensity_only))
                     else:
                         self.image.append(page.asarray())
                         
@@ -315,7 +323,7 @@ class FileReader:
             if readImage:
                 if (os.path.splitext(file_path)[-1] == '.flim'):
                     flim = np.array(tif.read_image()).astype(np.ushort) #Sometimes image is stored in 8bit.
-                    self.image.append(self.decode_FLIM(flim))
+                    self.image.append(self.decode_FLIM(flim, intensity_only=intensity_only))
                     self.flim = True
                 else:
                     self.image.append(np.array(tif.read_image()))
@@ -329,7 +337,7 @@ class FileReader:
                 if readImage:
                     if self.flim:
                         flim = np.array(tif.read_image()).astype(np.ushort) #Sometimes image is stored in 8bit.
-                        self.image.append(self.decode_FLIM(flim))            
+                        self.image.append(self.decode_FLIM(flim, intensity_only=intensity_only))
                     else:
                         self.image.append(tif.read_image())
                         
@@ -337,7 +345,7 @@ class FileReader:
                 self.n_images = self.n_images + 1
             
         self.currentPage = 0
-        if self.flim:
+        if self.flim and not intensity_only:
             self.LoadFLIMFromMemory(0, 0, 0)
             
     def LoadFLIMFromMemory(self, page, fastZpage, channel):

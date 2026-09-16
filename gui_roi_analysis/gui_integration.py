@@ -166,15 +166,15 @@ def first_processing_for_flim_files(
 
 
             # Save full region plots
-            list_of_save_path = save_full_region_plots(each_group_df, Aligned_4d_array, plot_savefolder,
-                                                    z_plus_minus,
-                                                    return_list_of_save_path=True)
-
             getting_length_df = each_group_df[(each_group_df["nth_omit_induction"] != -1) &
                                         (each_group_df["nth_set_label"] != -1)]
-            # print(f"length of getting_length_df: {len(getting_length_df)}")
-            # print(f"length of list_of_save_path: {len(list_of_save_path)}")
-            combined_df.loc[getting_length_df.index, "save_full_region_plot_path"] = list_of_save_path
+            if save_plot_TF:
+                list_of_save_path = save_full_region_plots(each_group_df, Aligned_4d_array, plot_savefolder,
+                                                    z_plus_minus,
+                                                    return_list_of_save_path=True)
+                combined_df.loc[getting_length_df.index, "save_full_region_plot_path"] = list_of_save_path
+            else:
+                combined_df.loc[getting_length_df.index, "save_full_region_plot_path"] = None
 
             # Process small regions
             for each_set_label in each_group_df["nth_set_label"].unique():

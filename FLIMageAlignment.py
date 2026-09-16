@@ -232,6 +232,7 @@ def _align_stack(
     MedianFilter=False,
     Ksize=3,
     upsample_factor=10,
+    apply_shifts=True,
 ):
     """
     Align a time-series stack (T, Z, Y, X) or (T, Y, X).
@@ -239,6 +240,7 @@ def _align_stack(
     method:
       - "traditional": frame-0 reference with fourier_shift (default)
       - "roi_adjacent": adjacent-frame cumulative shifts
+    apply_shifts: If False, return the input stack unchanged with computed shifts.
     """
     n_time = Tiff_MultiArray.shape[0]
     first_vol = Tiff_MultiArray[0]
@@ -250,10 +252,13 @@ def _align_stack(
                 first_vol, Tiff_MultiArray[t], MedianFilter, Ksize
             )
             shifts[t] = np.asarray(shift, dtype=np.float64)
-        aligned = np.array([
-            _apply_shift_array(Tiff_MultiArray[t], tuple(shifts[t]), "fourier")
-            for t in range(n_time)
-        ])
+        if apply_shifts:
+            aligned = np.array([
+                _apply_shift_array(Tiff_MultiArray[t], tuple(shifts[t]), "fourier")
+                for t in range(n_time)
+            ])
+        else:
+            aligned = Tiff_MultiArray
         return shifts, aligned
 
     if method != "roi_adjacent":
@@ -279,10 +284,13 @@ def _align_stack(
         )
         shifts[t] = shifts[t - 1] + np.asarray(delta, dtype=np.float64)
 
-    aligned = np.array([
-        _apply_shift_array(Tiff_MultiArray[t], tuple(shifts[t]), "constant")
-        for t in range(n_time)
-    ])
+    if apply_shifts:
+        aligned = np.array([
+            _apply_shift_array(Tiff_MultiArray[t], tuple(shifts[t]), "constant")
+            for t in range(n_time)
+        ])
+    else:
+        aligned = Tiff_MultiArray
     return shifts, aligned
 
 
@@ -295,6 +303,7 @@ def Align_3d_array(
     roi_half_zyx=DEFAULT_ROI_HALF_ZYX,
     iminfo=None,
     upsample_factor=10,
+    apply_shifts=True,
 ):
     return _align_stack(
         Tiff_MultiArray,
@@ -305,6 +314,7 @@ def Align_3d_array(
         MedianFilter=MedianFilter,
         Ksize=Ksize,
         upsample_factor=upsample_factor,
+        apply_shifts=apply_shifts,
     )
 
 
@@ -317,6 +327,7 @@ def Align_4d_array(
     MedianFilter=False,
     Ksize=3,
     upsample_factor=10,
+    apply_shifts=True,
 ):
     return _align_stack(
         Tiff_MultiArray,
@@ -327,6 +338,7 @@ def Align_4d_array(
         MedianFilter=MedianFilter,
         Ksize=Ksize,
         upsample_factor=upsample_factor,
+        apply_shifts=apply_shifts,
     )
 
 def align_two_flimfile(flim_1, flim_2, ch, return_pixel=False, method=DEFAULT_ALIGN_METHOD):

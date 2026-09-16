@@ -59,11 +59,7 @@ class ROIAnalysisGUI(QMainWindow):
         self.total_frames = after_align_tiff_data.shape[0]
         self.current_roi = None
         
-        # Set default ROI shape based on header (ROI type)
-        if header == "Background":
-            self.roi_shape = 'rectangle'  # Use rectangle for Background ROI
-        else:
-            self.roi_shape = 'polygon'    # Use polygon for Spine and Dendrite ROI
+        self.roi_shape = self._default_roi_shape()
         
         self.is_defining_roi = True  # True for max proj, False for time series
         self.roi_parameters = {}
@@ -435,10 +431,10 @@ class ROIAnalysisGUI(QMainWindow):
         self.polygon_button.setCheckable(True)
         
         # Set default button selection based on ROI type
-        if self.header == "Background":
-            self.rect_button.setChecked(True)      # Rectangle for Background
+        if self.roi_shape == "rectangle":
+            self.rect_button.setChecked(True)
         else:
-            self.polygon_button.setChecked(True)   # Polygon for Spine and Dendrite
+            self.polygon_button.setChecked(True)
         
         self.shape_button_group.addButton(self.rect_button, 0)
         self.shape_button_group.addButton(self.ellipse_button, 1)
@@ -474,6 +470,10 @@ class ROIAnalysisGUI(QMainWindow):
         # Back to max proj button
         self.back_to_maxproj_button = QPushButton("Back to Max Proj")
         self.back_to_maxproj_button.setEnabled(False)
+        self.back_to_maxproj_button.setToolTip(
+            "Redo current ROI (F5): return to max projection with the default "
+            "shape for this ROI type"
+        )
         layout.addWidget(self.back_to_maxproj_button)
         
         # Complete analysis button
@@ -1281,9 +1281,38 @@ class ROIAnalysisGUI(QMainWindow):
             self.current_roi = Polygon(points, closed=True)
             
         print(f"Recreated {self.roi_shape} ROI for frame {self.current_frame}")
-        
+
+    def _default_roi_shape(self) -> str:
+        """Default draw tool for this ROI type (same as a fresh window)."""
+        if self.header == "Background":
+            return "rectangle"
+        return "polygon"
+
+    def _apply_default_roi_shape(self) -> None:
+        """Set roi_shape and the shape-tool buttons to the type default."""
+        self.roi_shape = self._default_roi_shape()
+        if not hasattr(self, "rect_button"):
+            return
+        self.rect_button.blockSignals(True)
+        self.ellipse_button.blockSignals(True)
+        self.polygon_button.blockSignals(True)
+        self.rect_button.setChecked(self.roi_shape == "rectangle")
+        self.ellipse_button.setChecked(self.roi_shape == "ellipse")
+        self.polygon_button.setChecked(self.roi_shape == "polygon")
+        self.rect_button.blockSignals(False)
+        self.ellipse_button.blockSignals(False)
+        self.polygon_button.blockSignals(False)
+
     def back_to_max_proj(self):
-        """Return to max projection ROI definition mode."""
+        """Clear the current ROI and return to max-projection definition mode."""
+        self.is_drawing = False
+        self.is_moving_roi = False
+        self.roi_start_pos = None
+        self.drag_start_pos = None
+        self.temp_roi = None
+        self.last_click_time = 0
+        self.last_click_pos = None
+        self._apply_default_roi_shape()
         self.is_defining_roi = True
         self.current_roi = None
         self.roi_parameters = {}
@@ -1296,6 +1325,16 @@ class ROIAnalysisGUI(QMainWindow):
         self.frame_slider.setEnabled(False)
         self.back_to_maxproj_button.setEnabled(False)
         self.complete_analysis_button.setEnabled(False)
+
+        if getattr(self, "view_mode", False):
+            self.view_mode = False
+        if hasattr(self, "view_mode_checkbox"):
+            self.view_mode_checkbox.blockSignals(True)
+            self.view_mode_checkbox.setChecked(False)
+            self.view_mode_checkbox.setEnabled(False)
+            self.view_mode_checkbox.blockSignals(False)
+        if hasattr(self, "frame_info_label"):
+            self.frame_info_label.setStyleSheet("")
         
         self.params_display.setText("No ROI defined")
         self.intensity_display.setText("Mean: -\nMax: -\nSum: -")
@@ -1640,6 +1679,7 @@ class ROIAnalysisGUI(QMainWindow):
         bind(Qt.Key_F2, self.prev_frame)
         bind(Qt.Key_F3, self.next_frame)
         bind(Qt.Key_F4, self._shortcut_toggle_review_mode)
+        bind(Qt.Key_F5, self._shortcut_redo_current_roi)
         bind(Qt.Key_F6, self._shortcut_prev_set_launch_all)
         bind(Qt.Key_F8, self._shortcut_next_set_launch_all)
         bind(Qt.Key_F9, self._shortcut_reject_and_next_set)
@@ -1655,6 +1695,9 @@ class ROIAnalysisGUI(QMainWindow):
     def _shortcut_toggle_review_mode(self):
         if hasattr(self, "view_mode_checkbox") and self.view_mode_checkbox.isEnabled():
             self.view_mode_checkbox.setChecked(not self.view_mode_checkbox.isChecked())
+
+    def _shortcut_redo_current_roi(self):
+        self.back_to_max_proj()
 
     def _shortcut_prev_set_launch_all(self):
         if not self.shortcut_host:

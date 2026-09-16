@@ -4,7 +4,8 @@ Respan highmag ROI workflow: pre-defined Spine / Shaft / Background masks from s
 
 Uses the same alignment policy as tpem_low_high_spine_multi_merged_titrate_uncaging_pow_respan.py:
   - Global pre/post: roi_adjacent (FLIMageAlignment POST_ACQUISITION_ALIGN_METHOD)
-  - Local crop: adjacent-frame roi_adjacent (LocalAlignMode.ADJACENT)
+  - Local crop: adjacent-frame roi_adjacent stored as local_shift_y/x (not added
+    onto shift_y/x). FLIM raw masks use integer before/after TIFF shifts.
 
 Does not modify gui_roi_fast_simple.py or analayze_all_flim_roi_gui2.py.
 """
@@ -71,8 +72,24 @@ def load_and_align_data_explicit(
     ch: int,
     *,
     align_method: str = GLOBAL_ALIGN_METHOD,
+    fast_mode: bool = False,
+    intensity_cache: dict[str, np.ndarray] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list]:
     """Load FLIM files and align with an explicit FLIMageAlignment method."""
+    if fast_mode:
+        from flim_fast_io import flim_files_to_nparray_fast
+
+        tiff_multi, iminfo, relative_sec_list = flim_files_to_nparray_fast(
+            filelist, ch=ch, intensity_cache=intensity_cache
+        )
+        shifts, aligned = Align_4d_array(
+            tiff_multi,
+            iminfo=iminfo,
+            method=align_method,
+            upsample_factor=1,
+            apply_shifts=False,
+        )
+        return aligned, shifts, relative_sec_list
     tiff_multi, iminfo, relative_sec_list = flim_files_to_nparray(
         filelist, ch=ch, normalize_by_averageNum=True
     )
@@ -83,20 +100,41 @@ def load_and_align_data_explicit(
 
 
 @contextmanager
-def _patch_load_and_align(align_method: str = GLOBAL_ALIGN_METHOD) -> Iterator[None]:
+def _patch_load_and_align(
+    align_method: str = GLOBAL_ALIGN_METHOD,
+    *,
+    fast_mode: bool = False,
+    intensity_cache: dict[str, np.ndarray] | None = None,
+) -> Iterator[None]:
     """Temporarily override gui_integration.load_and_align_data (no permanent edits)."""
     import gui_integration as gi
 
     original = gi.load_and_align_data
 
     def _wrapped(filelist, ch):
-        return load_and_align_data_explicit(filelist, ch, align_method=align_method)
+        return load_and_align_data_explicit(
+            filelist,
+            ch,
+            align_method=align_method,
+            fast_mode=fast_mode,
+            intensity_cache=intensity_cache,
+        )
 
     gi.load_and_align_data = _wrapped
+    original_grfs = None
+    if fast_mode:
+        import gui_roi_fast_simple as grfs
+
+        original_grfs = grfs.load_and_align_data
+        grfs.load_and_align_data = _wrapped
     try:
         yield
     finally:
         gi.load_and_align_data = original
+        if original_grfs is not None:
+            import gui_roi_fast_simple as grfs
+
+            grfs.load_and_align_data = original_grfs
 
 
 def highmag_savefolder_from_filepath_without_number(filepath_without_number: str) -> str:
@@ -169,6 +207,7 @@ def adjacent_local_shifts_yx(
     *,
     half_size: int = 60,
     align_method: str = GLOBAL_ALIGN_METHOD,
+    fast_mode: bool = False,
 ) -> list[tuple[float, float]]:
     """
     Adjacent-frame local roi_adjacent shifts on a spine-centered crop.
@@ -180,6 +219,9 @@ def adjacent_local_shifts_yx(
     out: list[tuple[float, float]] = [(0.0, 0.0)]
     prev_crop = _crop_2d(frames[0], center_yx, half_size)
     roi_cy, roi_cx = prev_crop.shape[0] // 2, prev_crop.shape[1] // 2
+    align_kwargs = {}
+    if fast_mode:
+        align_kwargs = {"upsample_factor": 1, "apply_shifts": False}
 
     for i in range(1, len(frames)):
         crop = _crop_2d(frames[i], center_yx, half_size)
@@ -188,6 +230,7 @@ def adjacent_local_shifts_yx(
             pair_4d,
             method=align_method,
             roi_center_zyx=(0, roi_cy, roi_cx),
+            **align_kwargs,
         )
         cumulative += np.asarray(shifts[-1], dtype=np.float64)
         out.append((float(cumulative[1]), float(cumulative[2])))
@@ -202,9 +245,18 @@ def augment_frame_info_local_adjacent(
     z_plus_minus: int = 2,
     local_half_size: int = 60,
     local_align_mode: str = LOCAL_ALIGN_MODE,
+    fast_mode: bool = False,
+    intensity_cache: dict[str, np.ndarray] | None = None,
 ) -> pd.DataFrame:
     """
-    Add adjacent local shifts (Y, X) on top of global shifts in each *_frame_info.csv.
+    Write adjacent local shifts into local_shift_y / local_shift_x on each
+    *_frame_info.csv. Does not add them onto shift_y / shift_x (those stay
+    the TIFF-build / global values used for FLIM raw-mask mapping).
+
+    If an older file already mixed local into shift_y/x (local_align_mode set
+    but no local_shift columns), subtract the newly computed local to restore
+    the TIFF shifts.
+
     Skipped when local_align_mode is not 'adjacent'.
     """
     if local_align_mode != "adjacent":
@@ -250,7 +302,12 @@ def augment_frame_info_local_adjacent(
                     try:
                         pre_frames.append(
                             grfs._load_flim_zproj_full(
-                                str(row["file_path"]), ch_1or2, z_from, z_to
+                                str(row["file_path"]),
+                                ch_1or2,
+                                z_from,
+                                z_to,
+                                fast_mode=fast_mode,
+                                intensity_cache=intensity_cache,
                             )
                         )
                     except Exception:
@@ -263,21 +320,32 @@ def augment_frame_info_local_adjacent(
                     try:
                         post_frames.append(
                             grfs._load_flim_zproj_full(
-                                str(row["file_path"]), ch_1or2, z_from, z_to
+                                str(row["file_path"]),
+                                ch_1or2,
+                                z_from,
+                                z_to,
+                                fast_mode=fast_mode,
+                                intensity_cache=intensity_cache,
                             )
                         )
                     except Exception:
                         pass
 
                 pre_local = adjacent_local_shifts_yx(
-                    pre_frames, center_yx, half_size=local_half_size
+                    pre_frames,
+                    center_yx,
+                    half_size=local_half_size,
+                    fast_mode=fast_mode,
                 )
                 post_local: list[tuple[float, float]] = []
                 if post_frames:
                     bridge = pre_frames[-1] if pre_frames else post_frames[0]
                     post_chain = [bridge] + post_frames
                     post_local_full = adjacent_local_shifts_yx(
-                        post_chain, center_yx, half_size=local_half_size
+                        post_chain,
+                        center_yx,
+                        half_size=local_half_size,
+                        fast_mode=fast_mode,
                     )
                     post_local = post_local_full[1:]
 
@@ -288,28 +356,34 @@ def augment_frame_info_local_adjacent(
                     continue
 
                 frame_info = pd.read_csv(frame_info_path)
+                poisoned = (
+                    "local_align_mode" in frame_info.columns
+                    and "local_shift_y" not in frame_info.columns
+                )
                 pre_i = 0
                 post_i = 0
                 for idx, row in frame_info.iterrows():
                     phase = str(row.get("phase", "")).lower()
-                    sy = float(row.get("shift_y", 0) or 0)
-                    sx = float(row.get("shift_x", 0) or 0)
+                    loc_y, loc_x = 0.0, 0.0
                     if phase == "pre" and pre_i < len(pre_local):
-                        sy += pre_local[pre_i][0]
-                        sx += pre_local[pre_i][1]
+                        loc_y, loc_x = float(pre_local[pre_i][0]), float(pre_local[pre_i][1])
                         pre_i += 1
                     elif phase == "post" and post_i < len(post_local):
-                        sy += post_local[post_i][0]
-                        sx += post_local[post_i][1]
+                        loc_y, loc_x = float(post_local[post_i][0]), float(post_local[post_i][1])
                         post_i += 1
-                    frame_info.at[idx, "shift_y"] = sy
-                    frame_info.at[idx, "shift_x"] = sx
+                    if poisoned:
+                        sy = float(row.get("shift_y", 0) or 0) - loc_y
+                        sx = float(row.get("shift_x", 0) or 0) - loc_x
+                        frame_info.at[idx, "shift_y"] = sy
+                        frame_info.at[idx, "shift_x"] = sx
+                    frame_info.at[idx, "local_shift_y"] = loc_y
+                    frame_info.at[idx, "local_shift_x"] = loc_x
                     frame_info.at[idx, "local_align_mode"] = local_align_mode
 
                 frame_info.to_csv(frame_info_path, index=False)
                 print(
                     f"  Set {group}_{set_label}: frame_info local adjacent "
-                    f"({record.spine_stem})"
+                    f"({record.spine_stem}; local not added to shift_y/x)"
                 )
 
     return combined_df
@@ -543,13 +617,22 @@ def run_tiff_uncaging_roi_respan(
     uncaging_roi_keyframe_count: int | None = None,
     overwrite_seg_roi_masks: bool = False,
     skip_lifetime_analysis: bool = False,
+    fast_mode: bool = False,
 ) -> tuple[str, str] | tuple[None, None]:
     """
     Full ROI quantification for respan highmag data using pre-built seg_masks.
 
     Alignment (explicit):
       global_align_method: roi_adjacent for pre/post FLIM chain
-      local_align_mode: adjacent for spine-centered local refinement (frame_info)
+      local_align_mode: adjacent writes local_shift_y/x on frame_info (not added
+      to shift_y/x). Raw FLIM masks use integer before/after TIFF shifts.
+
+    fast_mode:
+      Default False (same as before). True enables faster GUI prep:
+      skip repeated FLIM decode / second align, header-only shape peek,
+      intensity-only decode + disk cache, no first_processing PNG/small TIFF,
+      upsample_factor=1 without applying subpixel shifts to the full stack,
+      reuse intensity arrays for local adjacent.
 
     ROI flow:
       1) Pre-fill Spine / DendriticShaft / Background from seg_masks
@@ -562,6 +645,13 @@ def run_tiff_uncaging_roi_respan(
         uncaging_frame_num = [33, 34, 35, 36, 55, 80, 144]
     if titration_frame_num is None:
         titration_frame_num = []
+
+    intensity_cache: dict[str, np.ndarray] = {}
+    if fast_mode:
+        print(
+            "fast_mode=True: intensity-only decode, disk cache, skip PNG/small TIFF, "
+            "skip second full align, upsample_factor=1, reuse arrays for local shifts"
+        )
 
     summary = [
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -578,6 +668,7 @@ def run_tiff_uncaging_roi_respan(
         f"uncaging_roi_keyframe_count: {uncaging_roi_keyframe_count}",
         f"overwrite_seg_roi_masks: {overwrite_seg_roi_masks}",
         f"skip_lifetime_analysis: {skip_lifetime_analysis}",
+        f"fast_mode: {fast_mode}",
         "=" * 60,
     ]
 
@@ -618,16 +709,31 @@ def run_tiff_uncaging_roi_respan(
             print(f"Failed to load predefined_df_path: {e}")
             raise
     else:
-        yn_already_have = ask_yes_no_gui(
-            f"Do you already have {DEFAULT_COMBINED_DF_NAME}?"
-        )
-        if yn_already_have:
-            picked_pkl = ask_open_path_gui(filetypes=[("Pickle files", "*.pkl")])
-            if picked_pkl and os.path.exists(picked_pkl):
-                df_save_path = picked_pkl
+        if os.path.exists(df_save_path):
+            print(f"Found existing pickle: {df_save_path}")
+            use_found_pkl = ask_yes_no_gui(
+                f"Found {DEFAULT_COMBINED_DF_NAME} in this folder. Use this file?"
+            )
+            if use_found_pkl:
                 combined_df = pd.read_pickle(df_save_path)
                 loaded_existing_combined_df = True
                 print(f"Loaded: {df_save_path}")
+            elif ask_yes_no_gui(
+                "Select a different pickle? (No = rebuild from FLIM files)"
+            ):
+                picked_pkl = ask_open_path_gui(filetypes=[("Pickle files", "*.pkl")])
+                if picked_pkl and os.path.exists(picked_pkl):
+                    df_save_path = picked_pkl
+                    combined_df = pd.read_pickle(df_save_path)
+                    loaded_existing_combined_df = True
+                    print(f"Loaded: {df_save_path}")
+                else:
+                    print("No pickle selected; will run first_processing.")
+            else:
+                print(
+                    f"Not using {DEFAULT_COMBINED_DF_NAME}; "
+                    "will run first_processing."
+                )
 
     if combined_df is None:
         if not one_of_filepath_list:
@@ -640,7 +746,11 @@ def run_tiff_uncaging_roi_respan(
         if titration_frame_num is not None:
             fp_kwargs["titration_frame_num"] = titration_frame_num
 
-        with _patch_load_and_align(global_align_method):
+        with _patch_load_and_align(
+            global_align_method,
+            fast_mode=fast_mode,
+            intensity_cache=intensity_cache if fast_mode else None,
+        ):
             combined_df = pd.DataFrame()
             for one_path in one_of_filepath_list:
                 print(f"\nfirst_processing (global={global_align_method}): {one_path}\n")
@@ -648,8 +758,8 @@ def run_tiff_uncaging_roi_respan(
                     one_path,
                     z_plus_minus,
                     ch_1or2,
-                    save_plot_TF=True,
-                    save_tif_TF=True,
+                    save_plot_TF=not fast_mode,
+                    save_tif_TF=not fast_mode,
                     return_error_dict=False,
                     **fp_kwargs,
                 )
@@ -710,16 +820,24 @@ def run_tiff_uncaging_roi_respan(
             print("\n" + "=" * 60)
             print(
                 f"Building full-size stacks (global_align={global_align_method}, "
-                f"local_align={local_align_mode})"
+                f"local_align={local_align_mode}"
+                + (", fast_mode" if fast_mode else "")
+                + ")"
             )
             print("=" * 60)
-            with _patch_load_and_align(global_align_method):
+            with _patch_load_and_align(
+                global_align_method,
+                fast_mode=fast_mode,
+                intensity_cache=intensity_cache if fast_mode else None,
+            ):
                 combined_df = rebuild_tiff_full_size_for_roi(
                     combined_df,
                     ch_1or2,
                     z_plus_minus,
                     skip_tiff_if_exists=skip_tiff_if_exists,
                     error_log=error_log,
+                    fast_mode=fast_mode,
+                    intensity_cache=intensity_cache if fast_mode else None,
                 )
             combined_df = augment_frame_info_local_adjacent(
                 combined_df,
@@ -727,6 +845,8 @@ def run_tiff_uncaging_roi_respan(
                 z_plus_minus=z_plus_minus,
                 local_half_size=local_crop_half_size,
                 local_align_mode=local_align_mode,
+                fast_mode=fast_mode,
+                intensity_cache=intensity_cache if fast_mode else None,
             )
         combined_df.to_pickle(df_save_path)
         combined_df.to_csv(df_save_path.replace(".pkl", ".csv"))

@@ -17,6 +17,102 @@ from gui_integration import (
 )
 from roi_keyframe_utils import expand_uncaging_roi_keyframes
 
+GUI_INTENSITY_CSV_SUFFIX = "_gui_intensity.csv"
+_ROI_MASK_TIFF_SUFFIX = "_roi_mask.tif"
+_GUI_INTENSITY_ROI_ORDER = ["Spine", "DendriticShaft", "Background"]
+
+
+def _gui_intensity_csv_path(save_tiff_path: str, header: str) -> str | None:
+    """Derive {after_align_full}_gui_intensity.csv from a Type-A mask TIFF path."""
+    if not save_tiff_path:
+        return None
+    suffix = f"_{header}{_ROI_MASK_TIFF_SUFFIX}"
+    if save_tiff_path.endswith(suffix):
+        return save_tiff_path[: -len(suffix)] + GUI_INTENSITY_CSV_SUFFIX
+    if save_tiff_path.endswith(_ROI_MASK_TIFF_SUFFIX):
+        stem = save_tiff_path[: -len(_ROI_MASK_TIFF_SUFFIX)]
+        marker = f"_{header}"
+        if stem.endswith(marker):
+            stem = stem[: -len(marker)]
+        return stem + GUI_INTENSITY_CSV_SUFFIX
+    return None
+
+
+def update_gui_intensity_csv(gui_instance, save_tiff_path: str, header: str) -> str | None:
+    """
+    Merge this ROI type's GUI intensity trace into one per-set CSV.
+
+    Path: {after_align_full}_gui_intensity.csv next to the Type-A mask TIFF.
+    Columns: frame, phase, acq_time_str, elapsed_time_sec, {header}_mean/max/sum.
+    Later ROI types (Launch All) overwrite only their own columns.
+    """
+    csv_path = _gui_intensity_csv_path(save_tiff_path, header)
+    if not csv_path:
+        print("Warning: could not derive GUI intensity CSV path from mask TIFF")
+        return None
+
+    intensity = getattr(gui_instance, "intensity_data", None) or {}
+    means = list(intensity.get("mean") or [])
+    maxes = list(intensity.get("max") or [])
+    sums = list(intensity.get("sum") or [])
+    n = max(len(means), len(maxes), len(sums), 0)
+    if n == 0:
+        print("Warning: no GUI intensity_data to save")
+        return None
+
+    frame_info = getattr(gui_instance, "frame_info_df", None)
+    rows = []
+    for i in range(n):
+        row = {
+            "frame": i,
+            f"{header}_mean": means[i] if i < len(means) else np.nan,
+            f"{header}_max": maxes[i] if i < len(maxes) else np.nan,
+            f"{header}_sum": sums[i] if i < len(sums) else np.nan,
+        }
+        if frame_info is not None and i < len(frame_info):
+            rec = frame_info.iloc[i]
+            row["phase"] = rec.get("phase", "")
+            row["acq_time_str"] = rec.get("acq_time_str", "")
+            row["elapsed_time_sec"] = rec.get("elapsed_time_sec", np.nan)
+        rows.append(row)
+    new_df = pd.DataFrame(rows).set_index("frame")
+
+    if os.path.exists(csv_path):
+        try:
+            old = pd.read_csv(csv_path)
+            if "frame" not in old.columns:
+                old.insert(0, "frame", np.arange(len(old)))
+            old = old.set_index("frame")
+            for col in new_df.columns:
+                if col.startswith(f"{header}_") or col not in old.columns:
+                    old[col] = new_df[col]
+            missing = new_df.index.difference(old.index)
+            if len(missing):
+                old = pd.concat([old, new_df.loc[missing]])
+            merged = old.sort_index()
+        except Exception as e:
+            print(f"Warning: could not merge existing GUI intensity CSV ({e}); rewriting")
+            merged = new_df
+    else:
+        merged = new_df
+
+    merged = merged.reset_index()
+    meta = [c for c in ("frame", "phase", "acq_time_str", "elapsed_time_sec") if c in merged.columns]
+    roi_cols = []
+    for roi in _GUI_INTENSITY_ROI_ORDER:
+        for stat in ("mean", "max", "sum"):
+            col = f"{roi}_{stat}"
+            if col in merged.columns:
+                roi_cols.append(col)
+    extra = [c for c in merged.columns if c not in meta + roi_cols]
+    merged = merged[meta + roi_cols + extra]
+    save_dir = os.path.dirname(csv_path)
+    if save_dir and not os.path.exists(save_dir):
+        os.makedirs(save_dir, exist_ok=True)
+    merged.to_csv(csv_path, index=False)
+    print(f"Saved GUI intensity CSV ({header}): {os.path.basename(csv_path)}")
+    return csv_path
+
 
 def save_roi_mask_from_gui_to_tiff(gui_instance, save_path, header="ROI"):
     """Save ROI masks from GUI instance directly to a 3D 1-bit TIFF file.
@@ -410,6 +506,12 @@ def launch_roi_analysis_gui_tiff_only(
                 save_roi_mask_from_gui_to_tiff(window, save_tiff_path, header)
             except Exception as tiff_error:
                 print(f"Error saving ROI masks to TIFF: {tiff_error}")
+                import traceback
+                traceback.print_exc()
+            try:
+                update_gui_intensity_csv(window, save_tiff_path, header)
+            except Exception as csv_error:
+                print(f"Error saving GUI intensity CSV: {csv_error}")
                 import traceback
                 traceback.print_exc()
         else:
