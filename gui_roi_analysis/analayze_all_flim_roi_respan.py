@@ -1,4 +1,12 @@
 # %% import libraries
+import os
+import sys
+
+_FORUSE_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ForUse"))
+if _FORUSE_DIR not in sys.path:
+    sys.path.insert(0, _FORUSE_DIR)
+
+from flim_summarize_func import format_respan_path_assignments  # noqa: E402
 from gui_roi_respan_seg_masks import (
     GLOBAL_ALIGN_METHOD,
     LOCAL_ALIGN_MODE,
@@ -23,7 +31,7 @@ local_crop_half_size = 60  # quant_small_region_size in titration script
 # Set overwrite_seg_roi_masks=True to reset all ROI masks from seg_masks on re-run.
 uncaging_roi_keyframe_count = 3
 overwrite_seg_roi_masks = False
-skip_lifetime_analysis = False
+skip_lifetime_analysis = True
 # induction (~33 or 36 averaged frames), common TS (55), uncaging_2Hz30pulses (80), uncaging1hz (144)
 uncaging_frame_num = [33, 34, 35, 36, 55, 80, 144]
 
@@ -49,7 +57,7 @@ df_save_path_1, out_csv_path = run_tiff_uncaging_roi_respan(
 )
 
 # %%
-print("df_save_path_1 =", f'r"{df_save_path_1}"')
-print("out_csv_path =", f'r"{out_csv_path}"')
+print("Paste into the LTP analysis script:")
+print(format_respan_path_assignments(df_save_path_1, out_csv_path))
 
 # %%

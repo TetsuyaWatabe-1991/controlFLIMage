@@ -12,7 +12,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from flim_summarize_func import select_ltp_post_frames  # noqa: E402
+from flim_summarize_func import format_respan_path_assignments, select_ltp_post_frames  # noqa: E402
 
 
 def test_includes_point_just_outside_35_min() -> None:
@@ -49,12 +49,29 @@ def test_empty() -> None:
     assert len(selected) == 0
 
 
+def test_format_respan_path_assignments_is_copy_paste_python() -> None:
+    text = format_respan_path_assignments(
+        r"G:/ImagingData/Tetsuya/20260506/RabCalf_tdTGC6s/auto1\combined_df_respan.pkl",
+        r"G:/ImagingData/Tetsuya/20260506/RabCalf_tdTGC6s/auto1\combined_df_respan_intensity_lifetime_all_frames.csv",
+    )
+    expected = (
+        'df_save_path_1 = r"G:/ImagingData/Tetsuya/20260506/RabCalf_tdTGC6s/auto1\\combined_df_respan.pkl"\n'
+        'out_csv_path = r"G:/ImagingData/Tetsuya/20260506/RabCalf_tdTGC6s/auto1\\combined_df_respan_intensity_lifetime_all_frames.csv"'
+    )
+    assert text == expected
+    namespace: dict[str, str] = {}
+    exec(text, namespace)
+    assert namespace["df_save_path_1"].endswith("combined_df_respan.pkl")
+    assert namespace["out_csv_path"].endswith("combined_df_respan_intensity_lifetime_all_frames.csv")
+
+
 def main() -> int:
     tests = [
         test_includes_point_just_outside_35_min,
         test_includes_point_just_before_25_min,
         test_nearest_if_nothing_near_window,
         test_empty,
+        test_format_respan_path_assignments_is_copy_paste_python,
     ]
     failed = 0
     for fn in tests:

@@ -106,6 +106,17 @@ def reshape_axes_to_2d(axes: Any, n_rows: int, n_cols: int) -> np.ndarray:
     raise ValueError(f"Unexpected axes array shape: {axes_arr.shape}")
 
 
+def format_respan_path_assignments(df_save_path: str, out_csv_path: str) -> str:
+    """Return copy-paste Python assignments for LTP analysis scripts.
+
+    ROI analysis prints this block; paste it as-is into the experiment script.
+    """
+    return (
+        f'df_save_path_1 = r"{df_save_path}"\n'
+        f'out_csv_path = r"{out_csv_path}"'
+    )
+
+
 def select_ltp_post_frames(
     post_df: pd.DataFrame,
     *,

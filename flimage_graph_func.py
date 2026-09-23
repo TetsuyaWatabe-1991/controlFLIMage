@@ -93,8 +93,8 @@ def color_fue(savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLI
     plt.tight_layout()
     savepath = os.path.join(savefolder, f"vert_rt_{vmin}to{vmax}.png")
     if savefig:
-        plt.savefig(savepath, dpi = 150, bbox_inches = "tight")
-        plt.close(); plt.clf();
+        fig.savefig(savepath, dpi = 150, bbox_inches = "tight")
+        plt.close(fig)
     else:
         plt.show()
         
@@ -116,8 +116,8 @@ def color_fue(savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLI
     plt.tight_layout()
     savepath = os.path.join(savefolder, f"vert_lt_{vmin}to{vmax}.png")
     if savefig:
-        plt.savefig(savepath, dpi = 150, bbox_inches = "tight")
-        plt.close(); plt.clf();
+        fig.savefig(savepath, dpi = 150, bbox_inches = "tight")
+        plt.close(fig)
     else:
         plt.show()
     
@@ -142,10 +142,11 @@ def color_fue(savefolder = r"C:\Users\yasudalab\Documents\Tetsuya_GIT\controlFLI
     plt.tight_layout()
     savepath = os.path.join(savefolder, f"hori_{vmin}to{vmax}.png")
     if savefig:
-        plt.savefig(savepath, dpi = 150, bbox_inches = "tight")
-        plt.close(); plt.clf();
+        fig.savefig(savepath, dpi = 150, bbox_inches = "tight")
+        plt.close(fig)
     else:
         plt.show()
+    plt.close("all")
 
 
 def get_nice_scalebar_um(image_x_um):
@@ -299,7 +300,12 @@ def plot_max_proj_uncaging(
             plt.close()
 
 
-LEGACY_GCAMP_NFRAMES = (4, 32, 33, 34, 55)
+LEGACY_GCAMP_NFRAMES = (4, 32, 33, 34, 55, 264)
+# 264-frame protocol: Ch1 (index 0). Python slices, stop excluded.
+# Pre 13:17 -> frames 13..16; Post 21:25 -> frames 21..24.
+N264_GCAMP_CH = 0
+N264_GCAMP_PRE = slice(13, 17)
+N264_GCAMP_POST = slice(21, 25)
 
 
 def uncaging_pre_post_frame_slices(statedict, n_frames):
@@ -379,6 +385,10 @@ def legacy_gcamp_pre_post(imagearray):
         gc_pre = imagearray[4, 0, 0, :, :, :].sum(axis=-1)
         gc_unc = imagearray[5, 0, 0, :, :, :].sum(axis=-1)
         return gc_pre, gc_unc
+    if n == 264:
+        gc_pre = _sum_gcamp_frames(imagearray, N264_GCAMP_PRE, ch=N264_GCAMP_CH)
+        gc_unc = _sum_gcamp_frames(imagearray, N264_GCAMP_POST, ch=N264_GCAMP_CH)
+        return gc_pre, gc_unc
     return None
 
 
@@ -428,6 +438,11 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
         elif n_frames in [55]:
             GCpre = imagearray[4,0,0,:,:,:].sum(axis=-1)
             GCunc = imagearray[5,0,0,:,:,:].sum(axis=-1)
+        elif n_frames == 264:
+            GCpre = _sum_gcamp_frames(imagearray, N264_GCAMP_PRE, ch=N264_GCAMP_CH)
+            GCunc = _sum_gcamp_frames(imagearray, N264_GCAMP_POST, ch=N264_GCAMP_CH)
+            if plot_RFP_also and imagearray.shape[2] > 1:
+                RFPpre = _sum_gcamp_frames(imagearray, N264_GCAMP_PRE, ch=1)
     else:
         GCpre, GCunc = meta_pair
         if plot_RFP_also and imagearray.shape[2] > 1:
@@ -446,41 +461,45 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
     pow_mw = slope * uncaging_pow + intercept
     pow_mw_coherent = pow_mw*from_Thorlab_to_coherent_factor
     pow_mw_round = round(pow_mw_coherent,1)
-       
-    plt.imshow(GCF_F0, cmap = cmap, vmin = vmin, vmax = vmax)
-    plt.plot(center_x, center_y, 'co', markersize=4)   
-    
-    if pow_mw_round > 0:
-        plt.title(f"{pow_mw_round} mW, {pulseWidth} ms")  
-    else:
-        plt.title(f"{uncaging_pow} %, {pulseWidth} ms")  
-    plt.axis('off')
-    
+
     folder = os.path.dirname(each_file)
     savefolder = os.path.join(folder,"plot")
     os.makedirs(savefolder, exist_ok=True)
-    basename = os.path.basename(each_file)                
+    basename = os.path.basename(each_file)
     savepath = os.path.join(savefolder, basename[:-5] + "_F_F0.png")
-    plt.savefig(savepath, dpi=150, bbox_inches = "tight")
+
+    fig = plt.figure()
+    plt.imshow(GCF_F0, cmap = cmap, vmin = vmin, vmax = vmax)
+    plt.plot(center_x, center_y, 'co', markersize=4)
+
+    if pow_mw_round > 0:
+        plt.title(f"{pow_mw_round} mW, {pulseWidth} ms")
+    else:
+        plt.title(f"{uncaging_pow} %, {pulseWidth} ms")
+    plt.axis('off')
+    fig.savefig(savepath, dpi=150, bbox_inches = "tight")
     print("F_F0_savepath ", savepath)
     if resolve_show(show):
         plt.show()
-    plt.close(); plt.clf();plt.close("all");
-    
+    plt.close(fig)
+    plt.close("all")
+
     color_fue(savefolder = savefolder,
               vmin =vmin, vmax=vmax, cmap=cmap, label_text = "F/F0")
-    
+
     if plot_RFP_also and RFPpre is not None:
+        fig_rfp = plt.figure()
         plt.imshow(RFPpre, cmap='gray', vmin=0)
         plt.plot(center_x, center_y, 'co', markersize=4)
         plt.title("RFP")
         plt.axis('off')
         savepath = os.path.join(savefolder, basename[:-5] + "_RFP.png")
-        plt.savefig(savepath, dpi=150, bbox_inches = "tight")
+        fig_rfp.savefig(savepath, dpi=150, bbox_inches = "tight")
         print("RFP_savepath ", savepath)
         if resolve_show(show):
             plt.show()
-        plt.close(); plt.clf();plt.close("all");
+        plt.close(fig_rfp)
+        plt.close("all")
 
 
 def plot_GCaMP_and_RFP(each_file, slope = 0, intercept = 0, 

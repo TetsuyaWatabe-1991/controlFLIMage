@@ -29,8 +29,9 @@ try:
     display("  ")
 except:
     print("  ")
-print("df_save_path_1 =",f"r\"{df_save_path_1}\"")
-print("out_csv_path =",f"r\"{out_csv_path}\"")
+print("Paste into the LTP analysis script:")
+print(f'df_save_path_1 = r"{df_save_path_1}"')
+print(f'out_csv_path = r"{out_csv_path}"')
 
 
 # %%

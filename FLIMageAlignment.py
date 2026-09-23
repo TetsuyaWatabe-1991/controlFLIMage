@@ -10,18 +10,24 @@ from FLIMageFileReader2 import FileReader
 import matplotlib.pyplot as plt
 import numpy as np
 from skimage.registration import phase_cross_correlation
-from scipy.ndimage import fourier_shift, shift as ndimage_shift
+from scipy.ndimage import fourier_shift, gaussian_filter, shift as ndimage_shift
 from scipy.signal import medfilt
 from datetime import datetime
 from skimage.transform import resize
 from utility.mpl_show import resolve_show
 
 # "traditional": full-FOV frame-0 reference + fourier_shift (default; motor/two-file)
+# "highpass": frame-0 reference from highpass XY/YZ spatial correlation
 # "roi_adjacent": ROI-local phase correlation + adjacent-frame cumulative
 # roi_adjacent can latch onto local features and accumulate runaway shifts.
+# Live acquisition scripts pass "highpass" explicitly. These constants stay
+# "traditional" so analysis scripts that read them are unchanged.
 DEFAULT_ALIGN_METHOD = "traditional"
 MOTOR_ALIGN_METHOD = "traditional"
 POST_ACQUISITION_ALIGN_METHOD = "traditional"
+HIGHPASS_XY_SIGMA = 6.0
+# Z is only ~15 slices, so the Z blur is much narrower than the XY blur.
+HIGHPASS_YZ_SIGMA_ZY = (1.5, 6.0)
 DEFAULT_ROI_HALF_ZYX = (2, 30, 30)  # matches gui_integration.process_small_region
 
 def get_flimfile_list(one_file_path):
@@ -222,6 +228,53 @@ def _scale_roi_center_zyx(
     )
 
 
+def _highpass_2d(image, sigma):
+    """Subtract a Gaussian blur. Sharp processes remain."""
+    source = np.asarray(image, dtype=np.float32)
+    return source - gaussian_filter(source, sigma=sigma)
+
+
+def _spatial_registration_yx(reference, moving):
+    """Shift (dy, dx) that registers ``moving`` onto ``reference``.
+
+    Spatial cross-correlation (normalization=None). Phase-only correlation
+    returns 0 px on a small crop even when the bright object has moved.
+    """
+    shift, _error, _diffphase = phase_cross_correlation(
+        np.asarray(reference, dtype=np.float32),
+        np.asarray(moving, dtype=np.float32),
+        upsample_factor=4,
+        normalization=None,
+    )
+    return float(shift[0]), float(shift[1])
+
+
+def highpass_registration_yx(reference, moving):
+    """2D registration shift (dy, dx) of ``moving`` onto ``reference``."""
+    dy, dx = _spatial_registration_yx(
+        _highpass_2d(reference, HIGHPASS_XY_SIGMA),
+        _highpass_2d(moving, HIGHPASS_XY_SIGMA),
+    )
+    return np.array([dy, dx], dtype=np.float64)
+
+
+def highpass_registration_zyx(reference, moving):
+    """Registration shift (dz, dy, dx) of a ZYX ``moving`` volume onto ``reference``.
+
+    XY is a max projection over Z. YZ is a max projection over X. The Y
+    component of the YZ match is discarded.
+    """
+    dy, dx = _spatial_registration_yx(
+        _highpass_2d(np.max(reference, axis=0), HIGHPASS_XY_SIGMA),
+        _highpass_2d(np.max(moving, axis=0), HIGHPASS_XY_SIGMA),
+    )
+    dz, _dy_yz = _spatial_registration_yx(
+        _highpass_2d(np.max(reference, axis=2), HIGHPASS_YZ_SIGMA_ZY),
+        _highpass_2d(np.max(moving, axis=2), HIGHPASS_YZ_SIGMA_ZY),
+    )
+    return np.array([dz, dy, dx], dtype=np.float64)
+
+
 def _align_stack(
     Tiff_MultiArray,
     *,
@@ -239,6 +292,7 @@ def _align_stack(
 
     method:
       - "traditional": frame-0 reference with fourier_shift (default)
+      - "highpass": frame-0 reference from highpass XY/YZ spatial correlation
       - "roi_adjacent": adjacent-frame cumulative shifts
     apply_shifts: If False, return the input stack unchanged with computed shifts.
     """
@@ -261,10 +315,27 @@ def _align_stack(
             aligned = Tiff_MultiArray
         return shifts, aligned
 
+    if method == "highpass":
+        for t in range(n_time):
+            moving = Tiff_MultiArray[t]
+            if first_vol.ndim == 2:
+                shift = highpass_registration_yx(first_vol, moving)
+            else:
+                shift = highpass_registration_zyx(first_vol, moving)
+            shifts[t] = np.asarray(shift, dtype=np.float64)
+        if apply_shifts:
+            aligned = np.array([
+                _apply_shift_array(Tiff_MultiArray[t], tuple(shifts[t]), "constant")
+                for t in range(n_time)
+            ])
+        else:
+            aligned = Tiff_MultiArray
+        return shifts, aligned
+
     if method != "roi_adjacent":
         raise ValueError(
             f"Unknown alignment method: {method}. "
-            "Use 'roi_adjacent' or 'traditional'."
+            "Use 'roi_adjacent', 'traditional', or 'highpass'."
         )
 
     roi_center = _resolve_roi_center(first_vol, roi_center_zyx, iminfo)

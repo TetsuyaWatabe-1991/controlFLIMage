@@ -296,8 +296,20 @@ def define_skeleton_points(skeleton_3d, spacing_um, x_um, y_um, z_um):
     return selected_points_pixels.astype(int)
 
 
+def limit_candidate_points(skeleton_points, max_pos_cand_num):
+    """Keep at most max_pos_cand_num skeleton points, highest Z first.
+
+    Returns every point when there are fewer than the cap. Does not add points.
+    """
+    points = np.asarray(skeleton_points)
+    if points.size == 0:
+        return np.zeros((0, 3), dtype=int)
+    order = points[:, 0].argsort()[::-1]
+    return points[order][: int(max_pos_cand_num)]
+
+
 def plot_skeleton_with_points(skeleton_3d, skeleton_points,change_aspect_ratio=False,
-                             saveplot=False, savepath=None):
+                             saveplot=False, savepath=None, showplot=True):
 
     if change_aspect_ratio == False:
         aspect_ratio = 1
@@ -344,7 +356,10 @@ def plot_skeleton_with_points(skeleton_3d, skeleton_points,change_aspect_ratio=F
             plt.savefig(savepath, dpi=300, bbox_inches='tight')
         else:
             print("savepath is not specified")
-    plt.show()
+    if showplot:
+        plt.show()
+    else:
+        plt.close()
 
 
 def detect_and_remove_soma_from_original(ZYXarray, percentile, max_soma_size_um, x_um, y_um, z_um):
@@ -498,15 +513,20 @@ def get_and_save_candidate_pos(flim_path, **kwargs):
     
     surface_z = find_surface_1d(ZYXarray)
     skeleton_points = define_skeleton_points(skeleton_3d, params["spacing_um"], x_um, y_um, z_um)
-    
-    sorted_skeleton_points = skeleton_points[skeleton_points[:, 0].argsort()[::-1]] = skeleton_points[skeleton_points[:, 0].argsort()[::-1]]
-    
-    sorted_skeleton_points = sorted_skeleton_points[:params["max_pos_cand_num"]]
-    
+    sorted_skeleton_points = limit_candidate_points(
+        skeleton_points, params["max_pos_cand_num"]
+    )
+    print(
+        f"Candidate positions: {len(sorted_skeleton_points)} "
+        f"(max {params['max_pos_cand_num']})"
+    )
+
     plot_skeleton_with_points(skeleton_3d, sorted_skeleton_points, change_aspect_ratio=True,
-                                saveplot=True, savepath=os.path.join(eachpos_export_path, f"skeleton_with_points_skeleton.png"))
+                                saveplot=True, savepath=os.path.join(eachpos_export_path, f"skeleton_with_points_skeleton.png"),
+                                showplot=False)
     plot_skeleton_with_points(ZYXarray, sorted_skeleton_points, change_aspect_ratio=True,
-                                saveplot=True, savepath=os.path.join(eachpos_export_path, f"skeleton_with_points_ZYX.png"))
+                                saveplot=True, savepath=os.path.join(eachpos_export_path, f"skeleton_with_points_ZYX.png"),
+                                showplot=False)
     
     save_pix_pos_from_click_list(sorted_skeleton_points, 
                                     csv_savepath=pos_pix_csv_path)

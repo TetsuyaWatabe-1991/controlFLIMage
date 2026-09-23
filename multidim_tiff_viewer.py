@@ -252,6 +252,17 @@ def calc_zoom_rate_based_on_maxsize(yx_shape: tuple,
     return resize_yx_shape
 
 
+def highmag_field_side_px(n_lowmag_pixels, lowmag_zoom, highmag_zoom):
+    """Low-mag pixels spanned by one high-mag field.
+
+    Field width scales as 1/zoom, so a high-mag zoom of 15 on a 128-pixel
+    zoom-2 low-mag image is 128 * 2 / 15 pixels on a side.
+    """
+    if float(highmag_zoom) <= 0:
+        raise ValueError("highmag_zoom must be positive")
+    return float(n_lowmag_pixels) * float(lowmag_zoom) / float(highmag_zoom)
+
+
 
 def z_stack_multi_z_click(stack_array, pre_assigned_pix_zyx_list=[], show_text = ""):
     first_text_at_upper = "Click each position and click assign"
@@ -431,7 +442,8 @@ def z_stack_multi_z_click(stack_array, pre_assigned_pix_zyx_list=[], show_text =
         
     return pix_zyx_list
 
-def z_stack_multi_z_click_with_delete(stack_array, pre_assigned_pix_zyx_list=[], show_text = ""):
+def z_stack_multi_z_click_with_delete(stack_array, pre_assigned_pix_zyx_list=[], show_text = "",
+                                      lowmag_zoom=None, highmag_zoom=None):
     first_text_at_upper = "Click each position and click assign"
     col_dict = {
         "clicked_currentZ": "white",
@@ -582,19 +594,26 @@ def z_stack_multi_z_click_with_delete(stack_array, pre_assigned_pix_zyx_list=[],
             data = PILimg_to_data(im_PIL)
             graph.draw_image(data=data, location=img_paste_loc)
             graph.draw_point((x,y), size=5, color = col_dict["clicked_now"])
-                
-            halfsize = min(resize_yx_shape)//8
+
+            if lowmag_zoom is not None and highmag_zoom is not None:
+                image_yx = stack_array.shape[-2:]
+                half_y = 0.5 * highmag_field_side_px(
+                    image_yx[0], lowmag_zoom, highmag_zoom) * resize_ratio_yx[0]
+                half_x = 0.5 * highmag_field_side_px(
+                    image_yx[1], lowmag_zoom, highmag_zoom) * resize_ratio_yx[1]
+            else:
+                half_y = half_x = min(resize_yx_shape) // 8
             for nth, EachZYX in enumerate(ZYX_pixel_clicked_list):
                 if EachZYX[0] == NthSlice -1:
                     color = col_dict["clicked_currentZ"]
                     if nth == int(values['pos']-1):
                         color = col_dict["pos_now"]
                     graph.DrawRectangle(
-                        (EachZYX[2]-halfsize, EachZYX[1]-halfsize), 
-                        (EachZYX[2]+halfsize, EachZYX[1]+halfsize), 
+                        (EachZYX[2]-half_x, EachZYX[1]-half_y),
+                        (EachZYX[2]+half_x, EachZYX[1]+half_y),
                         line_color=color)
-                    text_x = max(EachZYX[2] - halfsize*0.90, resize_yx_shape[1]*0.007)
-                    text_y = min(EachZYX[1] + halfsize*0.80, resize_yx_shape[0]*0.990)
+                    text_x = max(EachZYX[2] - half_x*0.90, resize_yx_shape[1]*0.007)
+                    text_y = min(EachZYX[1] + half_y*0.80, resize_yx_shape[0]*0.990)
                     graph.DrawText(str(nth+1), (text_x, text_y),
                                     font=font, color = color)
                     

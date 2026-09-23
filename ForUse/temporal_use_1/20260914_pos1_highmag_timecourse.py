@@ -3,6 +3,10 @@
 
 nAveFrame is 8 during uncaging and 3 otherwise. Intensity is divided by
 nAveFrame, then dF/F0 = F / F_pre - 1, with F_pre = mean of pre-uncaging.
+
+Ch1 GCaMP F/F0 during uncaging matches 20260916_LTP.py: F0 is the mean of
+uncaging-phase frames before the first pulse, F/F0 = F / F0 (not minus 1),
+and the representative value is the first-pulse frame.
 """
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ import matplotlib
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from scipy import stats as scipy_stats
 
 controlFLIMage_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(controlFLIMage_DIR)
@@ -38,6 +43,14 @@ NAVE_UNCAGING = 8
 NAVE_OTHER = 3
 CHANNELS = (1, 2)
 LTP_WINDOW_MIN = (25.0, 35.0)
+GCAMP_CH = 1
+# n_unc frames -> 0-based first-pulse index (same as 20260916_LTP.py)
+UNC_TOTAL_FRAME_FIRST_UNC_DICT = {
+    33: 2,
+    55: 5,
+    80: 8,
+    144: 8,
+}
 
 
 def spine_label(csv_path: str) -> str:
@@ -70,6 +83,75 @@ def assign_nave_and_dff0(df: pd.DataFrame, intensity_col: str = INTENSITY_COL) -
         if len(unc_nth):
             out.loc[idx, "frame_from_unc"] = each["NthFrame"] - int(unc_nth.iloc[0])
     return out
+
+
+def first_pulse_index(n_unc: int) -> int | None:
+    """0-based first-pulse frame within the uncaging cluster."""
+    if n_unc in UNC_TOTAL_FRAME_FIRST_UNC_DICT:
+        return UNC_TOTAL_FRAME_FIRST_UNC_DICT[n_unc]
+    if (n_unc - 1) in UNC_TOTAL_FRAME_FIRST_UNC_DICT:
+        return UNC_TOTAL_FRAME_FIRST_UNC_DICT[n_unc - 1]
+    if n_unc > 8:
+        return 8
+    if n_unc >= 2:
+        return 1
+    return None
+
+
+def assign_gcamp_ff0(df: pd.DataFrame, ch: int = GCAMP_CH) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Ch1 F/F0 during uncaging, matching 20260916_LTP.py transient intensity.
+
+    F0 = mean of uncaging-phase frames with slice < first_pulse.
+    F/F0 = intensity / F0. Representative value = F/F0 at first_pulse.
+    """
+    out = df.copy()
+    out["gcamp_ff0"] = np.nan
+    out["gcamp_F0"] = np.nan
+    out["time_sec_from_pulse"] = np.nan
+    out["frame_from_pulse"] = np.nan
+    rows = []
+
+    ch_df = out[out["ch"] == ch]
+    for label, g in ch_df.groupby("spine_label", sort=False):
+        unc = g.loc[g["during_uncaging"] == 1].sort_values("NthFrame")
+        n_unc = int(len(unc))
+        pulse_i = first_pulse_index(n_unc)
+        if pulse_i is None or pulse_i >= n_unc:
+            pre = g.loc[g["time_sec_norm"] < 0, "intensity_div_nAve"]
+            f0 = float(pre.mean()) if len(pre) else np.nan
+            pulse_i = 0 if n_unc else None
+            method = "pre_timecourse_F0"
+        else:
+            f0 = float(unc.iloc[:pulse_i]["intensity_div_nAve"].mean())
+            method = f"unc_pre_pulse n={pulse_i}"
+        if not np.isfinite(f0) or f0 == 0 or pulse_i is None or n_unc == 0:
+            print(f"  {label} ch{ch}: skip GCaMP F/F0  n_unc={n_unc}")
+            continue
+        ff0 = unc["intensity_div_nAve"] / f0
+        out.loc[unc.index, "gcamp_F0"] = f0
+        out.loc[unc.index, "gcamp_ff0"] = ff0.to_numpy(dtype=float)
+        t_pulse = float(unc.iloc[pulse_i]["time_sec"])
+        out.loc[unc.index, "time_sec_from_pulse"] = unc["time_sec"] - t_pulse
+        out.loc[unc.index, "frame_from_pulse"] = np.arange(n_unc, dtype=float) - pulse_i
+        rep = float(ff0.iloc[pulse_i])
+        t_rep = float(unc.iloc[pulse_i]["time_sec_norm"])
+        print(
+            f"  {label} ch{ch}: n_unc={n_unc}  pulse_i={pulse_i}  method={method}  "
+            f"F0={f0:.4g}  F/F0={rep:.3f}  t_norm={t_rep:.2f}s"
+        )
+        rows.append(
+            {
+                "spine_label": label,
+                "ch": ch,
+                "n_unc": n_unc,
+                "pulse_i": int(pulse_i),
+                "gcamp_F0": f0,
+                "gcamp_ff0": rep,
+                "time_sec_norm_pulse": t_rep,
+                "method": method,
+            }
+        )
+    return out, pd.DataFrame(rows)
 
 
 def decorate_ax(ax, ylabel: str, xlabel: str, uncaging_end_x: float) -> None:
@@ -163,6 +245,12 @@ for csv_path in CSV_PATHS:
     all_df = pd.concat([all_df, resultdf], ignore_index=True)
 
 all_df = assign_nave_and_dff0(all_df, INTENSITY_COL)
+
+print("\nCh1 GCaMP F/F0 during Uncaging (F0 = pre-pulse frames in uncaging phase)")
+all_df, gcamp_df = assign_gcamp_ff0(all_df, ch=GCAMP_CH)
+gcamp_csv = os.path.join(SAVE_DIR, "pos1_highmag_ch1_gcamp_ff0_uncaging.csv")
+gcamp_df.to_csv(gcamp_csv, index=False)
+print(f"Saved: {gcamp_csv}")
 
 print("\nPer-file Uncaging / nAve summary")
 for (label, ch), g in all_df.groupby(["spine_label", "ch"]):
@@ -311,5 +399,165 @@ ax.spines["right"].set_visible(False)
 ax.set_xticks([])
 fig.tight_layout()
 save_fig(fig, "pos1_highmag_ch2_dFF0_25_35min_swarmplot.png")
+
+# %% GCaMP F/F0 during uncaging and vs spine volume (25-35 min)
+print(f"\nCh1 GCaMP F/F0  vs  Ch2 dFF0 {LTP_WINDOW_MIN[0]:g}-{LTP_WINDOW_MIN[1]:g} min")
+if gcamp_df.empty or ltp_df.empty:
+    print("  no paired GCaMP F/F0 and Ch2 LTP points")
+    scatter_df = pd.DataFrame()
+else:
+    scatter_df = gcamp_df.merge(
+        ltp_df[["spine_label", "dFF0", "n_in_window", "time_min_norm"]].rename(
+            columns={
+                "dFF0": "ch2_dFF0_ltp",
+                "n_in_window": "ch2_n_in_window",
+                "time_min_norm": "ch2_time_min_norm",
+            }
+        ),
+        on="spine_label",
+        how="inner",
+    )
+    scatter_csv = os.path.join(SAVE_DIR, "pos1_highmag_gcamp_ff0_vs_ch2_dFF0_25_35min.csv")
+    scatter_df.to_csv(scatter_csv, index=False)
+    print(f"Saved: {scatter_csv}")
+    for _, row in scatter_df.iterrows():
+        print(
+            f"  {row['spine_label']}: GCaMP F/F0={row['gcamp_ff0']:.3f}  "
+            f"Ch2 dFF0={row['ch2_dFF0_ltp']:.3f}"
+        )
+
+# GCaMP F/F0 zoom during uncaging (t=0 = first pulse)
+gcamp_zoom = all_df[
+    (all_df["ch"] == GCAMP_CH) & all_df["gcamp_ff0"].notna()
+].copy()
+if not gcamp_zoom.empty:
+    fig, ax = plt.subplots(figsize=(5.2, 3.4))
+    for label, g in gcamp_zoom.groupby("spine_label"):
+        gg = g.sort_values("time_sec_from_pulse")
+        ax.plot(
+            gg["time_sec_from_pulse"].to_numpy(dtype=float),
+            gg["gcamp_ff0"].to_numpy(dtype=float),
+            lw=0.9,
+            alpha=0.7,
+            label=label,
+        )
+    agg = (
+        gcamp_zoom.dropna(subset=["gcamp_ff0", "frame_from_pulse"])
+        .groupby("frame_from_pulse", as_index=False)
+        .agg(
+            x=("time_sec_from_pulse", "mean"),
+            gcamp_mean=("gcamp_ff0", "mean"),
+            gcamp_sem=(
+                "gcamp_ff0",
+                lambda s: float(s.std(ddof=1) / np.sqrt(s.count())) if s.count() > 1 else 0.0,
+            ),
+        )
+        .sort_values("x")
+    )
+    ax.errorbar(
+        agg["x"],
+        agg["gcamp_mean"],
+        yerr=agg["gcamp_sem"],
+        fmt="-",
+        color="k",
+        ecolor="k",
+        elinewidth=1.0,
+        capsize=1.5,
+        linewidth=1.8,
+        zorder=3,
+    )
+    ax.axhline(1.0, color="gray", ls="--", lw=0.8, zorder=0)
+    ax.axvline(0.0, color="k", lw=0.8, zorder=1)
+    ax.set_ylabel(r"GCaMP F/F$_0$")
+    ax.set_xlabel("Time from first pulse (s)")
+    ax.set_title(f"Ch1 Uncaging  n={gcamp_zoom['spine_label'].nunique()}")
+    ax.legend(fontsize=7, frameon=False, loc="upper right")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    save_fig(fig, "pos1_highmag_ch1_gcamp_ff0_uncaging_zoom_sec.png")
+
+if not gcamp_df.empty:
+    fig, ax = plt.subplots(figsize=(2.2, 3.2))
+    p = sns.swarmplot(
+        y="gcamp_ff0",
+        data=gcamp_df,
+        color="#4C72B0",
+        size=7,
+        ax=ax,
+    )
+    sns.boxplot(
+        showmeans=True,
+        meanline=True,
+        meanprops={"color": "k", "ls": "-", "lw": 1},
+        medianprops={"visible": False},
+        whiskerprops={"visible": False},
+        zorder=10,
+        y="gcamp_ff0",
+        data=gcamp_df,
+        showfliers=False,
+        showbox=False,
+        showcaps=False,
+        ax=p,
+    )
+    mean = float(gcamp_df["gcamp_ff0"].mean())
+    std = float(gcamp_df["gcamp_ff0"].std(ddof=1)) if len(gcamp_df) > 1 else 0.0
+    ax.text(0.2, mean, f"{mean:.2f} ± {std:.2f}", ha="left", va="bottom", fontsize=8)
+    ymin, ymax = float(gcamp_df["gcamp_ff0"].min()), float(gcamp_df["gcamp_ff0"].max())
+    pad = (ymax - ymin) * 0.15 if ymax > ymin else 0.1
+    ax.set_ylim(ymin - pad, ymax + pad)
+    ax.set_ylabel(r"GCaMP Spine F/F$_0$")
+    ax.set_title(f"pos1 highmag  n={len(gcamp_df)}")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.set_xticks([])
+    fig.tight_layout()
+    save_fig(fig, "pos1_highmag_ch1_gcamp_ff0_swarmplot.png")
+
+if not scatter_df.empty:
+    fig, ax = plt.subplots(figsize=(3.4, 3.4))
+    sns.scatterplot(
+        x="gcamp_ff0",
+        y="ch2_dFF0_ltp",
+        data=scatter_df,
+        color="k",
+        s=36,
+        ax=ax,
+    )
+    for _, row in scatter_df.iterrows():
+        ax.annotate(
+            str(row["spine_label"]).replace("highmag_", ""),
+            (row["gcamp_ff0"], row["ch2_dFF0_ltp"]),
+            textcoords="offset points",
+            xytext=(4, 3),
+            fontsize=7,
+        )
+    x = scatter_df["gcamp_ff0"].to_numpy(dtype=float)
+    y = scatter_df["ch2_dFF0_ltp"].to_numpy(dtype=float)
+    if len(scatter_df) >= 3 and np.nanstd(x) > 0:
+        lin = scipy_stats.linregress(x, y)
+        x_fit = np.linspace(float(np.nanmin(x)), float(np.nanmax(x)), 50)
+        ax.plot(x_fit, lin.intercept + lin.slope * x_fit, color="gray", lw=1.0, zorder=0)
+        ax.text(
+            0.05,
+            0.95,
+            f"r={lin.rvalue:.2f}  p={lin.pvalue:.3g}  n={len(scatter_df)}",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=8,
+        )
+    xpad = (x.max() - x.min()) * 0.12 if x.max() > x.min() else 0.5
+    ypad = (y.max() - y.min()) * 0.12 if y.max() > y.min() else 0.1
+    ax.set_xlim(x.min() - xpad, x.max() + xpad)
+    ax.set_ylim(y.min() - ypad, y.max() + ypad)
+    ax.axhline(0.0, color="gray", ls="--", lw=0.6, zorder=0)
+    ax.set_xlabel(r"GCaMP Spine F/F$_0$")
+    ax.set_ylabel(r"$\Delta$spine volume (a.u.) [25–35 min]")
+    ax.set_title(f"pos1 highmag  n={len(scatter_df)}")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    save_fig(fig, "pos1_highmag_ch2_dFF0_25_35min_vs_gcamp_ff0_scatter.png")
 
 print("done")

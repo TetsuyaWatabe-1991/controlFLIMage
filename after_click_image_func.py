@@ -164,13 +164,16 @@ def save_image_with_assigned_pos_3d(tif_path,
                                     png_savefolder,
                                     dpi = 300, 
                                     input_arr = False,
-                                    array = None):
+                                    array = None,
+                                    half_x_pix = None,
+                                    half_y_pix = None):
     if input_arr == True:
         tiffarray = array
     else:
         tiffarray = imread(tif_path)
-            
-    half_square = min(tiffarray.shape[1:])//10
+
+    if half_x_pix is None or half_y_pix is None:
+        half_x_pix = half_y_pix = min(tiffarray.shape[1:]) // 10
     
     if len(tiffarray.shape)!=3:
         raise Exception(f"{tif_path}\n  Tiff array shape is not 3d, {tiffarray.shape} ")
@@ -182,10 +185,10 @@ def save_image_with_assigned_pos_3d(tif_path,
         y = df.at[each_ind, "y_pix"]
         z = df.at[each_ind, "z_pix"]
         
-        plt_x_list = [x - half_square, x - half_square, x + half_square, x + half_square, x - half_square]
-        plt_y_list = [y - half_square, y + half_square, y + half_square, y - half_square, y - half_square]
-        upper_left_x = max(x - half_square + tiffarray.shape[2]*0.01, 0)
-        upper_left_y = max(y - half_square + tiffarray.shape[1]*0.01, 0)
+        plt_x_list = [x - half_x_pix, x - half_x_pix, x + half_x_pix, x + half_x_pix, x - half_x_pix]
+        plt_y_list = [y - half_y_pix, y + half_y_pix, y + half_y_pix, y - half_y_pix, y - half_y_pix]
+        upper_left_x = max(x - half_x_pix + tiffarray.shape[2]*0.01, 0)
+        upper_left_y = max(y - half_y_pix + tiffarray.shape[1]*0.01, 0)
         savepath = os.path.join(png_savefolder, f"{str(pos_id).zfill(3)}.png")
         
         plt.imshow(tiffarray[z,:,:], cmap = 'gray')
