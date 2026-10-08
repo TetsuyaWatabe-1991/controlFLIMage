@@ -328,7 +328,7 @@ def process_and_plot_flim_images(filelist, power_slope, power_intercept,
             folder = os.path.dirname(each_file)
             savefolder = os.path.join(folder, "plot")
             basename = os.path.basename(each_file)
-            savepath = os.path.join(savefolder, basename[:-5] + ".png")
+            savepath = os.path.join(savefolder, os.path.splitext(basename)[0] + ".png")
             plot_single_image(data, F_F0_vmin, F_F0_vmax, savepath)
     else:
         # Plot all images in one figure
@@ -355,5 +355,5 @@ if __name__ == "__main__":
                                        power_slope=power_slope, 
                                        power_intercept=power_intercept)
     plot_single_tdTom_and_GCaMP(data, 
-                                save_path = filepath[:-5] + "_tdTom_and_GCaMP.png", 
+                                save_path = os.path.splitext(filepath)[0] + "_tdTom_and_GCaMP.png", 
                                 F_F0_vmin=0, F_F0_vmax=10)

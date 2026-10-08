@@ -11,7 +11,7 @@ def get_roi_path(flim_path):
     parent_folder = os.path.dirname(flim_path)
     ROI_folder = os.path.join(parent_folder,r"Analysis\ROI")
     os.makedirs(ROI_folder, exist_ok=True)
-    ROI_filename = os.path.basename(flim_path)[:-5]+"_ROI.txt"
+    ROI_filename = os.path.splitext(os.path.basename(flim_path))[0]+"_ROI.txt"
     ROI_path = os.path.join(ROI_folder, ROI_filename)
     return ROI_path
 

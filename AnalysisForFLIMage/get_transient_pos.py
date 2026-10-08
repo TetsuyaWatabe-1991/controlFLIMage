@@ -105,7 +105,7 @@ def get_transient_pos(file_list: List[str],
         if group_by_pattern:
             group_name = os.path.basename(filepath_without_number)
         else:
-            group_name = os.path.basename(file_path)[:-5]  # Remove .flim
+            group_name = os.path.splitext(os.path.basename(file_path))[0]  # Remove .flim
         
         try:
             iminfo = FileReader()

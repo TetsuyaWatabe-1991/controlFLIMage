@@ -199,7 +199,7 @@ for index, row in combined_df_reject_bad_data_df.iterrows():
     combined_df_reject_bad_data_df.at[index, "lowmag_tiff_z_projection_savepath"] = possible_lowmag_df.iloc[0]["lowmag_tiff_z_projection_savepath"]
     combined_df_reject_bad_data_df.at[index, "lowmag_tiff_y_projection_savepath"] = possible_lowmag_df.iloc[0]["lowmag_tiff_y_projection_savepath"]
 
-    each_roi_png_savefolder = earliest_lowmag_file_path[:-5]
+    each_roi_png_savefolder = os.path.splitext(earliest_lowmag_file_path)[0]
     each_roi_png_num_zfill3 = each_highmag_path[str_index_highmag+9:each_highmag_path.rfind("_")].zfill(3)
     lowmag_assigned_roi_png = os.path.join(each_roi_png_savefolder, f"{each_roi_png_num_zfill3}.png")
     assert os.path.exists(lowmag_assigned_roi_png)

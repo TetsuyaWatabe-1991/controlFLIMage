@@ -135,7 +135,7 @@ for each_pow_dur in unc_pow_dur:
         os.makedirs(savefolder, exist_ok=True)
         basename = os.path.basename(each_file)
                         
-        savepath = os.path.join(savefolder, basename[:-5] + ".png")
+        savepath = os.path.join(savefolder, os.path.splitext(basename)[0] + ".png")
         plt.savefig(savepath, dpi=150, bbox_inches = "tight")
         
         plt.show()

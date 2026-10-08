@@ -222,7 +222,7 @@ for each_set in pre_post_set_list:
     os.makedirs(savefolder, exist_ok=True)
     basename = os.path.basename(each_set["unc"])
                     
-    savepath = os.path.join(savefolder, basename[:-5] + ".png")
+    savepath = os.path.join(savefolder, os.path.splitext(basename)[0] + ".png")
     plt.savefig(savepath, dpi=150, bbox_inches = "tight")
     plt.show()
             

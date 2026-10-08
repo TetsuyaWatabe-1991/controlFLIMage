@@ -261,7 +261,7 @@ def plot_max_proj_uncaging(
     scalebar_um = get_nice_scalebar_um(image_x_um)
     add_scale_bar(plt.gca(), scalebar_um, x_um_per_pix_x, avoid_x_y=(center_x, center_y))
     basename = os.path.basename(each_file)
-    savepath = os.path.join(savefolder, basename[:-5] + "_maxproj.png")
+    savepath = os.path.join(savefolder, os.path.splitext(basename)[0] + "_maxproj.png")
     
     plt.savefig(savepath, dpi=150, bbox_inches = "tight", pad_inches = 0)
     print("maxproj_savepath ", savepath)
@@ -291,7 +291,7 @@ def plot_max_proj_uncaging(
         trimmed_x_um = 2 * trim_side_length * x_um_per_pix_x
         trim_scalebar_um = get_nice_scalebar_um(trimmed_x_um)
         add_scale_bar(plt.gca(), trim_scalebar_um, x_um_per_pix_x, avoid_x_y=(center_x, center_y))
-        trimmed_savepath = os.path.join(trimmed_savefolder, basename[:-5] + "_maxproj_trimmed.png")
+        trimmed_savepath = os.path.join(trimmed_savefolder, os.path.splitext(basename)[0] + "_maxproj_trimmed.png")
         plt.savefig(trimmed_savepath, dpi=150, bbox_inches = "tight", pad_inches = 0)
         print("trimmed_maxproj_savepath ", trimmed_savepath)
         if resolve_show(show):
@@ -466,7 +466,7 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
     savefolder = os.path.join(folder,"plot")
     os.makedirs(savefolder, exist_ok=True)
     basename = os.path.basename(each_file)
-    savepath = os.path.join(savefolder, basename[:-5] + "_F_F0.png")
+    savepath = os.path.join(savefolder, os.path.splitext(basename)[0] + "_F_F0.png")
 
     fig = plt.figure()
     plt.imshow(GCF_F0, cmap = cmap, vmin = vmin, vmax = vmax)
@@ -493,7 +493,7 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
         plt.plot(center_x, center_y, 'co', markersize=4)
         plt.title("RFP")
         plt.axis('off')
-        savepath = os.path.join(savefolder, basename[:-5] + "_RFP.png")
+        savepath = os.path.join(savefolder, os.path.splitext(basename)[0] + "_RFP.png")
         fig_rfp.savefig(savepath, dpi=150, bbox_inches = "tight")
         print("RFP_savepath ", savepath)
         if resolve_show(show):
@@ -582,7 +582,7 @@ def plot_GCaMP_and_RFP(each_file, slope = 0, intercept = 0,
     savefolder = os.path.join(folder, "plot_GCaMP_and_RFP")
     os.makedirs(savefolder, exist_ok=True)
     basename = os.path.basename(each_file)
-    savepath = os.path.join(savefolder, basename[:-5] + "_GCaMP_and_RFP.png")
+    savepath = os.path.join(savefolder, os.path.splitext(basename)[0] + "_GCaMP_and_RFP.png")
     plt.savefig(savepath, dpi=150, bbox_inches = "tight")
     print("GCaMP_and_RFP_savepath ", savepath)
     plt.show()
@@ -709,7 +709,7 @@ def calc_spine_dend_GCaMP(
     savefolder = os.path.join(folder,"plot")
     os.makedirs(savefolder, exist_ok=True)
     basename = os.path.basename(each_file)                
-    savepath = os.path.join(savefolder, basename[:-5] + "_ROI" + save_suffix + ".png")
+    savepath = os.path.join(savefolder, os.path.splitext(basename)[0] + "_ROI" + save_suffix + ".png")
     if save_img:
         plt.savefig(savepath, dpi=150, bbox_inches = "tight")
     print("ROI_savepath ", savepath)

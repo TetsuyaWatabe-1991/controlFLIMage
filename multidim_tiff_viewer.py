@@ -26,7 +26,7 @@ from FLIMageFileReader2 import FileReader
 
 def read_multiple_uncagingpos(flimpath):
     
-    txtpath = flimpath[:-5]+".txt"
+    txtpath = os.path.splitext(flimpath)[0]+".txt"
     z = -99
     ylist, xlist = [], []
     with open(txtpath, 'r') as f:
@@ -42,7 +42,7 @@ def read_multiple_uncagingpos(flimpath):
         return z, ylist, xlist
 
 def read_dendriteinfo(flimpath):
-    txtpath = flimpath[:-5]+"dendrite.txt"    
+    txtpath = os.path.splitext(flimpath)[0]+"dendrite.txt"    
     direction_list, orientation_list, dendylist, dendxlist = [], [], [], []
     with open(txtpath, 'r') as f:
         num_pos = int(f.readline())
@@ -73,7 +73,7 @@ def dend_props_forEach(flimpath, ch1or2=1,
     maxproj = np.max(ZYXarray[z-1:z+2,:,:], axis = 0)
     ylist = list(map(int,ylist))
     xlist = list(map(int,xlist))
-    txtpath = flimpath[:-5]+"dendrite.txt"
+    txtpath = os.path.splitext(flimpath)[0]+"dendrite.txt"
     with open(txtpath, 'w') as f:
         f.write(str(len(ylist))+'\n')
         for y, x in zip(ylist, xlist):
@@ -133,7 +133,7 @@ def dend_props_forEach(flimpath, ch1or2=1,
         plt.axis('off')
         plt.title("Uncaging position")
             
-        plt.savefig(flimpath[:-5]+".png", dpi=150, bbox_inches='tight')
+        plt.savefig(os.path.splitext(flimpath)[0]+".png", dpi=150, bbox_inches='tight')
         
         os.makedirs(flimpath[:-8],exist_ok=True)
         savepath = os.path.join(flimpath[:-8],"uncagingpos.png")
@@ -940,7 +940,7 @@ def multiple_uncaging_click_savetext(flimpath, ch1or2=1):
     
     num_pos = len(ylist)
     
-    txtpath = flimpath[:-5]+".txt"
+    txtpath = os.path.splitext(flimpath)[0]+".txt"
     
     with open(txtpath, 'w') as f:
         f.write(str(num_pos)+'\n')
@@ -2498,7 +2498,7 @@ def check_spinepos_analyzer():
     ylist = list(map(int,ylist))
     xlist = list(map(int,xlist))
     
-    txtpath = flimpath[:-5]+"dendrite.txt"
+    txtpath = os.path.splitext(flimpath)[0]+"dendrite.txt"
     direction_list, orientation_list, dendylist, dendxlist  = read_dendriteinfo(flimpath)
     
     dend_center_x = np.array(dendxlist) + np.array(xlist)

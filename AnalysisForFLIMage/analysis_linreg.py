@@ -39,7 +39,7 @@ for each_pow in df['pow_mw_round'].unique():
     plt.xlabel("Target depth (\u03BCm)")
     plt.title(f"Uncaging power: {each_pow} mW")
     
-    savepath = csvpath[:-5]+f"linreg_shaft_pow_{each_pow}.png"
+    savepath = os.path.splitext(csvpath)[0]+f"linreg_shaft_pow_{each_pow}.png"
     
     plt.savefig(savepath, dpi = 150, bbox_inches = "tight")
     plt.show()
@@ -56,7 +56,7 @@ for each_pow in df['pow_mw_round'].unique():
     plt.xlabel("Target depth (\u03BCm)")
     plt.title(f"Uncaging power: {each_pow} mW")
     
-    savepath = csvpath[:-5]+f"linreg_spine_pow_{each_pow}.png"
+    savepath = os.path.splitext(csvpath)[0]+f"linreg_spine_pow_{each_pow}.png"
     # savepath = csvpath[:-5]+f"linreg_shaft_pow_{each_pow}.png"
     
     plt.savefig(savepath, dpi = 150, bbox_inches = "tight")
@@ -108,7 +108,7 @@ for i, each_pow in enumerate(unique_powers):
     axes[0, i].set_xlabel("")
 
 plt.tight_layout()
-savepath = csvpath[:-5] + "_tiled_plot.png"
+savepath = os.path.splitext(csvpath)[0] + "_tiled_plot.png"
 plt.savefig(savepath, dpi=150, bbox_inches="tight")
 plt.show()
 

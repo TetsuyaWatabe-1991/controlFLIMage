@@ -63,6 +63,14 @@ SAVE_TIF_TF = True
 TIFF_WITH_UNCAGING_SUFFIX = "_with_uncaging"
 ROI_MASK_RAW_SUFFIX = "_roi_mask_raw"
 ROI_TYPES = ["Spine", "DendriticShaft", "Background"]
+# Background measurement in quantify_intensity_from_flim:
+#   "roi"      : mean inside the Background ROI mask (legacy)
+#   "mip_p20"  : BACKGROUND_PERCENTILE of the whole 2D image that is quantified
+#                (pre/post: the per-frame z-window MIP; uncaging: the single frame).
+#                No Background ROI is needed; any Background mask is ignored.
+BACKGROUND_MODE_ROI = "roi"
+BACKGROUND_MODE_MIP_P20 = "mip_p20"
+BACKGROUND_PERCENTILE = 20.0
 
 # Default ROI geometry (same as calc_spine_dend_GCaMP in flimage_graph_func.py)
 DEFAULT_CIRCLE_RADIUS = 3
@@ -181,6 +189,108 @@ def _load_uncaging_full(
     else:
         frames = [tyx[t, 0].copy() for t in range(T)]
     return frames
+
+
+# Per-frame z correction of pre/post Z-projections (GUI TIFF and FLIM quantification).
+# The uncaging plane is z_relative_step_nth in the raw last-pre stack. Registration
+# convention: aligned = shift(raw, +shift), so the same tissue plane in raw frame f is
+#     z_center_f = z_relative_step_nth + round(shift_z[last pre] - shift_z[f]).
+# The window per frame is written to <tiff>_frame_info.csv (z_from, z_to, z_mode) and
+# quantify_intensity_from_flim reads it back, so GUI and quantification use the same
+# planes. Set env FLIM_ROI_PER_FRAME_Z=0 to reproduce the former fixed window.
+Z_MODE_PER_FRAME = "per_frame_v1"
+Z_MODE_FIXED = "fixed"
+
+
+def per_frame_z_enabled() -> bool:
+    return os.environ.get("FLIM_ROI_PER_FRAME_Z", "1").strip() not in ("0", "false", "False")
+
+
+def z_window(center: int, z_plus_minus: int, n_z: int) -> tuple[int, int]:
+    """[z_from, z_to) around center, clipped like the former fixed window."""
+    z_from = max(0, min(int(center) - z_plus_minus, n_z - 1))
+    z_to = min(n_z, int(center) + z_plus_minus + 1)
+    return z_from, max(z_to, z_from + 1)
+
+
+def uncaging_plane_raw_last_pre(each_set_df: pd.DataFrame) -> int | None:
+    """Uncaging slice index in the raw last-pre stack (None if unknown)."""
+    unc = each_set_df[each_set_df["phase"] == "unc"]
+    if len(unc) and "z_relative_step_nth" in unc.columns:
+        v = pd.to_numeric(unc["z_relative_step_nth"], errors="coerce").iloc[0]
+        if np.isfinite(v) and v >= 0:
+            return int(v)
+    return None
+
+
+def per_frame_z_centers(
+    each_set_df: pd.DataFrame,
+    shift_z_of: dict[str, float],
+    fallback_center: int,
+) -> tuple[dict[str, int], str]:
+    """z center per pre/post file path, and the z_mode used.
+
+    shift_z_of: file_path -> global shift_z of the same registration as the XY shifts.
+    Falls back to the fixed centre (former behaviour) if disabled or data are missing.
+    """
+    rows = each_set_df[each_set_df["phase"].isin(["pre", "post"])]
+    fixed = {str(fp): int(fallback_center) for fp in rows["file_path"]}
+    if not per_frame_z_enabled():
+        return fixed, Z_MODE_FIXED
+    z_rel = uncaging_plane_raw_last_pre(each_set_df)
+    pre = each_set_df[each_set_df["phase"] == "pre"].sort_values("nth_omit_induction")
+    if z_rel is None or len(pre) == 0:
+        return fixed, Z_MODE_FIXED
+    last_fp = str(pre["file_path"].iloc[-1])
+    if last_fp not in shift_z_of or any(str(fp) not in shift_z_of for fp in fixed):
+        return fixed, Z_MODE_FIXED
+    s_last = float(shift_z_of[last_fp])
+    return {fp: z_rel + int(round(s_last - float(shift_z_of[fp]))) for fp in fixed}, Z_MODE_PER_FRAME
+
+
+def _frame_info_z_windows(frame_info_path: str) -> dict[tuple[str, str], tuple[int, int]] | None:
+    """(phase, lower-case filename) -> (z_from, z_to) of pre/post frames; None for old files."""
+    if not os.path.exists(frame_info_path):
+        return None
+    try:
+        fi = pd.read_csv(frame_info_path)
+    except Exception:
+        return None
+    if "z_mode" not in fi.columns:
+        return None
+    fi = fi[fi["phase"].isin(["pre", "post"])]
+    return {(str(r.phase), str(r.filename).lower()): (int(r.z_from), int(r.z_to)) for r in fi.itertuples()}
+
+
+def _frame_info_z_matches(frame_info_path: str, name_z: list) -> bool:
+    """True if an existing frame_info.csv has the same z window for every pre/post frame."""
+    if not os.path.exists(frame_info_path):
+        return False
+    try:
+        fi = pd.read_csv(frame_info_path)
+    except Exception:
+        return False
+    if "z_mode" not in fi.columns:
+        return False
+    fi = fi[fi["phase"].isin(["pre", "post"])]
+    old = [(str(r.filename), int(r.z_from), int(r.z_to)) for r in fi.itertuples()]
+    new = [(str(n), int(z[0]), int(z[1])) for n, z in name_z]
+    return old == new
+
+
+def load_photon_counts_cached(file_path: str):
+    """Photon counts summed over time bins (pages, fastZ, C, Y, X) and header iminfo.
+
+    Uses the fast_mode intensity cache (tif/_fast_intensity, written when the full-size
+    stacks are built); decodes intensity-only when the cache is missing. The cache holds
+    12 * sum / nAveFrame, so counts = cache * nAveFrame / 12, rounded (counts are integers).
+    Same numbers as np.sum(FileReader image, axis=-1), without decoding the time bins.
+    """
+    from flim_fast_io import load_flim_intensity
+
+    intensity, iminfo = load_flim_intensity(file_path, use_cache=True)
+    n_ave = int(getattr(iminfo.State.Acq, "nAveFrame", 1) or 1)
+    return np.rint(np.asarray(intensity, dtype=np.float64) * n_ave / 12.0), iminfo
 
 
 def _load_flim_zproj_full(
@@ -567,8 +677,13 @@ def _rebuild_one_set_full_size(
     error_log: list[str] | None,
     fast_mode: bool = False,
     intensity_cache: dict[str, np.ndarray] | None = None,
+    runtime_shift_z_map: dict[str, float] | None = None,
 ) -> None:
-    """Build full-size pre/unc/post TIFFs for one set. Mutates combined_df in place."""
+    """Build full-size pre/unc/post TIFFs for one set. Mutates combined_df in place.
+
+    Pre/post Z-projections use a per-frame z window (per_frame_z_centers); the window
+    of every frame is written to frame_info.csv for quantify_intensity_from_flim.
+    """
     uncaging_rows = each_set_df[each_set_df["phase"] == "unc"]
     if len(uncaging_rows) == 0:
         return
@@ -582,16 +697,40 @@ def _rebuild_one_set_full_size(
             reason="uncaging file not found",
         )
         return
+    # Shifts registered to the set's Pre 1 (pre1_alignment.py) are in the rows; a runtime
+    # registration of the group (non-fast mode) must not replace them.
+    if "align_reference" in each_set_df.columns and (each_set_df["align_reference"] == "pre1").any():
+        runtime_shift_map = {}
+        runtime_shift_z_map = None
     corrected_uncaging_z = int(each_set_df["corrected_uncaging_z"].values[0])
     z_from = max(0, min(corrected_uncaging_z - z_plus_minus, Z_full - 1))
     z_to = min(Z_full, corrected_uncaging_z + z_plus_minus + 1)
     z_to = max(z_to, z_from + 1)
+
+    shift_z_of: dict[str, float] = {}
+    for _, row in each_set_df[each_set_df["phase"].isin(["pre", "post"])].iterrows():
+        fp = str(row["file_path"])
+        if runtime_shift_z_map is not None and fp in runtime_shift_z_map:
+            shift_z_of[fp] = float(runtime_shift_z_map[fp])
+        else:
+            v = pd.to_numeric(pd.Series([row.get("shift_z", np.nan)]), errors="coerce").iloc[0]
+            if np.isfinite(v):
+                shift_z_of[fp] = float(v)
+    z_center_of, z_mode = per_frame_z_centers(each_set_df, shift_z_of, corrected_uncaging_z)
+    if z_mode != Z_MODE_PER_FRAME:
+        print(f"  Set {each_set_label}: per-frame z correction unavailable, fixed z window used")
+
+    def _frame_z(fp_: str) -> tuple[int, int, int, float]:
+        c = z_center_of.get(str(fp_), corrected_uncaging_z)
+        zf, zt = z_window(c, z_plus_minus, Z_full)
+        return zf, zt, c, shift_z_of.get(str(fp_), np.nan)
 
     pre_list = []
     pre_raw_list = []
     pre_filenames = []
     pre_file_paths = []
     pre_shifts = []
+    pre_z: list[tuple[int, int, int, float]] = []
     for _, row in each_set_df[each_set_df["phase"] == "pre"].sort_values("nth_omit_induction").iterrows():
         fp = row["file_path"]
         zproj = None
@@ -614,6 +753,7 @@ def _rebuild_one_set_full_size(
             pre_list.append(zproj)
         pre_filenames.append(os.path.basename(fp))
         pre_file_paths.append(fp)
+        pre_z.append(_frame_z(fp))
         if fp in runtime_shift_map:
             pre_shifts.append(runtime_shift_map[fp])
         else:
@@ -623,8 +763,8 @@ def _rebuild_one_set_full_size(
                 _load_flim_zproj_full(
                     fp,
                     ch,
-                    z_from,
-                    z_to,
+                    pre_z[-1][0],
+                    pre_z[-1][1],
                     fast_mode=fast_mode,
                     intensity_cache=intensity_cache,
                 )
@@ -636,6 +776,7 @@ def _rebuild_one_set_full_size(
                 pre_filenames.pop()
                 pre_file_paths.pop()
                 pre_shifts.pop()
+                pre_z.pop()
                 continue
     pre_raw_stack = np.stack(pre_raw_list, axis=0) if pre_raw_list else np.empty((0, Y_full, X_full), dtype=np.float32)
 
@@ -644,6 +785,7 @@ def _rebuild_one_set_full_size(
     post_filenames = []
     post_file_paths = []
     post_shifts = []
+    post_z: list[tuple[int, int, int, float]] = []
     for _, row in each_set_df[each_set_df["phase"] == "post"].sort_values("nth_omit_induction").iterrows():
         fp = row["file_path"]
         zproj = None
@@ -666,6 +808,7 @@ def _rebuild_one_set_full_size(
             post_list.append(zproj)
         post_filenames.append(os.path.basename(fp))
         post_file_paths.append(fp)
+        post_z.append(_frame_z(fp))
         if fp in runtime_shift_map:
             post_shifts.append(runtime_shift_map[fp])
         else:
@@ -675,8 +818,8 @@ def _rebuild_one_set_full_size(
                 _load_flim_zproj_full(
                     fp,
                     ch,
-                    z_from,
-                    z_to,
+                    post_z[-1][0],
+                    post_z[-1][1],
                     fast_mode=fast_mode,
                     intensity_cache=intensity_cache,
                 )
@@ -688,6 +831,7 @@ def _rebuild_one_set_full_size(
                 post_filenames.pop()
                 post_file_paths.pop()
                 post_shifts.pop()
+                post_z.pop()
                 continue
     post_raw_stack = np.stack(post_raw_list, axis=0) if post_raw_list else np.empty((0, Y_full, X_full), dtype=np.float32)
 
@@ -774,7 +918,15 @@ def _rebuild_one_set_full_size(
     new_stack = np.concatenate([pre_stack, unc_stack, post_stack], axis=0)
     base_name = f"{each_group}_{each_set_label}_after_align_full"
     new_tiff_path = os.path.join(tif_savefolder, base_name + ".tif")
-    if not skip_tiff_if_exists or not os.path.exists(new_tiff_path):
+    tiff_z_stale = False
+    if skip_tiff_if_exists and os.path.exists(new_tiff_path):
+        tiff_z_stale = not _frame_info_z_matches(
+            os.path.join(tif_savefolder, base_name + "_frame_info.csv"),
+            list(zip(pre_filenames, pre_z)) + list(zip(post_filenames, post_z)),
+        )
+        if tiff_z_stale:
+            print(f"  Set {each_set_label}: existing TIFF has other z windows; rewriting it")
+    if not skip_tiff_if_exists or not os.path.exists(new_tiff_path) or tiff_z_stale:
         tifffile.imwrite(new_tiff_path, new_stack.astype(np.float32))
         print(
             f"  Set {each_set_label}: saved full-size {base_name}.tif "
@@ -822,8 +974,12 @@ def _rebuild_one_set_full_size(
                 "filename": pre_filenames[i] if i < len(pre_filenames) else "",
                 "phase": "pre",
                 "acq_time_str": acq_str,
-                "z_from": z_from,
-                "z_to": z_to,
+                "z_from": pre_z[i][0] if i < len(pre_z) else z_from,
+                "z_to": pre_z[i][1] if i < len(pre_z) else z_to,
+                "z_center": pre_z[i][2] if i < len(pre_z) else corrected_uncaging_z,
+                "n_z": Z_full,
+                "shift_z": pre_z[i][3] if i < len(pre_z) else np.nan,
+                "z_mode": z_mode,
                 "shift_y": sy,
                 "shift_x": sx,
             }
@@ -842,6 +998,10 @@ def _rebuild_one_set_full_size(
                 "acq_time_str": acq_str,
                 "z_from": np.nan,
                 "z_to": np.nan,
+                "z_center": np.nan,
+                "n_z": Z_full,
+                "shift_z": np.nan,
+                "z_mode": z_mode,
                 "shift_y": unc_drift_y,
                 "shift_x": unc_drift_x,
             }
@@ -857,8 +1017,12 @@ def _rebuild_one_set_full_size(
                 "filename": post_filenames[i] if i < len(post_filenames) else "",
                 "phase": "post",
                 "acq_time_str": acq_str,
-                "z_from": z_from,
-                "z_to": z_to,
+                "z_from": post_z[i][0] if i < len(post_z) else z_from,
+                "z_to": post_z[i][1] if i < len(post_z) else z_to,
+                "z_center": post_z[i][2] if i < len(post_z) else corrected_uncaging_z,
+                "n_z": Z_full,
+                "shift_z": post_z[i][3] if i < len(post_z) else np.nan,
+                "z_mode": z_mode,
                 "shift_y": sy,
                 "shift_x": sx,
             }
@@ -925,6 +1089,15 @@ def rebuild_tiff_full_size_for_roi(
 
         for each_group in each_filegroup_df["group"].unique():
             each_group_df = each_filegroup_df[each_filegroup_df["group"] == each_group]
+            if "error_message" in each_group_df.columns:
+                skipped_msgs = [
+                    str(msg)
+                    for msg in each_group_df["error_message"].dropna().unique()
+                    if str(msg).startswith("group skipped:")
+                ]
+                if skipped_msgs:
+                    print(f"  SKIP: {each_group}: {skipped_msgs[0]}")
+                    continue
             pre_post_df = each_group_df[each_group_df["phase"].isin(["pre", "post"])].sort_values("nth_omit_induction")
             filelist = pre_post_df["file_path"].tolist()
             if len(filelist) == 0:
@@ -979,6 +1152,7 @@ def rebuild_tiff_full_size_for_roi(
                     file_path_to_array_idx = {}
                     n_aligned = 0
                     runtime_shift_map = {}
+                    runtime_shift_z_map = {}
                     for path in kept_filelist:
                         rows = each_group_df[each_group_df["file_path"] == path]
                         if len(rows) == 0:
@@ -988,6 +1162,9 @@ def rebuild_tiff_full_size_for_roi(
                             float(row.get("shift_y", 0) or 0),
                             float(row.get("shift_x", 0) or 0),
                         )
+                        sz = pd.to_numeric(pd.Series([row.get("shift_z", np.nan)]), errors="coerce").iloc[0]
+                        if np.isfinite(sz):
+                            runtime_shift_z_map[path] = float(sz)
                 else:
                     Aligned_4d_array, shifts, _ = load_and_align_data(
                         kept_filelist, ch=ch - 1
@@ -998,6 +1175,7 @@ def rebuild_tiff_full_size_for_roi(
                     }
                     n_aligned = int(Aligned_4d_array.shape[0])
                     runtime_shift_map = {}
+                    runtime_shift_z_map = {}
                     try:
                         for i, path in enumerate(kept_filelist):
                             if i < len(shifts):
@@ -1005,8 +1183,11 @@ def rebuild_tiff_full_size_for_roi(
                                     float(shifts[i][1]) if len(shifts[i]) > 1 else 0.0,
                                     float(shifts[i][2]) if len(shifts[i]) > 2 else 0.0,
                                 )
+                                if len(shifts[i]) > 2:
+                                    runtime_shift_z_map[path] = float(shifts[i][0])
                     except Exception:
                         runtime_shift_map = {}
+                        runtime_shift_z_map = {}
             except Exception as e:
                 print(f"  Group {each_group}: load_and_align_data failed: {e}")
                 record_roi_error(
@@ -1042,6 +1223,7 @@ def rebuild_tiff_full_size_for_roi(
                         error_log=error_log,
                         fast_mode=fast_mode,
                         intensity_cache=intensity_cache,
+                        runtime_shift_z_map=runtime_shift_z_map,
                     )
                 except Exception as e:
                     record_roi_error(
@@ -1379,8 +1561,10 @@ def _integer_quant_shifts(
     return out, sources
 
 
-def save_drift_corrected_roi_masks(combined_df: pd.DataFrame):
+def save_drift_corrected_roi_masks(combined_df: pd.DataFrame, roi_types: list[str] | None = None):
     """
+    roi_types: ROI types to convert (default ROI_TYPES).
+
     For each set with after_align_full_save_path, load aligned ROI masks (Type A),
     apply inverse integer drift per frame so ROI fits pre-drift FLIM, save as
     Type B (*_roi_mask_raw.tif). Use Type B for quantification from FLIM.
@@ -1508,7 +1692,7 @@ def save_drift_corrected_roi_masks(combined_df: pd.DataFrame):
                     after_stack, before_stack, n_total, fallback_shifts
                 )
                 debug_rows = []
-                for roi_type in ROI_TYPES:
+                for roi_type in (roi_types or ROI_TYPES):
                     roi_path = os.path.join(tiff_dir, f"{tiff_basename}_{roi_type}_roi_mask.tif")
                     if not os.path.exists(roi_path):
                         continue
@@ -1585,18 +1769,30 @@ def _row_from_flim_data(
     photon_threshold: int,
     total_photon_threshold: int,
     skip_lifetime_analysis: bool = False,
+    z_window_override: tuple[int, int] | None = None,
+    background_mode: str = BACKGROUND_MODE_ROI,
 ) -> dict:
     """
     Build one quantification row from FLIM imagearray (with bins).
+    z_window_override: [z_from, z_to) of this pre/post frame from frame_info.csv (the
+    window used for the GUI TIFF); None keeps the fixed corrected_uncaging_z window.
+    background_mode: BACKGROUND_MODE_ROI or BACKGROUND_MODE_MIP_P20 (see ROI_TYPES).
     Pre/post: Z-proj over z_from:z_to; lifetime = fit on histogram summed over Z and ROI.
     Uncaging: single frame at frame_idx; lifetime = fit on histogram over ROI.
     When skip_lifetime_analysis is True, only intensity is computed; total_photon and lifetime are NaN.
+    imagearray: FLIM array (pages, fastZ, C, Y, X, bins), or photon counts already summed
+    over bins (pages, fastZ, C, Y, X; intensity-only, needs skip_lifetime_analysis).
     """
     n_ave_frame = int(getattr(iminfo.State.Acq, "nAveFrame", 1))
     # intensity_raw = (12 * np.sum(imagearray, axis=-1)).astype(np.float64)
     # 20260323 probably, this is not required anymore or rather incorrect.
     # originally this was used to avoid dividing small value by 12 in the intensity calculation.
-    intensity_raw = (np.sum(imagearray, axis=-1)).astype(np.float64)
+    if imagearray.ndim == 5:
+        if not skip_lifetime_analysis:
+            raise ValueError("lifetime analysis needs the FLIM array with time bins")
+        intensity_raw = np.asarray(imagearray, dtype=np.float64)
+    else:
+        intensity_raw = (np.sum(imagearray, axis=-1)).astype(np.float64)
 
     axis0_len, _, C, H, W = intensity_raw.shape
     if not skip_lifetime_analysis:
@@ -1604,9 +1800,13 @@ def _row_from_flim_data(
         ps_per_unit = (10 ** 12) / sync_rate / n_bins
 
     if phase in ("pre", "post"):
-        z_from = max(0, min(corrected_uncaging_z - z_plus_minus, axis0_len - 1))
-        z_to = min(axis0_len, corrected_uncaging_z + z_plus_minus + 1)
-        z_to = max(z_to, z_from + 1)
+        if z_window_override is not None:
+            z_from = max(0, min(int(z_window_override[0]), axis0_len - 1))
+            z_to = max(min(axis0_len, int(z_window_override[1])), z_from + 1)
+        else:
+            z_from = max(0, min(corrected_uncaging_z - z_plus_minus, axis0_len - 1))
+            z_to = min(axis0_len, corrected_uncaging_z + z_plus_minus + 1)
+            z_to = max(z_to, z_from + 1)
         n_z_slices_used = z_to - z_from
     else:
         n_z_slices_used = 1
@@ -1639,10 +1839,14 @@ def _row_from_flim_data(
             img = intensity_raw[frame_idx, 0, ch_idx, :, :].astype(np.float32)
             if not skip_lifetime_analysis:
                 frame_bins = np.array(imagearray[frame_idx, 0, ch_idx, :, :, :], dtype=np.float64)
+        if background_mode == BACKGROUND_MODE_MIP_P20:
+            row[f"Background_{ch_name}_intensity"] = float(np.percentile(img, BACKGROUND_PERCENTILE))
 
         if stack_frame_idx >= roi_raw[list(roi_raw.keys())[0]].shape[0]:
             continue
         for roi_type in roi_raw:
+            if roi_type == "Background" and background_mode == BACKGROUND_MODE_MIP_P20:
+                continue
             roi = roi_raw[roi_type][stack_frame_idx]
             if roi.shape[0] != img.shape[0] or roi.shape[1] != img.shape[1]:
                 continue
@@ -1691,9 +1895,16 @@ def quantify_intensity_from_flim(
     photon_threshold: int = 15,
     total_photon_threshold: int = 1000,
     skip_lifetime_analysis: bool = False,
+    background_mode: str = BACKGROUND_MODE_ROI,
+    use_intensity_cache: bool = True,
 ):
     """
     Quantify intensity and lifetime from FLIM. Per FLIM file, per frame, per Ch, per ROI.
+    use_intensity_cache: with skip_lifetime_analysis, read photon counts from the
+    fast_mode intensity cache (load_photon_counts_cached; same values, no time-bin
+    decode) instead of decoding each .flim. Ignored when lifetime is analysed.
+    background_mode: BACKGROUND_MODE_ROI (Background ROI mean, legacy) or
+    BACKGROUND_MODE_MIP_P20 (20th percentile of the whole quantified 2D image; no ROI).
     Pre/post: Z-proj with z_plus_minus; time_sec=0. Uncaging: per-frame time_sec from FLIM metadata.
     Output CSV includes intensity, time_sec, total_photon, lifetime (Spine/DendriticShaft).
     When skip_lifetime_analysis is True, lifetime fitting is skipped and total_photon/lifetime are NaN.
@@ -1757,6 +1968,8 @@ def quantify_intensity_from_flim(
                 roi_raw = {}
                 unc_only = n_pre == 0 and n_post == 0
                 for roi_type in ROI_TYPES:
+                    if roi_type == "Background" and background_mode == BACKGROUND_MODE_MIP_P20:
+                        continue
                     raw_path = os.path.join(tiff_dir, f"{tiff_basename}_{roi_type}{ROI_MASK_RAW_SUFFIX}.tif")
                     if not os.path.exists(raw_path) and unc_only:
                         raw_path = os.path.join(tiff_dir, f"{tiff_basename}_{roi_type}_roi_mask.tif")
@@ -1770,17 +1983,40 @@ def quantify_intensity_from_flim(
                         roi_raw[roi_type] = roi_raw[roi_type][np.newaxis, ...]
                 if not roi_raw:
                     continue
+                z_by_frame = _frame_info_z_windows(
+                    os.path.join(tiff_dir, f"{tiff_basename}_frame_info.csv")
+                )
+                if z_by_frame is None and (n_pre + n_post) > 0:
+                    print(
+                        f"  Set {each_group}_{each_set_label}: frame_info.csv has no per-frame z; "
+                        "fixed z window (as in the GUI TIFF)"
+                    )
+
+                def _load_for_quant(file_path: str):
+                    if skip_lifetime_analysis and use_intensity_cache:
+                        return load_photon_counts_cached(file_path)
+                    info = FileReader()
+                    info.read_imageFile(file_path, True)
+                    return np.array(info.image), info
 
                 def _row_from_file(file_path: str, frame_idx: int, stack_frame_idx: int, phase: str, time_sec: float, acq_time_str: str = ""):
-                    iminfo = FileReader()
-                    iminfo.read_imageFile(file_path, True)
-                    imagearray = np.array(iminfo.image)
+                    imagearray, iminfo = _load_for_quant(file_path)
                     if acq_time_str == "" and iminfo.acqTime and frame_idx < len(iminfo.acqTime):
                         acq_time_str = str(iminfo.acqTime[frame_idx]).strip()
+                    zw = None
+                    if z_by_frame is not None:
+                        key = (phase, os.path.basename(str(file_path)).lower())
+                        if key not in z_by_frame:
+                            raise RuntimeError(
+                                f"{os.path.basename(str(file_path))} ({phase}) is not in frame_info.csv of "
+                                f"{tiff_basename}; rebuild the full-size stacks"
+                            )
+                        zw = z_by_frame[key]
                     return _row_from_flim_data(
                         imagearray, iminfo, file_path, frame_idx, stack_frame_idx, phase, time_sec, acq_time_str,
                         roi_raw, corrected_uncaging_z, z_plus_minus, each_set_label, each_group,
                         fitter, sync_rate, photon_threshold, total_photon_threshold, skip_lifetime_analysis,
+                        z_window_override=zw, background_mode=background_mode,
                     )
 
                 pre_df = each_set_df[each_set_df["phase"] == "pre"].sort_values("nth_omit_induction")
@@ -1798,9 +2034,7 @@ def quantify_intensity_from_flim(
                 if len(unc_df) > 0:
                     unc_path = unc_df.iloc[0]["file_path"]
                     if os.path.exists(unc_path):
-                        iminfo_unc = FileReader()
-                        iminfo_unc.read_imageFile(unc_path, True)
-                        imagearray_unc = np.array(iminfo_unc.image)
+                        imagearray_unc, iminfo_unc = _load_for_quant(unc_path)
                         T = imagearray_unc.shape[0]
                         frame_times = _get_frame_times_from_flim(unc_path)
                         if len(frame_times) != T:
@@ -1813,6 +2047,7 @@ def quantify_intensity_from_flim(
                                 imagearray_unc, iminfo_unc, unc_path, t, n_pre + t, "unc", time_sec, acq_str,
                                 roi_raw, corrected_uncaging_z, z_plus_minus, each_set_label, each_group,
                                 fitter, sync_rate, photon_threshold, total_photon_threshold, skip_lifetime_analysis,
+                                background_mode=background_mode,
                             ))
                             processed += 1
                             if total_items > 0 and 100 * processed >= total_items * next_pct:

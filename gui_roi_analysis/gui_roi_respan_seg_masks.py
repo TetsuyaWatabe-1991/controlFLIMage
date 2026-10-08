@@ -34,6 +34,7 @@ from gui_integration import first_processing_for_flim_files  # noqa: E402
 from PyQt5.QtWidgets import QApplication  # noqa: E402
 from file_selection_gui_tiff_only import launch_file_selection_gui_tiff_only  # noqa: E402
 from gui_roi_fast_simple import (  # noqa: E402
+    BACKGROUND_MODE_MIP_P20,
     ROI_MASK_RAW_SUFFIX,
     ROI_TYPES,
     print_roi_analysis_errors,
@@ -53,6 +54,9 @@ GLOBAL_ALIGN_METHOD = POST_ACQUISITION_ALIGN_METHOD  # "roi_adjacent"
 LOCAL_ALIGN_MODE = "adjacent"  # respan_spine_quant.LocalAlignMode.ADJACENT
 
 SEG_MASK_SUBDIR = "seg_masks"
+# ROIs drawn / pre-filled in this workflow. Background is not an ROI here: it is the
+# 20th percentile of the quantified image (BACKGROUND_MODE_MIP_P20).
+RESPAN_ROI_TYPES = ["Spine", "DendriticShaft"]
 SEG_MASK_FILES = {
     "Spine": "{stem}_spine_outline_mask.tif",
     "DendriticShaft": "{stem}_shaft_fit_radius_mask.tif",
@@ -397,7 +401,8 @@ def create_roi_masks_from_seg_masks(
 ) -> None:
     """
     Write Type-A ROI masks (*_roi_mask.tif) from seg_masks for every set.
-    Spine / DendriticShaft / Background come from imaging-time seg_masks.
+    Spine / DendriticShaft come from imaging-time seg_masks (RESPAN_ROI_TYPES).
+    The Background seg mask is not used (background = image 20th percentile).
 
     When skip_if_roi_mask_exists is True, existing *_roi_mask.tif files are left
     unchanged so manually saved ROIs survive workflow re-runs.
@@ -417,7 +422,7 @@ def create_roi_masks_from_seg_masks(
         print(f"create_roi_masks_from_seg_masks: missing columns {missing}")
         return
 
-    print("Creating ROI masks from respan seg_masks (Spine, DendriticShaft, Background)...")
+    print("Creating ROI masks from respan seg_masks (Spine, DendriticShaft)...")
     for filepath_wo in combined_df["filepath_without_number"].unique():
         filegroup = combined_df[combined_df["filepath_without_number"] == filepath_wo]
         highmag_folder = highmag_savefolder_from_filepath_without_number(filepath_wo)
@@ -442,9 +447,12 @@ def create_roi_masks_from_seg_masks(
                     print(f"  Set {group}_{set_label}: no uncaging log match, skip")
                     continue
 
-                mask_paths = seg_mask_paths(highmag_folder, record.spine_stem)
-                if require_all_three and len(mask_paths) < len(SEG_MASK_FILES):
-                    missing_types = set(SEG_MASK_FILES) - set(mask_paths)
+                mask_paths = {
+                    k: v for k, v in seg_mask_paths(highmag_folder, record.spine_stem).items()
+                    if k in RESPAN_ROI_TYPES
+                }
+                if require_all_three and len(mask_paths) < len(RESPAN_ROI_TYPES):
+                    missing_types = set(RESPAN_ROI_TYPES) - set(mask_paths)
                     print(
                         f"  Set {group}_{set_label}: incomplete seg_masks "
                         f"for {record.spine_stem}, missing {missing_types}, skip"
@@ -462,7 +470,7 @@ def create_roi_masks_from_seg_masks(
                 tiff_dir = os.path.dirname(tiff_path)
                 base_name = os.path.splitext(os.path.basename(tiff_path))[0]
 
-                for roi_type in ROI_TYPES:
+                for roi_type in RESPAN_ROI_TYPES:
                     if roi_type not in mask_paths:
                         continue
                     mask_2d = _load_mask_2d(mask_paths[roi_type])
@@ -487,41 +495,200 @@ def create_roi_masks_from_seg_masks(
     print("create_roi_masks_from_seg_masks: done.")
 
 
+def uncaging_xy_in_tiff(set_df: pd.DataFrame, tiff_path: str) -> tuple[float, float] | None:
+    """Uncaging position on the uncaging frames of the GUI TIFF (after_align_full pixels).
+
+    The header position (center_x/y = State.Uncaging.Position) is where the laser was
+    on the raw uncaging image; FLIMage draws its cross there. The GUI TIFF shows the
+    raw uncaging frames moved by unc_drift (frame_info "uncaging" rows), so the marker
+    is moved by the same shift and stays on the same tissue as in FLIMage. It is not
+    corrected towards the spine: if the acquisition aimed off the spine, it shows so.
+    """
+    unc = set_df[set_df["phase"] == "unc"]
+    if not len(unc) or not {"center_x", "center_y"}.issubset(unc.columns):
+        return None
+    cx, cy = float(unc.center_x.iloc[0]), float(unc.center_y.iloc[0])
+    if not (np.isfinite(cx) and np.isfinite(cy)):
+        return None
+    sy = sx = None
+    fi_path = os.path.splitext(str(tiff_path))[0] + "_frame_info.csv"
+    if os.path.exists(fi_path):
+        fi = pd.read_csv(fi_path)
+        u = fi[fi["phase"].astype(str).str.lower().str.startswith("unc")]
+        if len(u) and pd.notna(u["shift_y"].iloc[0]) and pd.notna(u["shift_x"].iloc[0]):
+            sy, sx = float(u["shift_y"].iloc[0]), float(u["shift_x"].iloc[0])
+    if sy is None:
+        sy = float(pd.to_numeric(unc.get("unc_drift_y", 0), errors="coerce").fillna(0).iloc[0])
+        sx = float(pd.to_numeric(unc.get("unc_drift_x", 0), errors="coerce").fillna(0).iloc[0])
+    return cx + sx, cy + sy
+
+
+def set_uncaging_display_columns(combined_df: pd.DataFrame) -> pd.DataFrame:
+    """uncaging_display_x/y (ROI GUI marker) = uncaging_xy_in_tiff for every set with a TIFF.
+
+    Sets without frame_info / header position keep corrected_uncaging_x/y.
+    """
+    if "after_align_full_save_path" not in combined_df.columns:
+        return combined_df
+    full_mask = combined_df["after_align_full_save_path"].notna()
+    if "corrected_uncaging_x" in combined_df.columns:
+        combined_df.loc[full_mask, "uncaging_display_x"] = combined_df.loc[full_mask, "corrected_uncaging_x"]
+        combined_df.loc[full_mask, "uncaging_display_y"] = combined_df.loc[full_mask, "corrected_uncaging_y"]
+    key_cols = ["filepath_without_number", "group", "nth_set_label"]
+    for _, each_set_df in combined_df[full_mask].groupby(key_cols, sort=False):
+        xy = uncaging_xy_in_tiff(each_set_df, each_set_df["after_align_full_save_path"].iloc[0])
+        if xy is not None:
+            combined_df.loc[each_set_df.index, "uncaging_display_x"] = xy[0]
+            combined_df.loc[each_set_df.index, "uncaging_display_y"] = xy[1]
+    return combined_df
+
+
 def _prepare_combined_df_for_roi_gui(combined_df: pd.DataFrame) -> pd.DataFrame:
-    """Point after_align_save_path at full-size stacks and set uncaging display coords."""
+    """Point after_align_save_path at full-size stacks and set the uncaging marker
+    (uncaging_display_x/y = uncaging position on the uncaging frames, set_uncaging_display_columns)."""
     if "after_align_full_save_path" not in combined_df.columns:
         return combined_df
     combined_df = combined_df.copy()
     combined_df["after_align_save_path"] = combined_df[
         "after_align_full_save_path"
     ].fillna(combined_df.get("after_align_save_path"))
-    full_mask = combined_df["after_align_full_save_path"].notna()
-    if "corrected_uncaging_x" in combined_df.columns:
-        combined_df.loc[full_mask, "uncaging_display_x"] = combined_df.loc[
-            full_mask, "corrected_uncaging_x"
-        ]
-        combined_df.loc[full_mask, "uncaging_display_y"] = combined_df.loc[
-            full_mask, "corrected_uncaging_y"
-        ]
-    if all(
-        c in combined_df.columns
-        for c in ["center_x", "center_y", "unc_drift_x", "unc_drift_y"]
-    ):
-        key_cols = ["filepath_without_number", "group", "nth_set_label"]
-        for _, each_set_df in combined_df[full_mask].groupby(key_cols, sort=False):
-            unc_rows = each_set_df[each_set_df["phase"] == "unc"]
-            if len(unc_rows) == 0:
+    return set_uncaging_display_columns(combined_df)
+
+
+TIME_WINDOW_MIN = (-40.0, 50.0)
+_ORIG_SET_COL = "nth_set_label_before_time_window"
+_ORIG_PHASE_COL = "phase_before_time_window"
+
+
+def apply_time_window(
+    combined_df: pd.DataFrame, time_window_min: tuple[float, float] | None = TIME_WINDOW_MIN
+) -> tuple[pd.DataFrame, bool]:
+    """Remove frames outside a time window (minutes from uncaging) from their set.
+
+    A pre/post frame with relative_time_min outside [lo, hi] gets nth_set_label = -1 and
+    phase = "None", so it is not in the TIFF, the ROI GUI, the viewer or the
+    quantification. A set left without pre or post frames is removed as a whole.
+    The labels before the window are kept in *_before_time_window columns and restored
+    first, so a changed window (or None = no window) is applied to the original sets.
+
+    Returns:
+        (combined_df, changed): changed is True when set membership differs from the
+        input (the full-size TIFF stacks must then be rebuilt).
+    """
+    df = combined_df.copy()
+    if "relative_time_min" not in df.columns or "nth_set_label" not in df.columns:
+        return df, False
+    before = df[["nth_set_label", "phase"]].copy()
+    if _ORIG_SET_COL in df.columns:
+        keep = df[_ORIG_SET_COL].notna()
+        df.loc[keep, "nth_set_label"] = df.loc[keep, _ORIG_SET_COL]
+        df.loc[keep, "phase"] = df.loc[keep, _ORIG_PHASE_COL]
+    else:
+        df[_ORIG_SET_COL] = df["nth_set_label"]
+        df[_ORIG_PHASE_COL] = df["phase"]
+    df["excluded_time_window"] = False
+    if time_window_min is not None:
+        lo, hi = time_window_min
+        t = pd.to_numeric(df["relative_time_min"], errors="coerce")
+        in_set = (df["nth_set_label"] >= 0) & df["phase"].isin(["pre", "post"])
+        out = in_set & t.notna() & ((t < lo) | (t > hi))
+        df.loc[out, ["nth_set_label", "phase", "excluded_time_window"]] = [-1, "None", True]
+        for (g, s), sdf in df[df["nth_set_label"] >= 0].groupby(["group", "nth_set_label"]):
+            if not (sdf["phase"] == "pre").any() or not (sdf["phase"] == "post").any():
+                print(f"time window {lo:g} to {hi:g} min: {g} set {s:g} has no pre or post frame left; set removed")
+                df.loc[sdf.index, ["nth_set_label", "phase", "excluded_time_window"]] = [-1, "None", True]
+        n = int(df["excluded_time_window"].sum())
+        print(f"time window {lo:g} to {hi:g} min from uncaging: {n} frames removed from their sets")
+    changed = not (before["nth_set_label"].astype(float).equals(df["nth_set_label"].astype(float))
+                   and before["phase"].astype(str).equals(df["phase"].astype(str)))
+    return df, changed
+
+
+def _frame_keys(frame_info: pd.DataFrame) -> list[tuple[str, int]]:
+    """(file name, n-th frame of that file) per TIFF frame (an uncaging FLIM has many)."""
+    seen: dict[str, int] = {}
+    keys = []
+    for name in frame_info["filename"].astype(str).str.lower():
+        keys.append((name, seen.get(name, 0)))
+        seen[name] = seen.get(name, 0) + 1
+    return keys
+
+
+def snapshot_frame_info(combined_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """frame_info.csv of every existing full-size stack (before it is rebuilt)."""
+    out = {}
+    if "after_align_full_save_path" not in combined_df.columns:
+        return out
+    for tiff in combined_df["after_align_full_save_path"].dropna().astype(str).unique():
+        fi = os.path.splitext(tiff)[0] + "_frame_info.csv"
+        if os.path.exists(fi):
+            out[tiff] = pd.read_csv(fi)
+    return out
+
+
+def _applied_shifts(frame_info: pd.DataFrame) -> list[tuple[int, int]]:
+    """Integer (y, x) shift applied to each TIFF frame (frame_info shift_y/x)."""
+    if "shift_y" not in frame_info.columns or "shift_x" not in frame_info.columns:
+        return [(0, 0)] * len(frame_info)
+    sy = pd.to_numeric(frame_info["shift_y"], errors="coerce").fillna(0).round().astype(int)
+    sx = pd.to_numeric(frame_info["shift_x"], errors="coerce").fillna(0).round().astype(int)
+    return list(zip(sy.tolist(), sx.tolist()))
+
+
+def _translate(img: np.ndarray, dy: int, dx: int) -> np.ndarray:
+    """Move a 2D array by whole pixels (zero fill)."""
+    out = np.zeros_like(img)
+    h, w = img.shape
+    if abs(dy) >= h or abs(dx) >= w:
+        return out
+    out[max(0, dy):h + min(0, dy), max(0, dx):w + min(0, dx)] = \
+        img[max(0, -dy):h - max(0, dy), max(0, -dx):w - max(0, dx)]
+    return out
+
+
+def remap_roi_mask_stacks(old_frame_info: dict[str, pd.DataFrame]) -> int:
+    """Carry existing <base>_*_roi_mask*.tif over to the rebuilt stack.
+
+    Frames are matched by file name (a rebuild may remove frames, time window). ROI
+    masks in TIFF coordinates (<base>_<roi>_roi_mask.tif, also GUI edits) are also moved
+    by the change of the applied integer shift of that frame (new alignment, e.g. to
+    Pre 1), so they stay on the same tissue. *_raw masks (raw FLIM coordinates) are only
+    re-ordered. Frames not in the old stack get an empty mask. Returns the number of
+    mask files rewritten.
+    """
+    import glob
+
+    n_files = 0
+    for tiff, old in old_frame_info.items():
+        base = os.path.splitext(tiff)[0]
+        new_fi = base + "_frame_info.csv"
+        if not os.path.exists(new_fi):
+            continue
+        new = pd.read_csv(new_fi)
+        old_keys, new_keys = _frame_keys(old), _frame_keys(new)
+        old_sh, new_sh = _applied_shifts(old), _applied_shifts(new)
+        old_idx = {k: i for i, k in enumerate(old_keys)}
+        idx = [old_idx.get(k, -1) for k in new_keys]
+        moves = [(new_sh[j][0] - old_sh[i][0], new_sh[j][1] - old_sh[i][1]) if i >= 0 else (0, 0)
+                 for j, i in enumerate(idx)]
+        if old_keys == new_keys and not any(moves):
+            continue
+        for path in sorted(glob.glob(glob.escape(base) + "_*_roi_mask*.tif")):
+            stack = tifffile.imread(path)
+            if stack.ndim != 3 or stack.shape[0] != len(old_keys):
+                print(f"  mask not remapped (frame count {stack.shape[0]} != {len(old_keys)}): {path}")
                 continue
-            unc_row = unc_rows.iloc[0]
-            display_x = float(unc_row.get("center_x", 0) or 0) + float(
-                unc_row.get("unc_drift_x", 0) or 0
-            )
-            display_y = float(unc_row.get("center_y", 0) or 0) + float(
-                unc_row.get("unc_drift_y", 0) or 0
-            )
-            combined_df.loc[each_set_df.index, "uncaging_display_x"] = display_x
-            combined_df.loc[each_set_df.index, "uncaging_display_y"] = display_y
-    return combined_df
+            tiff_coords = not path.endswith("_raw.tif")
+            out = np.zeros((len(new_keys),) + stack.shape[1:], dtype=stack.dtype)
+            for j, i in enumerate(idx):
+                if i >= 0:
+                    out[j] = _translate(stack[i], *moves[j]) if tiff_coords else stack[i]
+            tifffile.imwrite(path, out)
+            n_files += 1
+        n_moved = sum(1 for m in moves if any(m))
+        print(f"  ROI masks remapped {len(old_keys)} -> {len(new_keys)} frames, "
+              f"{n_moved} frames moved: {os.path.basename(base)}")
+    return n_files
 
 
 def _has_valid_roi_sets(combined_df: pd.DataFrame) -> bool:
@@ -590,6 +757,7 @@ def _launch_roi_review_gui(
         additional_columns=["dt"],
         save_auto=False,
         uncaging_roi_keyframe_count=uncaging_roi_keyframe_count,
+        roi_types=RESPAN_ROI_TYPES,
     )
     app.exec_()
     print("ROI review/edit (full-size) finished.")
@@ -618,6 +786,10 @@ def run_tiff_uncaging_roi_respan(
     overwrite_seg_roi_masks: bool = False,
     skip_lifetime_analysis: bool = False,
     fast_mode: bool = False,
+    spine_roi_source: str = "seg",
+    respan_track_queue_root: str | None = None,
+    time_window_min: tuple[float, float] | None = TIME_WINDOW_MIN,
+    align_reference: str = "pre1",
 ) -> tuple[str, str] | tuple[None, None]:
     """
     Full ROI quantification for respan highmag data using pre-built seg_masks.
@@ -635,9 +807,29 @@ def run_tiff_uncaging_roi_respan(
       reuse intensity arrays for local adjacent.
 
     ROI flow:
-      1) Pre-fill Spine / DendriticShaft / Background from seg_masks
+      1) Pre-fill Spine / DendriticShaft from seg_masks (no Background ROI;
+         background = 20th percentile of the quantified image)
       2) ROI GUI for review and edits (unless skip_roi_gui=True)
       3) Drift-corrected masks and FLIM quantification
+
+    spine_roi_source:
+      "seg" (default): Spine ROI from seg_masks (step 1 above).
+      "respan_tracked": after step 1, replace the Spine ROI by the uncaged spine
+      tracked with per-frame RESPAN (respan_tracked_spine_roi.py; needs
+      ongoing/ASIcontroller/respan_track_session.py to have run). Masks edited in
+      the GUI are never overwritten; sets without tracking keep the seg ROI.
+
+    align_reference:
+      "pre1" (default): every pre/post frame of a set is registered to the set's Pre 1
+      (pre1_alignment.py); the TIFF, z windows and masks follow it. "002": the global
+      registration to the group's 002 (former). When it changes the shifts of a loaded
+      combined_df, the stacks are rebuilt and the ROI masks moved with the frames.
+
+    time_window_min:
+      (lo, hi) minutes from uncaging (default -40 to +50). Pre/post frames outside
+      are removed from their set before the TIFF stacks are built, so they are not
+      reviewed or quantified (apply_time_window). None keeps every frame. When the
+      window changes the sets of a loaded combined_df, the stacks are rebuilt.
 
     Set skip_lifetime_analysis=True to quantify intensity only (lifetime/total_photon as NaN).
     """
@@ -669,6 +861,9 @@ def run_tiff_uncaging_roi_respan(
         f"overwrite_seg_roi_masks: {overwrite_seg_roi_masks}",
         f"skip_lifetime_analysis: {skip_lifetime_analysis}",
         f"fast_mode: {fast_mode}",
+        f"spine_roi_source: {spine_roi_source}",
+        f"time_window_min: {time_window_min}",
+        f"align_reference: {align_reference}",
         "=" * 60,
     ]
 
@@ -735,6 +930,7 @@ def run_tiff_uncaging_roi_respan(
                     "will run first_processing."
                 )
 
+    first_processing_errors: list[str] = []
     if combined_df is None:
         if not one_of_filepath_list:
             print("No FLIM path for first_processing. Exiting.")
@@ -754,15 +950,23 @@ def run_tiff_uncaging_roi_respan(
             combined_df = pd.DataFrame()
             for one_path in one_of_filepath_list:
                 print(f"\nfirst_processing (global={global_align_method}): {one_path}\n")
-                temp_df = first_processing_for_flim_files(
+                temp_df, error_dict = first_processing_for_flim_files(
                     one_path,
                     z_plus_minus,
                     ch_1or2,
                     save_plot_TF=not fast_mode,
                     save_tif_TF=not fast_mode,
-                    return_error_dict=False,
+                    return_error_dict=True,
                     **fp_kwargs,
                 )
+                for group_key, reason in error_dict.items():
+                    record_roi_error(
+                        first_processing_errors,
+                        group=group_key,
+                        set_label="",
+                        file="",
+                        reason=str(reason),
+                    )
                 combined_df = pd.concat([combined_df, temp_df], ignore_index=True)
         combined_df.to_pickle(df_save_path)
         combined_df.to_csv(df_save_path.replace(".pkl", ".csv"))
@@ -789,14 +993,29 @@ def run_tiff_uncaging_roi_respan(
             "uncaging_frame_num."
         )
 
-    error_log: list[str] = []
+    combined_df, sets_changed_by_window = apply_time_window(combined_df, time_window_min)
+    if not _has_valid_roi_sets(combined_df):
+        print("No set left inside the time window", time_window_min)
+        return None, None
+    from pre1_alignment import realign_sets_to_pre1
+
+    combined_df, shifts_changed = realign_sets_to_pre1(combined_df, ch_1or2, reference=align_reference)
+
+    error_log: list[str] = list(first_processing_errors)
     session_dir = os.path.dirname(df_save_path)
     out_csv = df_save_path.replace(".pkl", "_intensity_lifetime_all_frames.csv")
 
     try:
         skip_full_size_build = False
         skip_tiff_if_exists = False
-        if use_predefined_df and loaded_existing_combined_df:
+        old_frame_info: dict[str, pd.DataFrame] = {}
+        if loaded_existing_combined_df and (sets_changed_by_window or shifts_changed):
+            print(
+                "Time window or alignment reference changed the loaded combined_df: "
+                "rebuilding all full-size stacks (existing ROI masks follow the frames)."
+            )
+            old_frame_info = snapshot_frame_info(combined_df)
+        elif use_predefined_df and loaded_existing_combined_df:
             skip_tiff_if_exists = True
             print(
                 "Predefined df mode: running rebuild with skip_tiff_if_exists=True "
@@ -839,6 +1058,8 @@ def run_tiff_uncaging_roi_respan(
                     fast_mode=fast_mode,
                     intensity_cache=intensity_cache if fast_mode else None,
                 )
+            if old_frame_info:
+                remap_roi_mask_stacks(old_frame_info)
             combined_df = augment_frame_info_local_adjacent(
                 combined_df,
                 ch_1or2=ch_1or2,
@@ -866,11 +1087,24 @@ def run_tiff_uncaging_roi_respan(
             combined_df,
             skip_if_roi_mask_exists=not overwrite_seg_roi_masks,
         )
+        if spine_roi_source == "respan_tracked":
+            from respan_tracked_spine_roi import apply_tracked_spine_rois
+
+            track_summary = apply_tracked_spine_rois(
+                combined_df, queue_root=respan_track_queue_root
+            )
+            if len(track_summary):
+                track_summary.to_csv(
+                    df_save_path.replace(".pkl", "_respan_tracked_spine_roi.csv"),
+                    index=False,
+                )
+        elif spine_roi_source != "seg":
+            raise ValueError(f"unknown spine_roi_source: {spine_roi_source!r}")
 
         if skip_roi_gui:
             print("skip_roi_gui=True: skip ROI review GUI.")
         else:
-            print("\nLaunching ROI GUI (seg_masks pre-filled; review and edit as needed)...")
+            print("\nLaunching ROI GUI (Spine / Shaft pre-filled; review and edit as needed)...")
             combined_df = _launch_roi_review_gui(
                 combined_df,
                 df_save_path,
@@ -878,7 +1112,7 @@ def run_tiff_uncaging_roi_respan(
             )
 
         print("\nSaving drift-corrected ROI masks (Type B)...")
-        save_drift_corrected_roi_masks(combined_df)
+        save_drift_corrected_roi_masks(combined_df, roi_types=RESPAN_ROI_TYPES)
         combined_df.to_pickle(df_save_path)
         combined_df.to_csv(df_save_path.replace(".pkl", ".csv"))
 
@@ -901,6 +1135,7 @@ def run_tiff_uncaging_roi_respan(
             photon_threshold=photon_threshold,
             total_photon_threshold=total_photon_threshold,
             skip_lifetime_analysis=skip_lifetime_analysis,
+            background_mode=BACKGROUND_MODE_MIP_P20,
         )
 
         summary.append(f"df_save_path: {df_save_path}")

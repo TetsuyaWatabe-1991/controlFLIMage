@@ -217,7 +217,7 @@ def save_roi_info_enhanced(savefolder: str, basename: str, roi_points: np.ndarra
         'shaft': roi_points.tolist(),
         'spine': roi_points_spine.tolist()
     }
-    roi_file = os.path.join(savefolder, basename[:-5] + "_roi.json")
+    roi_file = os.path.join(savefolder, os.path.splitext(basename)[0] + "_roi.json")
     with open(roi_file, 'w') as f:
         json.dump(roi_info, f)
     return roi_file

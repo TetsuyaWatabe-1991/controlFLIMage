@@ -151,11 +151,11 @@ def save_image_with_assigned_pos(ch1_tiffpath,
                     [ShowPointsYXlist_original_coord[ind][0]],
                     facecolors='none', edgecolors="m")
         
-    plt.savefig(png_savepath[:-4]+"_dots.png", dpi = dpi, bbox_inches = "tight")
+    plt.savefig(os.path.splitext(png_savepath)[0]+"_dots.png", dpi = dpi, bbox_inches = "tight")
     plt.show()
     
     plt.imshow(tiffarray, cmap = 'gray')
-    plt.savefig(png_savepath[:-4]+"_no_position.png", dpi = dpi, bbox_inches = "tight")
+    plt.savefig(os.path.splitext(png_savepath)[0]+"_no_position.png", dpi = dpi, bbox_inches = "tight")
     plt.show()
              
 
@@ -229,11 +229,11 @@ def save_image_with_assigned_pos_3d(tif_path,
     #                 [ShowPointsYXlist_original_coord[ind][0]],
     #                 facecolors='none', edgecolors="m")
         
-    # plt.savefig(png_savepath[:-4]+"_dots.png", dpi = dpi, bbox_inches = "tight")
+    # plt.savefig(os.path.splitext(png_savepath)[0]+"_dots.png", dpi = dpi, bbox_inches = "tight")
     # plt.show()
     
     # plt.imshow(tiffarray, cmap = 'gray')
-    # plt.savefig(png_savepath[:-4]+"_no_position.png", dpi = dpi, bbox_inches = "tight")
+    # plt.savefig(os.path.splitext(png_savepath)[0]+"_no_position.png", dpi = dpi, bbox_inches = "tight")
     # plt.show()
              
 

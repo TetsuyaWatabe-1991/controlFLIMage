@@ -87,7 +87,7 @@ def get_ini_folder_and_base(flim_path):
         if match:
             prefix = match.group(1)
         else:
-            prefix = basename[:-5]  # remove .flim
+            prefix = os.path.splitext(basename)[0]  # remove .flim
     else:
         prefix = basename
     ini_folder = os.path.join(folder, prefix)

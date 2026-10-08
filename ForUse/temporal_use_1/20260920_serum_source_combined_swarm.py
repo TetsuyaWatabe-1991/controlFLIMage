@@ -79,10 +79,7 @@ GIBCO_CFG = _base_cfg(
     acquisition_start_datetime_str="2026-05-08T10:30:00.000",
     condition_prefix_map={"CM_": "CM", "APV_": "APV"},
     condition_order=["CM", "APV"],
-    condition_styles={
-        "CM": {"indiv": "0.75", "mean": "k"},
-        "APV": {"indiv": "#E8B4B0", "mean": "r"},
-    },
+    condition_styles=["k", "r", "b", "g"],
 )
 
 GIBCO_TEST_CFG = _base_cfg(
@@ -94,7 +91,7 @@ GIBCO_TEST_CFG = _base_cfg(
     acquisition_start_datetime_str="2026-05-06T13:30:00.000",
     condition_prefix_map={"": "Gibco"},
     condition_order=["Gibco"],
-    condition_styles={"Gibco": {"indiv": "0.75", "mean": "k"}},
+    condition_styles=["k", "r", "b", "g"],
 )
 
 CYTIVA_CFG = _base_cfg(
@@ -106,7 +103,7 @@ CYTIVA_CFG = _base_cfg(
     acquisition_start_datetime_str="2026-04-30T11:30:00.000",
     condition_prefix_map={"": "Cytiva"},
     condition_order=["Cytiva"],
-    condition_styles={"Cytiva": {"indiv": "0.75", "mean": "k"}},
+    condition_styles=["k", "r", "b", "g"],
     # Some Cytiva sets have 66 uncaging frames (two 33-frame blocks).
     unc_total_frame_first_unc_dict={33: 2, 55: 5, 66: 2, 80: 8, 144: 8},
 )
@@ -123,10 +120,7 @@ RAB_CALF_CFG = _base_cfg(
     acquisition_start_datetime_str="2026-05-06T17:30:00.000",
     condition_prefix_map={"rab_": "Rab", "calf_": "Calf"},
     condition_order=["Rab", "Calf"],
-    condition_styles={
-        "Rab": {"indiv": "0.75", "mean": "k"},
-        "Calf": {"indiv": "#E8B4B0", "mean": "r"},
-    },
+    condition_styles=["k", "r", "b", "g"],
 )
 
 

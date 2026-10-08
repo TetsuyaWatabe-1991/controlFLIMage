@@ -856,14 +856,18 @@ class Control_flimage():
     def acquisition_include_connect_wait(self,
                                          sleep_every_sec=0.5, 
                                          overwrite_warning_click_yes=False,
-                                         return_failure=False):
+                                         return_failure=False,
+                                         max_waiting_sec=180):
         self.flim_connect_check()
         self.flim.sendCommand('StartGrab')
         if overwrite_warning_click_yes:
             print("click yes in overwrite warning")
             sleep(1)
             close_overwrite_warning(find_yes=True)  #close overwrite warning
-        success = self.wait_while_grabbing(sleep_every_sec=sleep_every_sec)
+        success = self.wait_while_grabbing(
+            sleep_every_sec=sleep_every_sec,
+            max_waiting_sec=max_waiting_sec,
+        )
         if success:
             print("Acquisition successful")
         else:
@@ -871,7 +875,11 @@ class Control_flimage():
                 return False
             print("Acquisition failed. Reconnecting...")
             self.flim.sendCommand('SetCenter') #better then nothing.
-            self.acquisition_include_connect_wait(overwrite_warning_click_yes=True)
+            self.acquisition_include_connect_wait(
+                sleep_every_sec=sleep_every_sec,
+                overwrite_warning_click_yes=True,
+                max_waiting_sec=max_waiting_sec,
+            )
             
 
     def acquisition_include_connect_wait_short(self,sleep_every_sec=0.1):

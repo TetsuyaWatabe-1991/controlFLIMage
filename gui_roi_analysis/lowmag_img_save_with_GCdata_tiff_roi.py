@@ -77,10 +77,19 @@ def _uncaging_marker_um_from_row(
     highmag_side_length_um: float,
     highmag_pixel: int = 128,
 ) -> Tuple[Optional[float], Optional[float], float, float]:
-    """Compute uncaging marker position in um on a highmag Z projection."""
+    """Compute uncaging marker position in um on a highmag Z projection.
+
+    Uses the same pixel center as the GCaMP F/F0 panel (center_x/center_y).
+    corrected_uncaging_* includes the time-series shift and is only a fallback.
+    A crop origin is subtracted only when the displayed image is smaller than
+    the full highmag frame.
+    """
     height, width = image_shape
-    unc_x = row.get("corrected_uncaging_x", np.nan)
-    unc_y = row.get("corrected_uncaging_y", np.nan)
+    unc_x = row.get("center_x", np.nan)
+    unc_y = row.get("center_y", np.nan)
+    if pd.isna(unc_x) or pd.isna(unc_y):
+        unc_x = row.get("corrected_uncaging_x", np.nan)
+        unc_y = row.get("corrected_uncaging_y", np.nan)
     if pd.isna(unc_x) or pd.isna(unc_y):
         unc_x = row.get("uncaging_display_x", np.nan)
         unc_y = row.get("uncaging_display_y", np.nan)
@@ -89,8 +98,12 @@ def _uncaging_marker_um_from_row(
 
     small_x_from = float(row.get("small_x_from", 0) or 0)
     small_y_from = float(row.get("small_y_from", 0) or 0)
-    unc_px_x = float(unc_x) - small_x_from
-    unc_px_y = float(unc_y) - small_y_from
+    if width < highmag_pixel or height < highmag_pixel:
+        unc_px_x = float(unc_x) - small_x_from
+        unc_px_y = float(unc_y) - small_y_from
+    else:
+        unc_px_x = float(unc_x)
+        unc_px_y = float(unc_y)
     trimmed_x_um = highmag_side_length_um / highmag_pixel * width
     trimmed_y_um = highmag_side_length_um / highmag_pixel * height
     unc_x_um = unc_px_x * highmag_side_length_um / highmag_pixel
@@ -158,21 +171,68 @@ def _uncaging_power_mw_from_row(row: pd.Series, acq_dt: Optional[datetime] = Non
     return round(pow_mw * FROM_THORLAB_TO_COHERENT_FACTOR, 1)
 
 
-def _extract_gcamp_pre_unc_sum(imagearray: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
-    """Extract GCaMP (Ch1) pre/unc Z-sum images from uncaging FLIM stack."""
+def _extract_gcamp_pre_unc_sum(
+    imagearray: np.ndarray,
+    statedict: Optional[dict] = None,
+) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """Extract GCaMP (Ch1) pre/unc images from an uncaging FLIM stack.
+
+    Known lengths use the legacy frame windows. Other lengths, including an
+    80-frame 2 Hz train, use FramesBeforeUncage metadata. That path averages
+    each window by its frame count before F/F0.
+    """
     n_frames = imagearray.shape[0]
     if n_frames in (4, 33, 34):
         gc_pre = imagearray[0, 0, 0, :, :, :].sum(axis=-1)
         gc_unc = imagearray[3, 0, 0, :, :, :].sum(axis=-1)
-    elif n_frames == 32:
+        return gc_pre, gc_unc
+    if n_frames == 32:
         gc_pre = imagearray[8 * 0 + 1 : 8 * 1, 0, 0, :, :, :].sum(axis=-1).sum(axis=0)
         gc_unc = imagearray[8 * 3 + 1 : 8 * 4, 0, 0, :, :, :].sum(axis=-1).sum(axis=0)
-    elif n_frames == 55:
+        return gc_pre, gc_unc
+    if n_frames == 55:
         gc_pre = imagearray[4, 0, 0, :, :, :].sum(axis=-1)
         gc_unc = imagearray[5, 0, 0, :, :, :].sum(axis=-1)
-    else:
-        return None, None
-    return gc_pre, gc_unc
+        return gc_pre, gc_unc
+    if isinstance(statedict, dict):
+        from flimage_graph_func import gcamp_pre_post_from_uncaging_meta
+
+        pair = gcamp_pre_post_from_uncaging_meta(imagearray, statedict)
+        if pair is not None:
+            return pair
+    return None, None
+
+
+def uncaging_rate_hz_label(statedict: Optional[dict]) -> Optional[str]:
+    """Label 0.5 Hz, 1 Hz, or 2 Hz from the uncaging pulse interval.
+
+    Prefer pulseSetInterval_forFrame (ms). Otherwise use
+    Uncage_FrameInterval times the imaging frame period.
+    """
+    if not isinstance(statedict, dict):
+        return None
+    hz = None
+    pulse_ms = statedict.get("State.Uncaging.pulseSetInterval_forFrame")
+    try:
+        if pulse_ms is not None and float(pulse_ms) > 0:
+            hz = 1000.0 / float(pulse_ms)
+    except (TypeError, ValueError):
+        hz = None
+    if hz is None:
+        try:
+            interval = float(statedict["State.Uncaging.Uncage_FrameInterval"])
+            ms_per_line = float(statedict["State.Acq.msPerLine"])
+            n_lines = float(statedict["State.Acq.linesPerFrame"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        frame_sec = n_lines * ms_per_line / 1000.0
+        if interval < 1 or frame_sec <= 0:
+            return None
+        hz = 1.0 / (interval * frame_sec)
+    for nominal, label in ((0.5, "0.5 Hz"), (1.0, "1 Hz"), (2.0, "2 Hz")):
+        if abs(hz - nominal) / nominal <= 0.15:
+            return label
+    return f"{hz:.2g} Hz"
 
 
 def _uncaging_center_xy(unc_df: pd.DataFrame, imagearray: np.ndarray) -> Tuple[Optional[float], Optional[float]]:
@@ -213,7 +273,9 @@ def _plot_gcamp_ff0_subplot(
         iminfo = FileReader()
         iminfo.read_imageFile(flim_filepath, True)
         imagearray = np.array(iminfo.image)
-        gc_pre, gc_unc = _extract_gcamp_pre_unc_sum(imagearray)
+        gc_pre, gc_unc = _extract_gcamp_pre_unc_sum(
+            imagearray, statedict=getattr(iminfo, "statedict", None)
+        )
         if gc_pre is None or gc_unc is None:
             plt.text(
                 0.5, 0.5, f"GCaMP F/F0\n(unsupported stack: {imagearray.shape[0]} frames)",
@@ -232,7 +294,11 @@ def _plot_gcamp_ff0_subplot(
         if center_x is not None and center_y is not None:
             plt.plot(center_x, center_y, "c+", markersize=10)
         plt.axis("off")
-        plt.title("GCaMP F/F0")
+        rate_label = uncaging_rate_hz_label(getattr(iminfo, "statedict", None))
+        if rate_label:
+            plt.title(f"GCaMP F/F0\n{rate_label}")
+        else:
+            plt.title("GCaMP F/F0")
 
         cax = inset_axes(
             plt.gca(),
@@ -853,13 +919,14 @@ def main() -> None:
             fallback_vmin=float(crop_vmin),
             fallback_vmax=float(crop_vmax),
         )
-        unc_x_um, unc_y_um, trimmed_high_x_um, trimmed_high_y_um = _uncaging_marker_um_from_row(
-            pre_row, before_uncaging_zproj.shape, highmag_side_length_um,
-        )
         each_label_unc_df = combined_df_reject_bad_data_df[
             (combined_df_reject_bad_data_df["label"] == each_label)
             & (combined_df_reject_bad_data_df["phase"] == "unc")
         ]
+        marker_row = each_label_unc_df.iloc[0] if len(each_label_unc_df) > 0 else pre_row
+        unc_x_um, unc_y_um, trimmed_high_x_um, trimmed_high_y_um = _uncaging_marker_um_from_row(
+            marker_row, before_uncaging_zproj.shape, highmag_side_length_um,
+        )
         dt_val = valid_rows["dt"].iloc[0] if "dt" in valid_rows.columns else None
         unc_row_for_power = each_label_unc_df.iloc[0] if len(each_label_unc_df) > 0 else pre_row
         uncaging_power_mw = _uncaging_power_mw_from_row(unc_row_for_power, acq_dt=dt_val)

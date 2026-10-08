@@ -15,11 +15,10 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, median_filter
 
 from utility.gentle_surface import (
     MIN_BLOB_PX,
-    NOISE_THRESHOLD,
     XY_SMOOTH_SIGMA,
     GentleSurfaceResult,
     _noise_ceiling_z,
@@ -88,6 +87,7 @@ def save_surface_summary(
     x_um_per_px: float = 1.0,
     z_um_per_slice: float = 1.0,
     y_um_per_px: float | None = None,
+    xy_filter: str = "gaussian",
 ) -> str:
     """Save one summary PNG and return its path.
 
@@ -99,8 +99,11 @@ def save_surface_summary(
     if surface_z.shape != (n_y, n_x):
         raise ValueError("surface_z shape must be (Y, X)")
 
-    smoothed = gaussian_filter(volume, sigma=(0.0, XY_SMOOTH_SIGMA, XY_SMOOTH_SIGMA))
-    signal = _signal_mask(smoothed, NOISE_THRESHOLD, MIN_BLOB_PX)
+    if xy_filter == "median":
+        smoothed = median_filter(volume, size=(1, 3, 3))
+    else:
+        smoothed = gaussian_filter(volume, sigma=(0.0, XY_SMOOTH_SIGMA, XY_SMOOTH_SIGMA))
+    signal = _signal_mask(smoothed, surface.threshold, MIN_BLOB_PX)
     z_top = _noise_ceiling_z(signal)
     on_sheet = (z_top >= 0) & (np.abs(z_top.astype(float) - surface_z) <= NEAR_SURFACE_Z)
 
@@ -221,6 +224,7 @@ def save_surface_summary(
     fig.suptitle(
         f"{title}\n"
         f"surface Z {float(surface_z.min()) * z_um:.1f}-{float(surface_z.max()) * z_um:.1f} um"
+        f"    threshold={surface.threshold:.2f}"
         f"    {status_line}",
         fontsize=11,
     )

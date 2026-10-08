@@ -14,14 +14,22 @@ from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QColor
 
 
+DEFAULT_ROI_TYPES = ["Spine", "DendriticShaft", "Background"]
+ROI_COLUMN_LABELS = {"Spine": "Spine", "DendriticShaft": "Shaft", "Background": "BG"}
+ROI_BUTTON_LABELS = {"Spine": "Sp", "DendriticShaft": "Dn", "Background": "Bg"}
+
+
 class FileSelectionGUI(QMainWindow):
     roi_analysis_completed = pyqtSignal(str, int, str)  # group, set_label, header
-    
-    def __init__(self, combined_df, df_save_path_2=None, additional_columns=None, save_auto = True, parent=None):
+
+    def __init__(self, combined_df, df_save_path_2=None, additional_columns=None, save_auto = True, parent=None,
+                 roi_types=None):
         super().__init__(parent)
-        
+
         print("Initializing FileSelectionGUI...")
-        
+        # ROI types shown in the table and drawn by Launch All (default: Spine, Shaft, Background).
+        self.roi_types = list(roi_types) if roi_types else list(DEFAULT_ROI_TYPES)
+
         try:
             self.combined_df = combined_df
             self.df_save_path_2 = df_save_path_2  # Store the save path for auto-saving
@@ -313,15 +321,9 @@ class FileSelectionGUI(QMainWindow):
             # Add available additional columns
             headers.extend(available_additional_columns)
             
-            headers.extend([
-                # "Spine ROI", "Spine Date",
-                # "DendriticShaft ROI", "DendriticShaft Date", 
-                # "Background ROI", "Background Date",
-                "Spine", "date",
-                "Shaft", "date", 
-                "BG", "date",
-                "All ROIs", "Individual ROIs"
-            ])
+            for roi_type in self.roi_types:
+                headers.extend([ROI_COLUMN_LABELS.get(roi_type, roi_type), "date"])
+            headers.extend(["All ROIs", "Individual ROIs"])
             
             self.table.setColumnCount(len(headers))
             self.table.setHorizontalHeaderLabels(headers)
@@ -349,14 +351,9 @@ class FileSelectionGUI(QMainWindow):
                 header.setSectionResizeMode(col_idx + i, QHeaderView.ResizeToContents)
             col_idx += len(available_additional_columns)
             
-            header.setSectionResizeMode(col_idx, QHeaderView.ResizeToContents)      # Spine ROI
-            header.setSectionResizeMode(col_idx + 1, QHeaderView.ResizeToContents)  # Spine Date
-            header.setSectionResizeMode(col_idx + 2, QHeaderView.ResizeToContents)  # DendriticShaft ROI
-            header.setSectionResizeMode(col_idx + 3, QHeaderView.ResizeToContents)  # DendriticShaft Date
-            header.setSectionResizeMode(col_idx + 4, QHeaderView.ResizeToContents)  # Background ROI
-            header.setSectionResizeMode(col_idx + 5, QHeaderView.ResizeToContents)  # Background Date
-            header.setSectionResizeMode(col_idx + 6, QHeaderView.ResizeToContents)  # All ROIs
-            header.setSectionResizeMode(col_idx + 7, QHeaderView.ResizeToContents)  # Individual ROIs
+            # ROI status/date pairs, then All ROIs and Individual ROIs
+            for k in range(2 * len(self.roi_types) + 2):
+                header.setSectionResizeMode(col_idx + k, QHeaderView.ResizeToContents)
             
             # Check required columns - use filepath_without_number as primary key
             if 'filepath_without_number' in self.combined_df.columns:
@@ -551,7 +548,7 @@ class FileSelectionGUI(QMainWindow):
                         col_idx += 1
                     
                     # Check ROI status for each type
-                    roi_types = ["Spine", "DendriticShaft", "Background"]
+                    roi_types = self.roi_types
                     all_defined = True
                     
                     for i, roi_type in enumerate(roi_types):
@@ -596,7 +593,7 @@ class FileSelectionGUI(QMainWindow):
                         all_button.setStyleSheet("background-color: lightgreen;")
                         all_button.setToolTip("All ROIs are defined - click to reanalyze")
                     else:
-                        all_button.setToolTip("Launch ROI analysis for all three types")
+                        all_button.setToolTip("Launch ROI analysis for all ROI types")
                     
                     self.table.setCellWidget(row_idx, col_idx, all_button)
                     col_idx += 1
@@ -607,34 +604,16 @@ class FileSelectionGUI(QMainWindow):
                     individual_buttons_layout.setContentsMargins(2, 2, 2, 2)
                     individual_buttons_layout.setSpacing(2)
                     
-                    # Create three buttons for ROI types
-                    spine_button = QPushButton("Sp")
-                    dendrite_button = QPushButton("Dn")
-                    background_button = QPushButton("Bg")
-                    
-                    # Set button properties
-                    for button in [spine_button, dendrite_button, background_button]:
+                    # One button per ROI type
+                    for roi_type in self.roi_types:
+                        button = QPushButton(ROI_BUTTON_LABELS.get(roi_type, roi_type[:2]))
                         button.setFixedSize(30, 25)
                         button.setEnabled(bool(tiff_path and os.path.exists(tiff_path)))
-                    
-                    # Connect button click events
-                    spine_button.clicked.connect(
-                        lambda checked, g=group_id, s=set_label, path=tiff_path: 
-                        self.launch_individual_roi_analysis(g, s, path, "Spine")
-                    )
-                    dendrite_button.clicked.connect(
-                        lambda checked, g=group_id, s=set_label, path=tiff_path: 
-                        self.launch_individual_roi_analysis(g, s, path, "DendriticShaft")
-                    )
-                    background_button.clicked.connect(
-                        lambda checked, g=group_id, s=set_label, path=tiff_path: 
-                        self.launch_individual_roi_analysis(g, s, path, "Background")
-                    )
-                    
-                    # Add buttons to layout
-                    individual_buttons_layout.addWidget(spine_button)
-                    individual_buttons_layout.addWidget(dendrite_button)
-                    individual_buttons_layout.addWidget(background_button)
+                        button.clicked.connect(
+                            lambda checked, g=group_id, s=set_label, path=tiff_path, rt=roi_type:
+                            self.launch_individual_roi_analysis(g, s, path, rt)
+                        )
+                        individual_buttons_layout.addWidget(button)
                     individual_buttons_layout.addStretch()
                     
                     self.table.setCellWidget(row_idx, col_idx, individual_buttons_widget)
@@ -678,7 +657,7 @@ class FileSelectionGUI(QMainWindow):
             # Import here to avoid circular imports
             from gui_integration import launch_roi_analysis_gui
             
-            roi_types = ["Spine", "DendriticShaft", "Background"]
+            roi_types = self.roi_types
             for roi_type in roi_types:
                 self.log_message(f"Launching {roi_type} ROI analysis for {group}, Set {set_label}")
                 launch_roi_analysis_gui(self.combined_df, tiff_path, group, set_label, header=roi_type)
@@ -830,8 +809,8 @@ class FileSelectionGUI(QMainWindow):
                 roi_mask = create_roi_mask_from_params(roi_params, 'rectangle', image_shape)
                 
                 # Check ROI status for each type and create ROI if not defined
-                roi_types = ["Spine", "DendriticShaft", "Background"]
-                
+                roi_types = self.roi_types
+
                 for roi_type in roi_types:
                     has_roi, _ = self.get_roi_status_and_date(group_set_df, roi_type)
                     

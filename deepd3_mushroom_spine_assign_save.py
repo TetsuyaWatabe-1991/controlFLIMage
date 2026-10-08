@@ -836,7 +836,7 @@ def verify_outputs_for_spine_manager(
         if not inipath.startswith(expected_prefix):
             issues.append(f"ini path prefix mismatch: {inipath}")
 
-        pngpath = inipath[:-4] + ".png"
+        pngpath = os.path.splitext(inipath)[0] + ".png"
         if require_png and not os.path.exists(pngpath):
             issues.append(f"missing png: {pngpath}")
 
@@ -1114,7 +1114,7 @@ def loop_mushroom_spine_assign_save(
             inipath = os.path.join(
                 savefolder, f"{base_name}_{str(ini_idx).zfill(3)}.ini"
             )
-            pngpath = inipath[:-4] + ".png"
+            pngpath = os.path.splitext(inipath)[0] + ".png"
             saved_parts = []
 
             if save_per_spine_png:

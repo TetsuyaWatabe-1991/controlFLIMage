@@ -7,6 +7,7 @@ Created on Wed Jun 26 10:19:07 2024
 
 import time
 import os
+import re
 import glob
 import pathlib
 import tempfile
@@ -113,7 +114,7 @@ class Multiarea_from_lowmag():
             z_um = self.rel_pos_df.loc[ind,"z_um"]
             
             if self.preassigned_spine == True:
-                inipath = f"{self.lowmag_path[:-8]}_highmag_{pos_id}.ini"
+                inipath = f"{self._path_before_counter()}_highmag_{pos_id}.ini"
                 spine_zyx, dend_slope, dend_intercept = read_xyz_single(inipath)
                 if spine_zyx[0]<0:
                     print(f"Rejected highmag, {inipath}")
@@ -124,16 +125,59 @@ class Multiarea_from_lowmag():
             self.high_mag_relpos_dict[pos_id]["y_um"] = y_um
             self.high_mag_relpos_dict[pos_id]["z_um"] = z_um
     
+    @staticmethod
+    def _acq_counter(path):
+        """Three-digit counter before ``.flim`` / ``.tif`` / ``.tiff``."""
+        match = re.search(
+            r"_(\d{3})\.(?:flim|tif|tiff)$",
+            os.path.basename(path),
+            re.IGNORECASE,
+        )
+        if match:
+            return int(match.group(1))
+        return None
+
+    def _path_before_counter(self):
+        """``path[:-8]`` for a ``.flim`` file: the underscore before the counter stays."""
+        path = self.lowmag_path
+        stem = pathlib.Path(path).stem
+        kept = stem[:-3]
+        directory = os.path.dirname(path)
+        if directory:
+            return os.path.join(directory, kept)
+        return kept
+
+    def _lowmag_series(self, folder):
+        found = []
+        for ext in ("flim", "tif", "tiff"):
+            found.extend(
+                glob.glob(
+                    os.path.join(
+                        folder,
+                        self.lowmag_basename + "[0-9][0-9][0-9]." + ext,
+                    )
+                )
+            )
+        return found
+
+    def _next_lowmag_extension(self):
+        ext = os.path.splitext(self.lowmag_path)[1].lower()
+        if ext in (".tif", ".tiff"):
+            return ext
+        return ".flim"
+
     def get_max_flimfiles(self, flimlist):
         counter = 1
         for eachflim in flimlist:
-            try:   
-                num = int(eachflim[-8:-5])
-                if num > counter:
-                    counter = num
-            except:
-                pass
-        return counter    
+            num = self._acq_counter(eachflim)
+            if num is None:
+                try:
+                    num = int(eachflim[-8:-5])
+                except Exception:
+                    num = None
+            if num is not None and num > counter:
+                counter = num
+        return counter
             
     def get_max_plus_one_flimfiles(self, flimlist):
         counter = self.get_max_flimfiles(flimlist)
@@ -142,12 +186,13 @@ class Multiarea_from_lowmag():
     
     def latest_path(self):
         folder = self.files_folder()
-        low_flimlist = glob.glob(os.path.join(folder,
-                                              self.lowmag_basename+"[0-9][0-9][0-9].flim"))        
-        low_maxcount = self.get_max_flimfiles(low_flimlist)
-        latestpath = os.path.join(folder, 
-                                  self.lowmag_basename + str(low_maxcount).zfill(3) + ".flim")
-        return latestpath
+        series = self._lowmag_series(folder)
+        if not series:
+            return os.path.join(folder, self.lowmag_basename + "001.flim")
+        return max(
+            series,
+            key=lambda path: (self._acq_counter(path) or 0, os.path.getmtime(path)),
+        )
 
     def use_latest_lowmag_position(self) -> str:
         """
@@ -218,11 +263,14 @@ class Multiarea_from_lowmag():
 
     def count_flimfiles(self, FLIMageCont=None) -> int:
         folder = self.files_folder(FLIMageCont)
-        low_flimlist = glob.glob(os.path.join(folder,
-                                              self.lowmag_basename+"[0-9][0-9][0-9].flim"))
-        self.low_counter = self.get_max_plus_one_flimfiles(low_flimlist)    
-        self.low_max_plus1_flim = os.path.join(folder, 
-                                             self.lowmag_basename + str(self.low_counter).zfill(3) + ".flim")
+        low_flimlist = self._lowmag_series(folder)
+        self.low_counter = self.get_max_plus_one_flimfiles(low_flimlist)
+        self.low_max_plus1_flim = os.path.join(
+            folder,
+            self.lowmag_basename
+            + str(self.low_counter).zfill(3)
+            + self._next_lowmag_extension(),
+        )
         return self.low_counter
 
     def count_high_mag_flimfiles(self, pos_id, return_first_flim = False, FLIMageCont=None) -> int:
@@ -257,8 +305,10 @@ class Multiarea_from_lowmag():
         low_counter = self.count_flimfiles(FLIMageCont)
         d = self.lowmag_iminfo.statedict
 
-        load_cmd = "LoadSettingLite" if use_load_setting_lite else "LoadSetting"
-        FLIMageCont.flim.sendCommand(f"{load_cmd}, {self.lowmag_path}")
+        template_ext = os.path.splitext(self.lowmag_path)[1].lower()
+        if template_ext == ".flim":
+            load_cmd = "LoadSettingLite" if use_load_setting_lite else "LoadSetting"
+            FLIMageCont.flim.sendCommand(f"{load_cmd}, {self.lowmag_path}")
 
         power = d["State.Acq.power"]
         zoom = d["State.Acq.zoom"]
@@ -266,6 +316,16 @@ class Multiarea_from_lowmag():
         slice_step = d["State.Acq.sliceStep"]
         # Never trust nFrames from the template .flim for this workflow.
         n_frames = int(n_frames_per_slice)
+        intensity_lines = []
+        if template_ext != ".flim":
+            for key in (
+                "State.Acq.pixelsPerLine",
+                "State.Acq.linesPerFrame",
+                "State.Acq.msPerLine",
+                "State.Acq.acqFLIMA",
+            ):
+                if key in d:
+                    intensity_lines.append(f"{key} = {d[key]}")
 
         if use_bulk_overlay:
             overlay_path = os.path.join(
@@ -288,6 +348,8 @@ class Multiarea_from_lowmag():
                 f.write("State.Acq.aveFrameA = [False, False]\n")
                 f.write("State.Acq.nAveSlice = 1\n")
                 f.write("State.Acq.aveSlice = False\n")
+                for line in intensity_lines:
+                    f.write(line + "\n")
             FLIMageCont.flim.sendCommand(f"ApplySetupOverlayLite, {overlay_path}")
         else:
             FLIMageCont.flim.sendCommand(f"State.Acq.power = {power}")
@@ -304,6 +366,8 @@ class Multiarea_from_lowmag():
             FLIMageCont.flim.sendCommand("State.Acq.nAveragedFrames = 1")
             FLIMageCont.flim.sendCommand("State.Acq.aveFrame = False")
             FLIMageCont.flim.sendCommand("State.Acq.aveFrameA = [False, False]")
+            for line in intensity_lines:
+                FLIMageCont.flim.sendCommand(line)
 
         FLIMageCont.flim.sendCommand("SetScanMirrorXY_um, 0, 0")
         FLIMageCont.flim.sendCommand("SetCenter")

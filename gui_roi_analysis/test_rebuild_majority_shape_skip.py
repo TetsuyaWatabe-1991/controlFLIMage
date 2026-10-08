@@ -113,11 +113,23 @@ def test_error_log_written_with_errors_n() -> None:
         assert text == block
 
 
+def test_shape_mismatch_group_is_skipped() -> None:
+    from gui_integration import group_frame_index_skip_reason
+
+    reason = group_frame_index_skip_reason([0, 1, 2], n_aligned=1, n_files=40)
+    assert reason is not None
+    assert "loaded 1 frames from 40 files" in reason
+    assert "group skipped" in reason
+    assert group_frame_index_skip_reason([0, 1, 2], n_aligned=3, n_files=3) is None
+    assert "loaded 0 frames" in group_frame_index_skip_reason([], n_aligned=0, n_files=4)
+
+
 def main() -> int:
     tests = [
         test_majority_shape_keeps_15_skips_45,
         test_unreadable_file_is_skipped,
         test_oob_index_is_skipped_not_raised,
+        test_shape_mismatch_group_is_skipped,
         test_error_log_empty_not_written,
         test_error_log_written_with_errors_n,
     ]

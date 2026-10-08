@@ -4,7 +4,7 @@ Created on Thu Dec  8 19:56:34 2022
 
 @author: yasudalab
 """
-import os,glob,math
+import os,glob,math,re
 from pathlib import Path
 from FLIMageFileReader2 import FileReader
 import matplotlib.pyplot as plt
@@ -30,27 +30,39 @@ HIGHPASS_XY_SIGMA = 6.0
 HIGHPASS_YZ_SIGMA_ZY = (1.5, 6.0)
 DEFAULT_ROI_HALF_ZYX = (2, 30, 30)  # matches gui_integration.process_small_region
 
+def _series_prefix(one_file_path):
+    """Directory plus name up to the counter underscore.
+
+    ``dir/1_pos1_001.flim`` and ``dir/1_pos1_001.tif`` both return
+    ``dir/1_pos1_``, which is ``path[:-8]`` for a ``.flim`` file.
+    """
+    basename = os.path.basename(one_file_path)
+    match = re.match(r"(.*_)(\d{3})\.(?:flim|tif|tiff)$", basename, re.IGNORECASE)
+    if match is None:
+        return one_file_path[:-8]
+    directory = os.path.dirname(one_file_path)
+    if directory:
+        return os.path.join(directory, match.group(1))
+    return match.group(1)
+
+
 def get_flimfile_list(one_file_path):
-    # print(f"DEBUG: get_flimfile_list called with: {one_file_path}")
-    # print(f"DEBUG: one_file_path[:-8]: {one_file_path[:-8]}")
-    pattern = one_file_path[:-8]+'[0-9][0-9][0-9].flim'
-    # print(f"DEBUG: glob pattern: {pattern}")
-    filelist=glob.glob(pattern)
-    # print(f"DEBUG: glob.glob result: {filelist}")
-    # print(f"DEBUG: filelist type: {type(filelist)}")
-    
-    # Ensure we always return a list
+    prefix = _series_prefix(one_file_path)
+    filelist = []
+    for extension in ("flim", "tif", "tiff"):
+        filelist.extend(glob.glob(prefix + "[0-9][0-9][0-9]." + extension))
+
     if not isinstance(filelist, list):
         print(f"WARNING: glob.glob returned {type(filelist)}, converting to list")
         filelist = list(filelist) if hasattr(filelist, '__iter__') else []
-        # Sort by the numeric suffix (last 3 digits before .flim)
+
     def extract_number(filepath):
-        # Extract the 3-digit number from filename like "xxx_002.flim"
         basename = os.path.basename(filepath)
-        # Get the last 3 digits before .flim
-        number_str = basename[-8:-5]  # e.g., "002" from "xxx_002.flim"
+        match = re.search(r"_(\d{3})\.(?:flim|tif|tiff)$", basename, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
         try:
-            return int(number_str)
+            return int(basename[-8:-5])
         except ValueError:
             return 0
     
@@ -451,7 +463,6 @@ def align_two_flimfile_different_resolution(
     Tiff_MultiArray_2, iminfo_2, _ = flim_files_to_nparray([flim_2],ch=ch)
     threeD_array_1 = Tiff_MultiArray_1[0]
     threeD_array_2 = Tiff_MultiArray_2[0]
-    assert threeD_array_1.shape[0] == threeD_array_2.shape[0]
     lower_x_dim = min(threeD_array_1.shape[2],threeD_array_2.shape[2])
     lower_y_dim = min(threeD_array_1.shape[1],threeD_array_2.shape[1])
     lower_z_dim = min(threeD_array_1.shape[0],threeD_array_2.shape[0])
@@ -523,7 +534,7 @@ def align_two_flimfile_different_resolution(
         if save_img == True:
             dir_name = os.path.join(os.path.dirname(flim_2), "Alignment")
             os.makedirs(dir_name, exist_ok=True)
-            save_basename = os.path.basename(flim_2)[:-5]
+            save_basename = os.path.splitext(os.path.basename(flim_2))[0]
             plt.savefig(os.path.join(dir_name, save_basename + "_for_align.png"), dpi = 72, bbox_inches = 'tight')
             print(f"Saved alignment image to {os.path.join(dir_name, save_basename + '_for_align.png')}")
         if resolve_show(show):

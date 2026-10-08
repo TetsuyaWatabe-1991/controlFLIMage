@@ -3,6 +3,8 @@
 A column has reached the surface when its signal ends before the last Z
 slice. Signal still present on the last slice means the stack stopped
 before the surface. Empty background is not counted as unreached.
+The intensity cutoff is Otsu's threshold on this stack's maximum
+projection, not a fixed count.
 """
 
 from __future__ import annotations
@@ -10,15 +12,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.ndimage import gaussian_filter, label
+from scipy.ndimage import gaussian_filter, label, median_filter
 from scipy.optimize import minimize
 
-NOISE_THRESHOLD = 8.0
 XY_SMOOTH_SIGMA = 1.0
 MIN_BLOB_PX = 4
+OTSU_BINS = 256
 BIN_PX = 32
 CURVATURE_WEIGHT = 2.0
 TILT_WEIGHT = 0.15
+MEDIAN_PARABOLA_THRESHOLD = 2.0
+PARABOLA_COEF_LIMIT_PER_UM = 1.0
 
 STATUS_REACHED = "reached"
 STATUS_PARTIAL = "partial"
@@ -47,6 +51,7 @@ class GentleSurfaceResult:
     not_reached: np.ndarray
     warning: str | None
     status: str
+    threshold: float
 
 
 def findsurface_stack_plan(
@@ -114,6 +119,54 @@ def _design(x: np.ndarray, y: np.ndarray, n_x: int, n_y: int) -> np.ndarray:
     xn = (np.asarray(x, dtype=float) - (n_x - 1) / 2.0) / x_scale
     yn = (np.asarray(y, dtype=float) - (n_y - 1) / 2.0) / y_scale
     return np.column_stack([xn ** 2, xn * yn, yn ** 2, xn, yn, np.ones(xn.shape[0])])
+
+
+def _otsu_threshold(image: np.ndarray) -> float:
+    """Otsu cutoff. A flat image returns its only value, so nothing is above it."""
+    finite = np.asarray(image, dtype=np.float64)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return 0.0
+    low = float(finite.min())
+    high = float(finite.max())
+    if high <= low:
+        return high
+    hist, edges = np.histogram(finite, bins=OTSU_BINS, range=(low, high))
+    centers = (edges[:-1] + edges[1:]) * 0.5
+    total = float(hist.sum())
+    weight = hist.astype(np.float64)
+    sum_all = float((weight * centers).sum())
+    weight0 = 0.0
+    sum0 = 0.0
+    best = -1.0
+    threshold = low
+    for index in range(len(weight) - 1):
+        weight0 += weight[index]
+        if weight0 <= 0.0:
+            continue
+        weight1 = total - weight0
+        if weight1 <= 0.0:
+            break
+        sum0 += weight[index] * centers[index]
+        mean0 = sum0 / weight0
+        mean1 = (sum_all - sum0) / weight1
+        score = weight0 * weight1 * (mean0 - mean1) ** 2
+        if score > best:
+            best = score
+            threshold = float(edges[index + 1])
+    return threshold
+
+
+def intensity_threshold(zyx: np.ndarray) -> float:
+    """Cutoff for one stack, taken from that stack rather than a fixed count.
+
+    The XY maximum projection of the smoothed volume is split with Otsu's
+    method. A brighter acquisition gets a higher cutoff.
+    """
+    volume = np.asarray(zyx, dtype=np.float32)
+    smoothed = gaussian_filter(volume, sigma=(0.0, XY_SMOOTH_SIGMA, XY_SMOOTH_SIGMA))
+    projection = np.max(smoothed, axis=0)
+    return _otsu_threshold(projection)
 
 
 def _signal_mask(smoothed: np.ndarray, threshold: float, min_blob_px: int) -> np.ndarray:
@@ -203,7 +256,8 @@ def fit_gentle_surface(zyx: np.ndarray) -> GentleSurfaceResult:
         raise ValueError("zyx needs at least 2 Z slices")
 
     smoothed = gaussian_filter(volume, sigma=(0.0, XY_SMOOTH_SIGMA, XY_SMOOTH_SIGMA))
-    signal = _signal_mask(smoothed, NOISE_THRESHOLD, MIN_BLOB_PX)
+    threshold = _otsu_threshold(np.max(smoothed, axis=0))
+    signal = _signal_mask(smoothed, threshold, MIN_BLOB_PX)
     z_top = _noise_ceiling_z(signal)
     not_reached = signal[-1].copy()
     has_signal = z_top >= 0
@@ -215,6 +269,7 @@ def fit_gentle_surface(zyx: np.ndarray) -> GentleSurfaceResult:
             not_reached=np.zeros((n_y, n_x), dtype=bool),
             warning=WARNING_NO_SIGNAL,
             status=STATUS_NO_SIGNAL,
+            threshold=threshold,
         )
 
     if np.all(z_top[has_signal] == top_index):
@@ -223,6 +278,7 @@ def fit_gentle_surface(zyx: np.ndarray) -> GentleSurfaceResult:
             not_reached=not_reached,
             warning=WARNING_NOT_REACHED,
             status=STATUS_NOT_REACHED,
+            threshold=threshold,
         )
 
     bin_x, bin_y, bin_z = _bin_ceilings(z_top, BIN_PX)
@@ -232,6 +288,7 @@ def fit_gentle_surface(zyx: np.ndarray) -> GentleSurfaceResult:
             not_reached=not_reached,
             warning=WARNING_NO_SIGNAL,
             status=STATUS_NO_SIGNAL,
+            threshold=threshold,
         )
 
     coef = _fit_lowest_gentle_sheet(bin_x, bin_y, bin_z, n_x, n_y)
@@ -251,4 +308,100 @@ def fit_gentle_surface(zyx: np.ndarray) -> GentleSurfaceResult:
         not_reached=not_reached,
         warning=warning,
         status=status,
+        threshold=threshold,
+    )
+
+
+def _design_um(xn: np.ndarray, yn: np.ndarray) -> np.ndarray:
+    return np.column_stack([xn ** 2, xn * yn, yn ** 2, xn, yn, np.ones(xn.shape[0])])
+
+
+def fit_surface_median_parabola(
+    zyx: np.ndarray,
+    x_um_per_px: float,
+    y_um_per_px: float,
+    z_um_per_slice: float,
+) -> GentleSurfaceResult:
+    """Noise-ceiling sheet after a 3x3 XY median and a fixed threshold of 2.
+
+    x, y, and z are in micrometers. Quadratic coefficients stay within
+    +/- PARABOLA_COEF_LIMIT_PER_UM. The sheet is the lowest one that stays
+    at or above every 32 px bin ceiling.
+    """
+    filtered = median_filter(np.asarray(zyx, dtype=np.float32), size=(1, 3, 3))
+    n_z, n_y, n_x = filtered.shape
+    signal = _signal_mask(filtered, MEDIAN_PARABOLA_THRESHOLD, MIN_BLOB_PX)
+    z_top = _noise_ceiling_z(signal)
+    not_reached = signal[-1].copy()
+    has_signal = z_top >= 0
+    top = _top_plane(n_z, n_y, n_x)
+    if not np.any(has_signal):
+        return GentleSurfaceResult(
+            surface_z=top,
+            not_reached=np.zeros((n_y, n_x), dtype=bool),
+            warning=WARNING_NO_SIGNAL,
+            status=STATUS_NO_SIGNAL,
+            threshold=MEDIAN_PARABOLA_THRESHOLD,
+        )
+    if np.all(z_top[has_signal] == n_z - 1):
+        return GentleSurfaceResult(
+            surface_z=top,
+            not_reached=not_reached,
+            warning=WARNING_NOT_REACHED,
+            status=STATUS_NOT_REACHED,
+            threshold=MEDIAN_PARABOLA_THRESHOLD,
+        )
+    bin_x, bin_y, bin_z = _bin_ceilings(z_top, BIN_PX)
+    if len(bin_z) < 1:
+        return GentleSurfaceResult(
+            surface_z=top,
+            not_reached=not_reached,
+            warning=WARNING_NO_SIGNAL,
+            status=STATUS_NO_SIGNAL,
+            threshold=MEDIAN_PARABOLA_THRESHOLD,
+        )
+    half_x = max(0.5 * (n_x - 1) * float(x_um_per_px), 1e-6)
+    half_y = max(0.5 * (n_y - 1) * float(y_um_per_px), 1e-6)
+    xn = (bin_x * float(x_um_per_px) - half_x) / half_x
+    yn = (bin_y * float(y_um_per_px) - half_y) / half_y
+    z_um_bins = bin_z * float(z_um_per_slice)
+    design = _design_um(xn, yn)
+    a_max = PARABOLA_COEF_LIMIT_PER_UM * half_x ** 2
+    b_max = PARABOLA_COEF_LIMIT_PER_UM * half_x * half_y
+    c_max = PARABOLA_COEF_LIMIT_PER_UM * half_y ** 2
+    bounds = [(-a_max, a_max), (-b_max, b_max), (-c_max, c_max), (None, None), (None, None), (None, None)]
+    constraints = [
+        {"type": "ineq", "fun": lambda coef, row=design[i], floor=z_um_bins[i]: float(row @ coef - floor)}
+        for i in range(len(z_um_bins))
+    ]
+    start = np.zeros(6, dtype=float)
+    start[5] = float(np.max(z_um_bins))
+    result = minimize(
+        lambda coef: float(np.mean(design @ coef)),
+        start,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=constraints,
+        options={"maxiter": 800, "ftol": 1e-10},
+    )
+    if not result.success:
+        raise RuntimeError(f"Surface fit failed: {result.message}")
+    coef = np.asarray(result.x, dtype=float)
+    yy, xx = np.indices((n_y, n_x))
+    xnf = (xx.ravel() * float(x_um_per_px) - half_x) / half_x
+    ynf = (yy.ravel() * float(y_um_per_px) - half_y) / half_y
+    surface_um = (_design_um(xnf, ynf) @ coef).reshape(n_y, n_x)
+    surface_z = surface_um / float(z_um_per_slice)
+    if np.any(not_reached):
+        warning: str | None = WARNING_PARTIAL
+        status = STATUS_PARTIAL
+    else:
+        warning = None
+        status = STATUS_REACHED
+    return GentleSurfaceResult(
+        surface_z=surface_z,
+        not_reached=not_reached,
+        warning=warning,
+        status=status,
+        threshold=MEDIAN_PARABOLA_THRESHOLD,
     )

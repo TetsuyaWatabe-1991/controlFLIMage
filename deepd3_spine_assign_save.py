@@ -116,7 +116,7 @@ def loop_spine_assign_save(highmag_folder, highmag_filename, exclude_ini_saved, 
                                                         1)
                 inipath = os.path.join(savefolder, 
                                     os.path.basename(flim_path)[:-9] + f"_{each_key}.ini")
-                pngpath = inipath[:-4]+".png"
+                pngpath = os.path.splitext(inipath)[0]+".png"
                 imshow_with_dend_spine_uncaging(mip_img, spine_zyx, dend_slope, dend_intercept,
                                                 savefig = True,
                                                 savepath = pngpath
@@ -127,7 +127,7 @@ def loop_spine_assign_save(highmag_folder, highmag_filename, exclude_ini_saved, 
             for each_key in result_dict:    
                 # inipath = flim_path[:-9] + f"_{each_key}.ini"
                 inipath = os.path.join(savefolder, os.path.basename(flim_path)[:-9] + f"_{each_key}.ini")
-                pngpath = inipath[:-4]+".png"
+                pngpath = os.path.splitext(inipath)[0]+".png"
                 spine_zyx, dend_slope, dend_intercept, excluded = read_xyz_single(inipath, return_excluded = True)
                 res , _ , _ = define_uncagingPoint_dend_click_multiple(flim_path,
                                                                     read_ini = True,

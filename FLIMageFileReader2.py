@@ -221,6 +221,149 @@ class FileReader:
             image = [np.split(image1, self.nChannels, 0)]
         return image
                     
+    @staticmethod
+    def _page_description(page):
+        """Return a TIFF page ImageDescription as text, if present."""
+        header = None
+        if "ImageDescription" in page.tags:
+            header = page.tags["ImageDescription"].value
+        else:
+            for tag in page.tags.values():
+                if tag.name == "ImageDescription":
+                    header = tag.value
+                    break
+                if hasattr(tag, "value") and isinstance(tag.value, (str, bytes)) and len(str(tag.value)) > 500:
+                    header = tag.value
+                    break
+        if isinstance(header, bytes):
+            header = header.decode("ASCII", errors="ignore")
+        if header is None:
+            return None
+        return str(header)
+
+    def _is_flimage_intensity_tiff(self, file_path: str, header: str) -> bool:
+        """True for a FLIMage intensity stack saved with lifetime acquisition off.
+
+        Real ``.flim`` files are not handled here. A TIFF is included only when
+        page 0 carries a FLIMage header and every acquired channel has one time bin.
+        """
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext not in (".tif", ".tiff"):
+            return False
+        if "FLIMimage" not in header and "State.Acq" not in header:
+            return False
+        return all(int(n_time) <= 1 for n_time in self.n_time)
+
+    def _append_acquired_time(self, description: str) -> None:
+        for line in description.replace("\r\n", "\n").split("\n"):
+            if "Acquired_Time" not in line or " = " not in line:
+                continue
+            self.acqTime.append(line.split(" = ", 1)[1].strip().rstrip(";"))
+
+    def _plane_as_yx(self, plane: np.ndarray) -> np.ndarray:
+        """Return one intensity plane as ``(linesPerFrame, pixelsPerLine)``."""
+        array = np.asarray(plane)
+        if array.ndim == 3 and array.shape[0] == 1:
+            array = array[0]
+        if array.shape == (self.height, self.width):
+            return array
+        if array.shape == (self.width, self.height):
+            return array.T
+        raise ValueError(
+            f"Intensity plane shape {array.shape} does not match "
+            f"{self.height} x {self.width}"
+        )
+
+    def _load_intensity_tiff(self, tif, read_image: bool) -> None:
+        """Stack FLIMage intensity pages into the same layout as a one-bin FLIM.
+
+        A two-channel stack is either one page per channel at each Z, or all Z
+        of channel 1 followed by all Z of channel 2. The smoother Z series is
+        kept. Descriptions after page 0 are only timestamps and must not
+        replace State.
+        """
+        self.flim = True
+        pages = list(tif.pages)
+        for page in pages[1:]:
+            description = self._page_description(page)
+            if not description or "State.Acq" in description:
+                continue
+            self._append_acquired_time(description)
+
+        n_slices = int(self.State.Acq.nSlices or 1)
+        if n_slices < 1:
+            n_slices = 1
+        n_channels = int(self.nChannels)
+        n_pages = len(pages)
+        if n_pages == n_slices * n_channels:
+            blocks = self._channel_blocks(pages, n_slices, n_channels)
+        elif n_pages == n_slices:
+            blocks = [None] * n_channels
+            placed = False
+            for channel in range(n_channels):
+                if int(self.n_time[channel]) > 0:
+                    blocks[channel] = pages
+                    placed = True
+                    break
+            if not placed:
+                blocks[0] = pages
+        else:
+            raise ValueError(
+                f"Intensity TIFF has {n_pages} pages, expected {n_slices} "
+                f"or {n_slices * n_channels} for {n_channels} channels"
+            )
+
+        self.n_images = n_slices
+        if not read_image:
+            return
+
+        for z_index in range(n_slices):
+            channels = []
+            for channel in range(n_channels):
+                block = blocks[channel]
+                if block is None or int(self.n_time[channel]) <= 0:
+                    plane = np.zeros((self.height, self.width, 1), dtype=np.uint16)
+                else:
+                    yx = self._plane_as_yx(np.asarray(block[z_index].asarray()))
+                    plane = np.asarray(yx, dtype=np.uint16).reshape(self.height, self.width, 1)
+                channels.append(plane)
+            self.image.append([channels])
+
+    @staticmethod
+    def _channel_blocks(pages, n_slices: int, n_channels: int):
+        """Group pages into one Z stack per channel.
+
+        Channel-major files store ``n_slices`` pages of channel 1, then channel
+        2. Slice-major files store channel 1 then channel 2 at every Z. The
+        grouping whose neighboring slices have the closer mean intensity is
+        the one FLIMage wrote.
+        """
+        if n_channels < 2 or n_slices < 2:
+            return [pages[c * n_slices:(c + 1) * n_slices] for c in range(n_channels)]
+        means = [
+            float(np.mean(np.asarray(page.asarray(), dtype=np.float64)))
+            for page in pages
+        ]
+        blocked = FileReader._mean_jump(means, n_slices, n_channels, interleaved=False)
+        interleaved = FileReader._mean_jump(means, n_slices, n_channels, interleaved=True)
+        if interleaved < blocked:
+            return [pages[c::n_channels] for c in range(n_channels)]
+        return [pages[c * n_slices:(c + 1) * n_slices] for c in range(n_channels)]
+
+    @staticmethod
+    def _mean_jump(means, n_slices: int, n_channels: int, interleaved: bool) -> float:
+        jumps = []
+        for channel in range(n_channels):
+            if interleaved:
+                series = means[channel::n_channels]
+            else:
+                start = channel * n_slices
+                series = means[start:start + n_slices]
+            jumps.extend(abs(a - b) for a, b in zip(series, series[1:]))
+        if not jumps:
+            return 0.0
+        return float(sum(jumps) / len(jumps))
+
     def read_imageFile(self, file_path, readImage = True, intensity_only=False):
         self.filename = file_path
         self.n_images = 1
@@ -233,87 +376,49 @@ class FileReader:
             
             # Get header from first page
             first_page = tif.pages[0]
-            header = None
-            if 'ImageDescription' in first_page.tags:
-                header = first_page.tags['ImageDescription'].value
-                # tifffile may return bytes or string
-                if isinstance(header, bytes):
-                    header = header.decode('ASCII', errors='ignore')
-            else:
-                # Try to find ImageDescription in other tags
-                for tag in first_page.tags.values():
-                    if tag.name == 'ImageDescription':
-                        header = tag.value
-                        if isinstance(header, bytes):
-                            header = header.decode('ASCII', errors='ignore')
-                        break
-                    elif hasattr(tag, 'value'):
-                        tag_value = tag.value
-                        if isinstance(tag_value, (str, bytes)):
-                            tag_str = tag_value if isinstance(tag_value, str) else str(tag_value)
-                            if len(tag_str) > 500:
-                                header = tag_value
-                                if isinstance(header, bytes):
-                                    header = header.decode('ASCII', errors='ignore')
-                                break
+            header = self._page_description(first_page)
             
             if header is None:
+                tif.close()
                 raise ValueError("Could not find ImageDescription tag in TIFF file")
             
             self.decode_header(header)
-            
-            if readImage:
-                if (os.path.splitext(file_path)[-1] == '.flim'):
-                    # Read first page image
-                    flim = np.array(first_page.asarray()).astype(np.ushort) #Sometimes image is stored in 8bit.
-                    self.image.append(self.decode_FLIM(flim, intensity_only=intensity_only))
-                    self.flim = True
-                else:
-                    self.image.append(np.array(first_page.asarray()))
-                    self.flim = False
-                    
-            self.currentPage += 1  
-            
-            # Process remaining pages
-            for page_idx in range(1, len(tif.pages)):
-                page = tif.pages[page_idx]
-                header = None
-                if 'ImageDescription' in page.tags:
-                    header = page.tags['ImageDescription'].value
-                    if isinstance(header, bytes):
-                        header = header.decode('ASCII', errors='ignore')
-                else:
-                    # Try to find ImageDescription in other tags
-                    for tag in page.tags.values():
-                        if tag.name == 'ImageDescription':
-                            header = tag.value
-                            if isinstance(header, bytes):
-                                header = header.decode('ASCII', errors='ignore')
-                            break
-                        elif hasattr(tag, 'value'):
-                            tag_value = tag.value
-                            if isinstance(tag_value, (str, bytes)):
-                                tag_str = tag_value if isinstance(tag_value, str) else str(tag_value)
-                                if len(tag_str) > 500:
-                                    header = tag_value
-                                    if isinstance(header, bytes):
-                                        header = header.decode('ASCII', errors='ignore')
-                                    break
-                
-                if header:
-                    self.decode_header(header, False)
 
+            if self._is_flimage_intensity_tiff(file_path, header):
+                self._load_intensity_tiff(tif, readImage)
+                tif.close()
+            else:
                 if readImage:
-                    if self.flim:
-                        flim = np.array(page.asarray()).astype(np.ushort) #Sometimes image is stored in 8bit.
+                    if (os.path.splitext(file_path)[-1] == '.flim'):
+                        # Read first page image
+                        flim = np.array(first_page.asarray()).astype(np.ushort) #Sometimes image is stored in 8bit.
                         self.image.append(self.decode_FLIM(flim, intensity_only=intensity_only))
+                        self.flim = True
                     else:
-                        self.image.append(page.asarray())
-                        
-                self.currentPage += 1    
-                self.n_images = self.n_images + 1
-            
-            tif.close()
+                        self.image.append(np.array(first_page.asarray()))
+                        self.flim = False
+
+                self.currentPage += 1
+
+                # Process remaining pages
+                for page_idx in range(1, len(tif.pages)):
+                    page = tif.pages[page_idx]
+                    header = self._page_description(page)
+
+                    if header:
+                        self.decode_header(header, False)
+
+                    if readImage:
+                        if self.flim:
+                            flim = np.array(page.asarray()).astype(np.ushort) #Sometimes image is stored in 8bit.
+                            self.image.append(self.decode_FLIM(flim, intensity_only=intensity_only))
+                        else:
+                            self.image.append(page.asarray())
+
+                    self.currentPage += 1
+                    self.n_images = self.n_images + 1
+
+                tif.close()
         else:
             # Use libtiff
             tif = TIFF.open(file_path, mode = 'r')

@@ -24,9 +24,10 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
         save_auto=True,
         parent=None,
         uncaging_roi_keyframe_count=None,
+        roi_types=None,
     ):
         """Initialize with TIFF-only saving enabled."""
-        super().__init__(combined_df, df_save_path_2, additional_columns, save_auto, parent)
+        super().__init__(combined_df, df_save_path_2, additional_columns, save_auto, parent, roi_types=roi_types)
         self.uncaging_roi_keyframe_count = uncaging_roi_keyframe_count
         self.save_to_dataframe = False  # Disable dataframe saving
         self.save_roi_to_tiff = True   # Enable TIFF saving
@@ -179,9 +180,9 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
             
             # Now base_col points to "Spine" column
             # Update ROI status for each type
-            roi_types = ["Spine", "DendriticShaft", "Background"]
-            
-            # Create a temporary DataFrame for get_roi_status_and_date
+            roi_types = self.roi_types
+
+            # Create a temporary DataFramefor get_roi_status_and_date
             # We need to pass a DataFrame that has 'after_align_save_path'
             temp_df = self.combined_df[self.combined_df['after_align_save_path'] == tiff_path].head(1)
             if len(temp_df) == 0:
@@ -359,7 +360,7 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
             # Import TIFF-only version
             from gui_integration_tiff_only import launch_roi_analysis_gui_tiff_only
             
-            roi_types = ["Spine", "DendriticShaft", "Background"]
+            roi_types = self.roi_types
             rejected_during_run = False
             navigated_away = False
             all_three_complete = False
@@ -697,7 +698,7 @@ class FileSelectionGUITiffOnly(OriginalFileSelectionGUI):
                 roi_mask = create_roi_mask_from_params(roi_params, 'rectangle', image_shape)
                 
                 # Check ROI status for each type and create ROI if not defined
-                roi_types = ["Spine", "DendriticShaft", "Background"]
+                roi_types = self.roi_types
                 roi_created = False
                 
                 for roi_type in roi_types:
@@ -772,6 +773,7 @@ def launch_file_selection_gui_tiff_only(
     additional_columns=None,
     save_auto=True,
     uncaging_roi_keyframe_count=None,
+    roi_types=None,
 ):
     """Launch the file selection GUI with TIFF-only ROI saving
     
@@ -782,7 +784,8 @@ def launch_file_selection_gui_tiff_only(
         save_auto: Whether to auto-save dataframe (not used for ROI masks)
         uncaging_roi_keyframe_count: Number of representative uncaging frames for ROI editing.
             None or >= n_unc uses legacy all-frame editing.
-    
+        roi_types: ROI types to show and draw; None = Spine, DendriticShaft, Background.
+
     Returns:
         FileSelectionGUITiffOnly instance
     """
@@ -803,6 +806,7 @@ def launch_file_selection_gui_tiff_only(
             additional_columns,
             save_auto,
             uncaging_roi_keyframe_count=uncaging_roi_keyframe_count,
+            roi_types=roi_types,
         )
         print("Showing GUI window...")
         gui.show()

@@ -44,7 +44,7 @@ plt.ylabel("\u0394spine vol")
 plt.xlabel("Dendritic shaft F/F0 ")
 
 
-savepath = csv_path[:-5]+"_shaftF_F0_vs_deltavol.png"
+savepath = os.path.splitext(csv_path)[0]+"_shaftF_F0_vs_deltavol.png"
 plt.savefig(savepath, dpi = 150, bbox_inches = "tight")
 plt.show()
 
@@ -63,7 +63,7 @@ plt.xlim(xlim)
 plt.ylabel("\u0394spine vol")
 plt.xlabel("Stimulated spine F/F0 ")
 
-savepath = csv_path[:-5]+"_spineF_F0_vs_deltavol.png"
+savepath = os.path.splitext(csv_path)[0]+"_spineF_F0_vs_deltavol.png"
 plt.savefig(savepath, dpi = 150, bbox_inches = "tight")
 plt.show()
 

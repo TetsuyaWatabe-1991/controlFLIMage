@@ -32,10 +32,7 @@ cfg = LTPGroupAnalysisConfig(
         "APV_": "APV",
     },
     condition_order=["CM", "APV"],
-    condition_styles={
-        "CM": {"indiv": "0.75", "mean": "k"},
-        "APV": {"indiv": "#E8B4B0", "mean": "r"},
-    },
+    condition_styles=["k", "r", "b", "g"],
     spine_volume_delta_ff0_min=spine_volume_delta_ff0_min,
     spine_volume_delta_ff0_max=spine_volume_delta_ff0_max,
 )

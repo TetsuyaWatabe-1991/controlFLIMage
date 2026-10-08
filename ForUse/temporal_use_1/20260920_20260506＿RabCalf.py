@@ -33,10 +33,7 @@ cfg = LTPGroupAnalysisConfig(
         "calf_": "Calf",
     },
     condition_order=["Rab", "Calf"],
-    condition_styles={
-        "Rab": {"indiv": "0.75", "mean": "k"},
-        "Calf": {"indiv": "#E8B4B0", "mean": "r"},
-    },
+    condition_styles=["k", "r", "b", "g"],
     spine_volume_delta_ff0_min=spine_volume_delta_ff0_min,
     spine_volume_delta_ff0_max=spine_volume_delta_ff0_max,
 )

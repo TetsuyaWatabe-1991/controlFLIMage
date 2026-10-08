@@ -159,7 +159,7 @@ for group, files in grouped_files.items():
 
                 ax.set_title("ROI")
                 ax.axis("off")
-                savepath = os.path.join(savefolder, basename[:-5] + "_roi.png")
+                savepath = os.path.join(savefolder, os.path.splitext(basename)[0] + "_roi.png")
                 plt.savefig(savepath, dpi=150, bbox_inches = "tight")
                 plt.close()
                 

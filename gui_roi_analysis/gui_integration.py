@@ -18,6 +18,40 @@ from roi_analysis_gui import ROIAnalysisGUI
 SHIFT_DIRECTION = -1 # +1: shift to the right, -1: shift to the left
 
 
+GROUP_SKIPPED_PREFIX = "group skipped: "
+
+
+def group_frame_index_skip_reason(
+    frame_indices,
+    n_aligned: int,
+    n_files: int,
+) -> str | None:
+    """Return a skip reason when dataframe frame indices fall outside the stack.
+
+    Shape-mismatched files are dropped at load time, so the aligned stack can
+    be shorter than the file list. Callers should skip that group instead of
+    indexing the stack.
+    """
+    indices = []
+    for value in frame_indices:
+        try:
+            index = int(value)
+        except (TypeError, ValueError):
+            continue
+        if index >= 0:
+            indices.append(index)
+    if int(n_aligned) <= 0:
+        return f"loaded 0 frames from {int(n_files)} files; group skipped"
+    outside = [index for index in indices if index >= int(n_aligned)]
+    if not outside:
+        return None
+    return (
+        f"loaded {int(n_aligned)} frames from {int(n_files)} files; "
+        f"frame index {min(outside)} is outside the aligned stack "
+        f"(shape mismatch); group skipped"
+    )
+
+
 def _filelist_dedup_by_resolved_path(file_path_series):
     """Deduplicate file paths by resolved path (so / vs \\ do not create duplicates)."""
     seen = set()
@@ -144,6 +178,19 @@ def first_processing_for_flim_files(
 
             # Add alignment data validation
             print(f"Group {each_group}: Aligned array shape: {Aligned_4d_array.shape}, Shifts shape: {shifts.shape}")
+
+            skip_reason = group_frame_index_skip_reason(
+                each_group_df["nth_omit_induction"].tolist(),
+                int(np.asarray(shifts).shape[0]),
+                len(filelist),
+            )
+            if skip_reason:
+                print(f"  SKIP: {each_group}: {skip_reason}")
+                error_dict[str(each_group)] = skip_reason
+                combined_df.loc[each_group_df.index, "error_message"] = (
+                    GROUP_SKIPPED_PREFIX + skip_reason
+                )
+                continue
 
             # Process uncaging positions
             each_group_df = process_uncaging_positions(each_group_df, shifts, Aligned_4d_array)
