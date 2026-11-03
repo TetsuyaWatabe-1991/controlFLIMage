@@ -23,6 +23,8 @@ $script:PreRestoreBackupMaxCount = 30
 $script:ProfileHistoryMaxCount = 10
 $script:ProfileHistoryFolderName = '_history'
 $script:UncagingCalibSetupKeys = @('State.Uncaging.CalibV', 'State.Uncaging.Calib_beta')
+# Never overwritten by Copy shared keys. Each file keeps its own value.
+$script:SharedKeyCopyProtectedKeys = @('State.Acq.version')
 # Setup keys that FLIMage updates per session (open/grab/stage) — omit from save_changelog.jsonl (see FLIMage2 ScanParameters / FLIMage_IO).
 $script:ChangelogIgnoreSetupKeys = @(
     'State.Acq.triggerTime'
@@ -377,6 +379,43 @@ function Test-FLIMageRunning {
     })
 }
 
+function Set-CopiedItemTimestamps {
+    param(
+        [System.IO.FileSystemInfo]$SourceItem,
+        [string]$DestinationPath
+    )
+    if ([string]::IsNullOrWhiteSpace($DestinationPath)) { return }
+    if (-not (Test-Path -LiteralPath $DestinationPath)) { return }
+    try {
+        $created = $SourceItem.CreationTime
+        $written = $SourceItem.LastWriteTime
+        if ($SourceItem.PSIsContainer) {
+            [System.IO.Directory]::SetCreationTime($DestinationPath, $created)
+            [System.IO.Directory]::SetLastWriteTime($DestinationPath, $written)
+        } else {
+            [System.IO.File]::SetCreationTime($DestinationPath, $created)
+            [System.IO.File]::SetLastWriteTime($DestinationPath, $written)
+        }
+    } catch {
+        # Best effort. A read-only or locked item should not fail save or restore.
+    }
+}
+
+function Sync-CopiedTreeTimestamps {
+    param([string]$Source, [string]$Destination)
+    if (-not (Test-Path -LiteralPath $Source)) { return }
+    if (-not (Test-Path -LiteralPath $Destination)) { return }
+    $srcRoot = Get-Item -LiteralPath $Source -Force
+    $children = @(Get-ChildItem -LiteralPath $Source -Recurse -Force -ErrorAction SilentlyContinue |
+        Sort-Object { $_.FullName.Length } -Descending)
+    foreach ($item in $children) {
+        $relative = $item.FullName.Substring($srcRoot.FullName.Length).TrimStart('\', '/')
+        if ([string]::IsNullOrWhiteSpace($relative)) { continue }
+        Set-CopiedItemTimestamps -SourceItem $item -DestinationPath (Join-Path $Destination $relative)
+    }
+    Set-CopiedItemTimestamps -SourceItem $srcRoot -DestinationPath $Destination
+}
+
 function Copy-Tree {
     param([string]$Source, [string]$Destination)
     if (-not (Test-Path -LiteralPath $Source)) { return }
@@ -388,6 +427,7 @@ function Copy-Tree {
         Remove-Item -LiteralPath $Destination -Recurse -Force
     }
     Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force
+    Sync-CopiedTreeTimestamps -Source $Source -Destination $Destination
 }
 
 function Copy-InitFilesRootOnly {
@@ -395,13 +435,21 @@ function Copy-InitFilesRootOnly {
     if (-not (Test-Path -LiteralPath $SourceDir)) { return }
     New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
     Get-ChildItem -LiteralPath $SourceDir -File -ErrorAction SilentlyContinue | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $DestDir $_.Name) -Force
+        $destPath = Join-Path $DestDir $_.Name
+        Copy-Item -LiteralPath $_.FullName -Destination $destPath -Force
+        Set-CopiedItemTimestamps -SourceItem $_ -DestinationPath $destPath
     }
+    Set-CopiedItemTimestamps -SourceItem (Get-Item -LiteralPath $SourceDir -Force) -DestinationPath $DestDir
 }
 
 function Test-IsUncagingCalibSetupKey {
     param([string]$Key)
     $script:UncagingCalibSetupKeys -contains $Key
+}
+
+function Test-IsSharedKeyCopyProtectedKey {
+    param([string]$Key)
+    $script:SharedKeyCopyProtectedKeys -contains $Key
 }
 
 function Get-SetupLineValuePart {
@@ -520,7 +568,9 @@ function Copy-InitFilesRootForRestore {
         } else {
             Copy-Item -LiteralPath $_.FullName -Destination $destPath -Force
         }
+        Set-CopiedItemTimestamps -SourceItem $_ -DestinationPath $destPath
     }
+    Set-CopiedItemTimestamps -SourceItem (Get-Item -LiteralPath $SourceDir -Force) -DestinationPath $DestDir
 }
 
 function Copy-InitOtherSubfolders {
@@ -579,6 +629,10 @@ function Merge-DefaultSetupFromMaster {
     foreach ($line in [System.IO.File]::ReadLines($TargetPath)) {
         $key = Get-SetupLineKey -Line $line
         if ($key -and $targetMap.ContainsKey($key) -and $masterMap.ContainsKey($key)) {
+            if (Test-IsSharedKeyCopyProtectedKey -Key $key) {
+                $newLines.Add($line)
+                continue
+            }
             if ($script:PreserveUncagingCalibOnRestore -and (Test-IsUncagingCalibSetupKey -Key $key)) {
                 $newLines.Add($line)
                 continue
@@ -662,6 +716,7 @@ Keys that exist only in the master file are not copied into older files.
     return $result
 }
 
+# Save no longer calls this. Shared-key copy is explicit via Advanced -> Copy shared keys.
 function Invoke-DefaultSyncPromptOnSave {
     param([string]$InitFilesPath)
 
@@ -1203,11 +1258,22 @@ function Save-Profile {
 
     $manifestPath = Join-Path $root 'manifest.json'
     $existingRestoredAt = $null
+    $existingPasswordSalt = $null
+    $existingPasswordHash = $null
+    $existingPasswordIterations = $null
     if (Test-Path -LiteralPath $manifestPath) {
         try {
             $existingManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if (Test-ManifestHasProperty -Json $existingManifest -PropertyName 'restored_at') {
                 $existingRestoredAt = [string]$existingManifest.restored_at
+            }
+            if (Test-ManifestHasProperty -Json $existingManifest -PropertyName 'password_hash') {
+                $existingPasswordSalt = [string]$existingManifest.password_salt
+                $existingPasswordHash = [string]$existingManifest.password_hash
+                $existingPasswordIterations = 100000
+                if ($existingManifest.password_iterations) {
+                    $existingPasswordIterations = [int]$existingManifest.password_iterations
+                }
             }
         } catch { }
     }
@@ -1245,6 +1311,9 @@ function Save-Profile {
     if ($Components.appDataLocal) {
         Copy-Tree (Get-LocalFlimagePath) (Join-Path $root "AppData_Local")
     }
+    if ($Components.initRoot -and (Test-Path -LiteralPath $liveInit) -and (Test-Path -LiteralPath $archInit)) {
+        Set-CopiedItemTimestamps -SourceItem (Get-Item -LiteralPath $liveInit -Force) -DestinationPath $archInit
+    }
 
     $defaultFiles = @()
     if (Test-Path -LiteralPath $archInit) {
@@ -1271,6 +1340,12 @@ function Save-Profile {
         foreach ($key in $ManifestExtra.Keys) {
             $manifest[$key] = $ManifestExtra[$key]
         }
+    }
+    # A normal save must keep an existing overwrite password. Restore never reads it.
+    if ($existingPasswordHash -and -not $manifest.Contains('password_hash')) {
+        $manifest.password_salt = $existingPasswordSalt
+        $manifest.password_hash = $existingPasswordHash
+        $manifest.password_iterations = $existingPasswordIterations
     }
     Write-ProfileManifestJson -ProfileRoot $root -ManifestObject $manifest
     return @{ NoChanges = $false }
@@ -1445,7 +1520,7 @@ function Get-ProfileHistoryListEntries {
         $entries += New-ProfileListEntry -Name $label -Kind 'profile_history' -StorageRoot $slotRoot `
             -SavedAt $meta.SavedAtDisplay -ModifiedAt $meta.ModifiedAtDisplay -RestoredAt $meta.RestoredAtDisplay `
             -ModifiedAtSort $meta.ModifiedAtSort -RestoredAtSort $meta.RestoredAtSort -HasRestoredAt $meta.HasRestoredAt `
-            -RestoreTarget $ProfileName
+            -RestoreTarget $ProfileName -HasSavePassword $meta.HasSavePassword
     }
     return @($entries | Sort-Object @{ Expression = 'ModifiedAtSort'; Descending = $true }, Name)
 }
@@ -1621,6 +1696,9 @@ function Restore-Profile {
     if ($Components.appDataLocal) {
         Copy-Tree (Join-Path $root "AppData_Local") (Get-LocalFlimagePath)
     }
+    if ($Components.initRoot -and (Test-Path -LiteralPath $archInit) -and (Test-Path -LiteralPath $liveInit)) {
+        Set-CopiedItemTimestamps -SourceItem (Get-Item -LiteralPath $archInit -Force) -DestinationPath $liveInit
+    }
 }
 
 function Get-LatestActivityUtcFromSortFields {
@@ -1705,6 +1783,7 @@ function Get-ProfileManifestInfo {
         HasRestoredAt        = $false
         ProfileKind          = 'user'
         RestoreTargetProfile = ''
+        HasSavePassword      = $false
     }
     $item = Get-Item -LiteralPath $ProfileRoot
     $info.ModifiedAt = $item.LastWriteTime
@@ -1723,6 +1802,9 @@ function Get-ProfileManifestInfo {
             }
             if ($json.restore_target_profile) {
                 $info.RestoreTargetProfile = [string]$json.restore_target_profile
+            }
+            if (Test-ManifestHasProperty -Json $json -PropertyName 'password_hash') {
+                $info.HasSavePassword = $true
             }
 
             $modifiedSource = $null
@@ -1831,19 +1913,21 @@ function New-ProfileListEntry {
         [datetime]$ModifiedAtSort,
         [datetime]$RestoredAtSort,
         [bool]$HasRestoredAt = $false,
-        [string]$RestoreTarget = ''
+        [string]$RestoreTarget = '',
+        [bool]$HasSavePassword = $false
     )
     return [pscustomobject]@{
-        Name           = $Name
-        Kind           = $Kind
-        StorageRoot    = $StorageRoot
-        SavedAt        = $SavedAt
-        ModifiedAt     = $ModifiedAt
-        RestoredAt     = $RestoredAt
-        ModifiedAtSort = $ModifiedAtSort
-        RestoredAtSort = $RestoredAtSort
-        HasRestoredAt  = $HasRestoredAt
-        RestoreTarget  = $RestoreTarget
+        Name            = $Name
+        Kind            = $Kind
+        StorageRoot     = $StorageRoot
+        SavedAt         = $SavedAt
+        ModifiedAt      = $ModifiedAt
+        RestoredAt      = $RestoredAt
+        ModifiedAtSort  = $ModifiedAtSort
+        RestoredAtSort  = $RestoredAtSort
+        HasRestoredAt   = $HasRestoredAt
+        RestoreTarget   = $RestoreTarget
+        HasSavePassword = $HasSavePassword
     }
 }
 
@@ -1861,7 +1945,7 @@ function Get-ProfileListEntries {
         $entries += New-ProfileListEntry -Name $dir.Name -Kind $kind -StorageRoot $dir.FullName `
             -SavedAt $meta.SavedAtDisplay -ModifiedAt $meta.ModifiedAtDisplay -RestoredAt $meta.RestoredAtDisplay `
             -ModifiedAtSort $meta.ModifiedAtSort -RestoredAtSort $meta.RestoredAtSort -HasRestoredAt $meta.HasRestoredAt `
-            -RestoreTarget $meta.RestoreTargetProfile
+            -RestoreTarget $meta.RestoreTargetProfile -HasSavePassword $meta.HasSavePassword
     }
     return @($entries | Sort-Object @{ Expression = 'RestoredAtSort'; Descending = $true }, Name)
 }
@@ -1876,7 +1960,7 @@ function Get-MonthlyBackupListEntries {
         $entries += New-ProfileListEntry -Name $dir.Name -Kind $kind -StorageRoot $dir.FullName `
             -SavedAt $meta.SavedAtDisplay -ModifiedAt $meta.ModifiedAtDisplay -RestoredAt $meta.RestoredAtDisplay `
             -ModifiedAtSort $meta.ModifiedAtSort -RestoredAtSort $meta.RestoredAtSort -HasRestoredAt $meta.HasRestoredAt `
-            -RestoreTarget $meta.RestoreTargetProfile
+            -RestoreTarget $meta.RestoreTargetProfile -HasSavePassword $meta.HasSavePassword
     }
     return @($entries | Sort-Object @{ Expression = 'ModifiedAtSort'; Descending = $true }, Name)
 }
@@ -1893,22 +1977,23 @@ function Get-PreRestoreBackupListEntries {
         $entries += New-ProfileListEntry -Name ("slot_{0:D2}" -f $i) -Kind $kind -StorageRoot $slotRoot `
             -SavedAt $meta.SavedAtDisplay -ModifiedAt $meta.ModifiedAtDisplay -RestoredAt $meta.RestoredAtDisplay `
             -ModifiedAtSort $meta.ModifiedAtSort -RestoredAtSort $meta.RestoredAtSort -HasRestoredAt $meta.HasRestoredAt `
-            -RestoreTarget $meta.RestoreTargetProfile
+            -RestoreTarget $meta.RestoreTargetProfile -HasSavePassword $meta.HasSavePassword
     }
     return @($entries)
 }
 
 function Get-ProfileListDisplayName {
     param($Entry)
-    if ($Entry.Kind -eq 'auto_backup') { return "$($Entry.Name) [AutoBackup]" }
-    if ($Entry.Kind -eq 'profile_history') { return $Entry.Name }
-    if ($Entry.Kind -eq 'pre_restore') {
-        if ($Entry.RestoreTarget) {
-            return "$($Entry.Name) (before: $($Entry.RestoreTarget))"
-        }
-        return $Entry.Name
+    $name = [string]$Entry.Name
+    if ($Entry.Kind -eq 'auto_backup') {
+        $name = "$($Entry.Name) [AutoBackup]"
+    } elseif ($Entry.Kind -eq 'pre_restore' -and $Entry.RestoreTarget) {
+        $name = "$($Entry.Name) (before: $($Entry.RestoreTarget))"
     }
-    return $Entry.Name
+    if ($Entry.HasSavePassword) {
+        $name = "$name [password]"
+    }
+    return $name
 }
 
 function Test-ProfileListEntryMatchesFilter {
@@ -1970,6 +2055,78 @@ function Get-ProfileRestoreFolderForKind {
     return $script:ProfilesBase
 }
 
+function Get-ArchiveLocationHelpText {
+    $folder = Get-ArchivedProfilesBase
+    $profiles = $script:ProfilesBase
+    return @(
+        'Archive zips the selected profile and removes it from this list.'
+        ''
+        'The ZIP is saved in:'
+        $folder
+        ''
+        'This is not the Windows Recycle Bin.'
+        'To use the profile again, unzip that file and move the folder back into:'
+        $profiles
+    ) -join "`n"
+}
+
+function Show-ArchiveLocationDialog {
+    param(
+        [string]$Title,
+        [string]$Message,
+        [string]$FolderPath
+    )
+    if ([string]::IsNullOrWhiteSpace($FolderPath)) {
+        $FolderPath = Get-ArchivedProfilesBase
+    }
+    $script:ArchiveHelpFolder = $FolderPath
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text = $Title
+    $dlg.ClientSize = New-Object System.Drawing.Size(520, 230)
+    $dlg.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+    $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dlg.MaximizeBox = $false
+    $dlg.MinimizeBox = $false
+    $dlg.ShowInTaskbar = $false
+
+    $txt = New-Object System.Windows.Forms.TextBox
+    $txt.Location = New-Object System.Drawing.Point(12, 12)
+    $txt.Size = New-Object System.Drawing.Size(496, 160)
+    $txt.Multiline = $true
+    $txt.ReadOnly = $true
+    $txt.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+    $txt.Text = $Message
+    $dlg.Controls.Add($txt)
+
+    $btnOpen = New-Object System.Windows.Forms.Button
+    $btnOpen.Location = New-Object System.Drawing.Point(12, 186)
+    $btnOpen.Size = New-Object System.Drawing.Size(120, 28)
+    $btnOpen.Text = 'Open folder'
+    $dlg.Controls.Add($btnOpen)
+
+    $btnOk = New-Object System.Windows.Forms.Button
+    $btnOk.Location = New-Object System.Drawing.Point(412, 186)
+    $btnOk.Size = New-Object System.Drawing.Size(96, 28)
+    $btnOk.Text = 'OK'
+    $btnOk.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $dlg.AcceptButton = $btnOk
+    $dlg.CancelButton = $btnOk
+    $dlg.Controls.Add($btnOk)
+
+    $btnOpen.Add_Click({
+        $folder = $script:ArchiveHelpFolder
+        if ([string]::IsNullOrWhiteSpace($folder)) { return }
+        if (-not (Test-Path -LiteralPath $folder)) {
+            New-Item -ItemType Directory -Path $folder -Force | Out-Null
+        }
+        Start-Process -FilePath explorer.exe -ArgumentList $folder
+    })
+
+    [void]$dlg.ShowDialog($form)
+    $dlg.Dispose()
+}
+
 function Confirm-ArchiveProfile {
     param(
         [string]$ProfileName,
@@ -1979,30 +2136,27 @@ function Confirm-ArchiveProfile {
     )
     $archiveBase = Get-ArchivedProfilesBase
     $restoreFolder = Get-ProfileRestoreFolderForKind -Kind $Kind
-    $kindNote = if ($Kind -eq 'auto_backup') {
-        "This profile is stored as an auto-backup."
-    } else {
-        "This is a user profile under your Profiles folder."
+    $kindLine = ''
+    if ($Kind -eq 'auto_backup') {
+        $kindLine = "This profile is currently an auto-backup.`n"
     }
-
-    $message = @"
-You are about to archive profile '$ProfileName'.
-
-$kindNote
-
-The profile folder will be compressed (ZIP) and saved as:
-$ZipPath
-
-The original folder will be removed:
-$SourceRoot
-
-To restore later:
-1. Extract (unzip) the archive file above.
-2. Move the extracted folder (name: $ProfileName) into:
-$restoreFolder
-
-Continue with archive?
-"@
+    $message = @(
+        "Archive profile '$ProfileName'?"
+        ''
+        'It will be zipped and removed from the profile list.'
+        'ZIP folder:'
+        $archiveBase
+        ''
+        'File:'
+        $ZipPath
+        ''
+        'The original folder will be removed:'
+        $SourceRoot
+        $kindLine
+        'This is not the Windows Recycle Bin.'
+        'To use it again, unzip the file and move the folder back into:'
+        $restoreFolder
+    ) -join "`n"
 
     $result = [System.Windows.Forms.MessageBox]::Show(
         $message,
@@ -2050,12 +2204,8 @@ function Invoke-ArchiveProfile {
         throw
     }
 
-    [System.Windows.Forms.MessageBox]::Show(
-        "Profile '$ProfileName' was archived to:`n$zipPath",
-        "Archive complete",
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        [System.Windows.Forms.MessageBoxIcon]::Information
-    ) | Out-Null
+    $done = "Profile '$ProfileName' was removed from the list.`n`nZIP file:`n$zipPath`n`nFolder:`n$archiveBase"
+    Show-ArchiveLocationDialog -Title 'Archive complete' -FolderPath $archiveBase -Message $done
     return $true
 }
 
@@ -2099,451 +2249,6 @@ function Invoke-RestoreFromBrowseBackupEntry {
     return $true
 }
 
-function Show-ProfileBrowseDialog {
-    param(
-        [string]$InitialFilter = '',
-        [string]$InitialSelection = ''
-    )
-
-    $browseState = @{
-        Archived           = $false
-        Renamed            = $false
-        RenamedTo          = $null
-        RestoredFromBackup = $false
-    }
-    # Hashtable so event handlers (column sort, etc.) share state across scriptblock scopes.
-    $browseUiState = @{
-        ViewMode           = 'profiles'
-        SortColumn         = 2
-        Ascending          = $false
-        HistoryProfileName = $null
-    }
-    $entryByTag = @{}
-
-    $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text = 'Browse profiles'
-    $dlg.ClientSize = New-Object System.Drawing.Size(520, 430)
-    $dlg.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
-    $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
-    $dlg.MaximizeBox = $false
-    $dlg.MinimizeBox = $false
-    $dlg.ShowInTaskbar = $false
-
-    $lblFilter = New-Object System.Windows.Forms.Label
-    $lblFilter.Location = New-Object System.Drawing.Point(12, 14)
-    $lblFilter.AutoSize = $true
-    $lblFilter.Text = 'Filter:'
-    $dlg.Controls.Add($lblFilter)
-
-    $txtFilter = New-Object System.Windows.Forms.TextBox
-    $txtFilter.Location = New-Object System.Drawing.Point(56, 11)
-    $txtFilter.Size = New-Object System.Drawing.Size(452, 22)
-    $txtFilter.Text = $InitialFilter
-    $dlg.Controls.Add($txtFilter)
-
-    $list = New-Object System.Windows.Forms.ListView
-    $list.Location = New-Object System.Drawing.Point(12, 42)
-    $list.Size = New-Object System.Drawing.Size(496, 296)
-    $list.View = [System.Windows.Forms.View]::Details
-    $list.FullRowSelect = $true
-    $list.HideSelection = $false
-    $list.MultiSelect = $false
-    $list.GridLines = $true
-    [void]$list.Columns.Add('Profile', 220)
-    [void]$list.Columns.Add('Modified', 132)
-    [void]$list.Columns.Add('Restored', 132)
-    $dlg.Controls.Add($list)
-
-    $lblCount = New-Object System.Windows.Forms.Label
-    $lblCount.Location = New-Object System.Drawing.Point(12, 344)
-    $lblCount.Size = New-Object System.Drawing.Size(496, 18)
-    $dlg.Controls.Add($lblCount)
-
-    $btnArchive = New-Object System.Windows.Forms.Button
-    $btnArchive.Location = New-Object System.Drawing.Point(12, 368)
-    $btnArchive.Size = New-Object System.Drawing.Size(72, 28)
-    $btnArchive.Text = 'Archive'
-    $dlg.Controls.Add($btnArchive)
-
-    $btnRename = New-Object System.Windows.Forms.Button
-    $btnRename.Location = New-Object System.Drawing.Point(90, 368)
-    $btnRename.Size = New-Object System.Drawing.Size(72, 28)
-    $btnRename.Text = 'Rename'
-    $dlg.Controls.Add($btnRename)
-
-    $btnMonthlyRestore = New-Object System.Windows.Forms.Button
-    $btnMonthlyRestore.Location = New-Object System.Drawing.Point(168, 368)
-    $btnMonthlyRestore.Size = New-Object System.Drawing.Size(168, 28)
-    $btnMonthlyRestore.Text = 'Restore from monthly backup'
-    $dlg.Controls.Add($btnMonthlyRestore)
-
-    $btnPreRestoreBrowse = New-Object System.Windows.Forms.Button
-    $btnPreRestoreBrowse.Location = New-Object System.Drawing.Point(12, 400)
-    $btnPreRestoreBrowse.Size = New-Object System.Drawing.Size(150, 28)
-    $btnPreRestoreBrowse.Text = 'Recent 30 backups'
-    $dlg.Controls.Add($btnPreRestoreBrowse)
-
-    $btnProfileHistory = New-Object System.Windows.Forms.Button
-    $btnProfileHistory.Location = New-Object System.Drawing.Point(168, 400)
-    $btnProfileHistory.Size = New-Object System.Drawing.Size(168, 28)
-    $btnProfileHistory.Text = 'Profile history (10)'
-    $btnProfileHistory.Enabled = $false
-    $dlg.Controls.Add($btnProfileHistory)
-
-    $btnOk = New-Object System.Windows.Forms.Button
-    $btnOk.Location = New-Object System.Drawing.Point(342, 400)
-    $btnOk.Size = New-Object System.Drawing.Size(82, 28)
-    $btnOk.Text = 'OK'
-    $dlg.Controls.Add($btnOk)
-
-    $btnCancel = New-Object System.Windows.Forms.Button
-    $btnCancel.Location = New-Object System.Drawing.Point(430, 400)
-    $btnCancel.Size = New-Object System.Drawing.Size(82, 28)
-    $btnCancel.Text = 'Cancel'
-    $dlg.CancelButton = $btnCancel
-    $dlg.Controls.Add($btnCancel)
-
-    $getEntriesForViewMode = {
-        switch ($browseUiState.ViewMode) {
-            'monthly'         { return @(Get-MonthlyBackupListEntries) }
-            'prerestore'      { return @(Get-PreRestoreBackupListEntries) }
-            'profilehistory'  { return @(Get-ProfileHistoryListEntries -ProfileName $browseUiState.HistoryProfileName) }
-            default           { return @(Get-ProfileListEntries) }
-        }
-    }
-
-    $updateProfileHistoryButtonState = {
-        $btnProfileHistory.Enabled = (
-            $browseUiState.ViewMode -eq 'profiles' -and
-            $list.SelectedItems.Count -gt 0
-        )
-    }
-
-    $applyBrowseViewMode = {
-        $isProfiles = ($browseUiState.ViewMode -eq 'profiles')
-        $btnArchive.Visible = $isProfiles
-        $btnRename.Visible = $isProfiles
-        $btnMonthlyRestore.Visible = $isProfiles
-        $btnPreRestoreBrowse.Visible = $isProfiles
-        $btnProfileHistory.Visible = $isProfiles
-        if ($isProfiles) {
-            $dlg.Text = 'Browse profiles'
-            $btnOk.Text = 'OK'
-            $btnCancel.Text = 'Cancel'
-            $dlg.CancelButton = $btnCancel
-            & $updateProfileHistoryButtonState
-        } elseif ($browseUiState.ViewMode -eq 'monthly') {
-            $dlg.Text = 'Monthly auto-backups (restore only)'
-            $btnOk.Text = 'Restore'
-            $btnCancel.Text = 'Back'
-            $dlg.CancelButton = $null
-            $browseUiState.SortColumn = 1
-            $browseUiState.Ascending = $false
-        } elseif ($browseUiState.ViewMode -eq 'profilehistory') {
-            $histName = $browseUiState.HistoryProfileName
-            $dlg.Text = "Profile history: $histName (restore only)"
-            $btnOk.Text = 'Restore'
-            $btnCancel.Text = 'Back'
-            $dlg.CancelButton = $null
-            $browseUiState.SortColumn = 1
-            $browseUiState.Ascending = $false
-        } else {
-            $dlg.Text = 'Recent pre-restore backups (restore only)'
-            $btnOk.Text = 'Restore'
-            $btnCancel.Text = 'Back'
-            $dlg.CancelButton = $null
-            $browseUiState.SortColumn = 1
-            $browseUiState.Ascending = $false
-        }
-        & $repopulateList
-    }
-
-    $acceptSelection = {
-        if ($list.SelectedItems.Count -eq 0) { return }
-        if ($browseUiState.ViewMode -eq 'profiles') {
-            $dlg.DialogResult = [System.Windows.Forms.DialogResult]::OK
-            $dlg.Close()
-            return
-        }
-        if (-not (Confirm-NotRunning)) { return }
-        $tag = [string]$list.SelectedItems[0].Tag
-        if (-not $entryByTag.ContainsKey($tag)) { return }
-        $entry = $entryByTag[$tag]
-        try {
-            Sync-ManagerConfigFromUi
-            $components = Get-SelectedComponents
-            $scope = Get-SelectedComponentSummary
-            if (Invoke-RestoreFromBrowseBackupEntry -Entry $entry -Components $components -Scope $scope) {
-                $browseState.RestoredFromBackup = $true
-                $dlg.DialogResult = [System.Windows.Forms.DialogResult]::OK
-                $dlg.Close()
-            }
-        } catch {
-            [System.Windows.Forms.MessageBox]::Show(
-                $_.Exception.Message,
-                "Restore failed",
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Error
-            ) | Out-Null
-        }
-    }
-
-    $updateBrowseColumnHeaders = {
-        $profileHeader = 'Profile'
-        $modifiedHeader = 'Modified'
-        $restoredHeader = 'Restored'
-        if ($browseUiState.SortColumn -eq 0) {
-            $profileHeader += if ($browseUiState.Ascending) { ' ^' } else { ' v' }
-        } elseif ($browseUiState.SortColumn -eq 1) {
-            $modifiedHeader += if ($browseUiState.Ascending) { ' ^' } else { ' v' }
-        } elseif ($browseUiState.SortColumn -eq 2) {
-            $restoredHeader += if ($browseUiState.Ascending) { ' ^' } else { ' v' }
-        }
-        $list.Columns[0].Text = $profileHeader
-        $list.Columns[1].Text = $modifiedHeader
-        $list.Columns[2].Text = $restoredHeader
-    }
-
-    $repopulateList = {
-        $keepTag = $null
-        if ($list.SelectedItems.Count -gt 0) {
-            $keepTag = [string]$list.SelectedItems[0].Tag
-        }
-
-        $list.BeginUpdate()
-        $list.Items.Clear()
-        $entryByTag.Clear()
-        $filter = $txtFilter.Text.Trim()
-        $allEntries = @(& $getEntriesForViewMode)
-        $filtered = @($allEntries | Where-Object {
-                Test-ProfileListEntryMatchesFilter -Entry $_ -Filter $filter
-            })
-        $sorted = Sort-ProfileListEntries -Entries $filtered -SortColumn $browseUiState.SortColumn -Ascending $browseUiState.Ascending
-        foreach ($entry in $sorted) {
-            $tag = $entry.StorageRoot
-            $entryByTag[$tag] = $entry
-            $item = New-Object System.Windows.Forms.ListViewItem((Get-ProfileListDisplayName -Entry $entry))
-            [void]$item.SubItems.Add($entry.ModifiedAt)
-            [void]$item.SubItems.Add($entry.RestoredAt)
-            $item.Tag = $tag
-            [void]$list.Items.Add($item)
-        }
-        $list.EndUpdate()
-        & $updateBrowseColumnHeaders
-        $countLabel = switch ($browseUiState.ViewMode) {
-            'monthly'        { 'monthly backup(s)' }
-            'prerestore'     { 'pre-restore snapshot(s)' }
-            'profilehistory' { 'history snapshot(s)' }
-            default          { 'profile(s)' }
-        }
-        $lblCount.Text = if ($filter) {
-            "{0} shown / {1} total" -f $sorted.Count, $allEntries.Count
-        } else {
-            "{0} $countLabel" -f $allEntries.Count
-        }
-        if ($keepTag -and $entryByTag.ContainsKey($keepTag)) {
-            & $selectByTag $keepTag
-        } elseif ($list.Items.Count -gt 0) {
-            $list.Items[0].Selected = $true
-            $list.Items[0].Focused = $true
-            $list.EnsureVisible(0)
-        }
-    }
-
-    $selectByTag = {
-        param([string]$Tag)
-        if ([string]::IsNullOrWhiteSpace($Tag)) { return }
-        foreach ($item in $list.Items) {
-            if ([string]$item.Tag -eq $Tag) {
-                $item.Selected = $true
-                $item.Focused = $true
-                $item.EnsureVisible()
-                break
-            }
-        }
-    }
-
-    $selectByName = {
-        param([string]$Name)
-        if ([string]::IsNullOrWhiteSpace($Name)) { return }
-        foreach ($entry in (& $getEntriesForViewMode)) {
-            if ($entry.Name -eq $Name) {
-                & $selectByTag $entry.StorageRoot
-                break
-            }
-        }
-    }
-
-    $returnToProfilesView = {
-        if ($browseUiState.ViewMode -eq 'profiles') { return }
-        $browseUiState.ViewMode = 'profiles'
-        $browseUiState.HistoryProfileName = $null
-        $browseUiState.SortColumn = 2
-        $browseUiState.Ascending = $false
-        & $applyBrowseViewMode
-    }
-
-    $txtFilter.Add_TextChanged({ & $repopulateList })
-
-    $list.Add_ColumnClick({
-        param($sender, $e)
-        if ($e.Column -gt 2) { return }
-        if ($e.Column -eq $browseUiState.SortColumn) {
-            $browseUiState.Ascending = -not $browseUiState.Ascending
-        } else {
-            $browseUiState.SortColumn = $e.Column
-            $browseUiState.Ascending = $true
-        }
-        & $repopulateList
-    })
-
-    $list.Add_DoubleClick({ & $acceptSelection })
-    $btnOk.Add_Click({ & $acceptSelection })
-
-    $btnMonthlyRestore.Add_Click({
-        $browseUiState.ViewMode = 'monthly'
-        & $applyBrowseViewMode
-    })
-
-    $btnPreRestoreBrowse.Add_Click({
-        $browseUiState.ViewMode = 'prerestore'
-        & $applyBrowseViewMode
-    })
-
-    $btnProfileHistory.Add_Click({
-        if ($list.SelectedItems.Count -eq 0) {
-            [System.Windows.Forms.MessageBox]::Show(
-                'Select a profile first, then open its history.',
-                'Profile history',
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Information
-            ) | Out-Null
-            return
-        }
-        $tag = [string]$list.SelectedItems[0].Tag
-        if (-not $entryByTag.ContainsKey($tag)) { return }
-        $browseUiState.HistoryProfileName = $entryByTag[$tag].Name
-        $browseUiState.ViewMode = 'profilehistory'
-        & $applyBrowseViewMode
-    })
-
-    $list.Add_SelectedIndexChanged({ & $updateProfileHistoryButtonState })
-
-    $btnArchive.Add_Click({
-        if ($list.SelectedItems.Count -eq 0) {
-            [System.Windows.Forms.MessageBox]::Show(
-                "Select a profile to archive.",
-                "Archive",
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Information
-            ) | Out-Null
-            return
-        }
-        $tag = [string]$list.SelectedItems[0].Tag
-        if (-not $entryByTag.ContainsKey($tag)) { return }
-        $name = $entryByTag[$tag].Name
-        try {
-            Sync-ManagerConfigFromUi
-            if (Invoke-ArchiveProfile -ProfileName $name) {
-                $browseState.Archived = $true
-                & $repopulateList
-            }
-        } catch {
-            [System.Windows.Forms.MessageBox]::Show(
-                $_.Exception.Message,
-                "Archive failed",
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Error
-            ) | Out-Null
-        }
-    })
-    $btnRename.Add_Click({
-        if ($list.SelectedItems.Count -eq 0) {
-            [System.Windows.Forms.MessageBox]::Show(
-                "Select a profile to rename.",
-                "Rename",
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Information
-            ) | Out-Null
-            return
-        }
-        $tag = [string]$list.SelectedItems[0].Tag
-        if (-not $entryByTag.ContainsKey($tag)) { return }
-        $name = $entryByTag[$tag].Name
-        $newName = Show-RenameProfileDialog -CurrentName $name
-        if (-not $newName) { return }
-        try {
-            Sync-ManagerConfigFromUi
-            $renamed = Invoke-RenameProfile -OldName $name -NewName $newName
-            $browseState.Renamed = $true
-            $browseState.RenamedTo = $renamed
-            & $repopulateList
-            & $selectByName $renamed
-        } catch {
-            [System.Windows.Forms.MessageBox]::Show(
-                $_.Exception.Message,
-                "Rename failed",
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Error
-            ) | Out-Null
-        }
-    })
-    $btnCancel.Add_Click({
-        if ($browseUiState.ViewMode -ne 'profiles') {
-            & $returnToProfilesView
-            return
-        }
-        $dlg.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-        $dlg.Close()
-    })
-
-    $txtFilter.Add_KeyDown({
-        param($sender, $e)
-        if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Down -and $list.Items.Count -gt 0) {
-            $list.Focus()
-            $e.Handled = $true
-        }
-        if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Escape -and $browseUiState.ViewMode -ne 'profiles') {
-            & $returnToProfilesView
-            $e.Handled = $true
-        }
-    })
-
-    $list.Add_KeyDown({
-        param($sender, $e)
-        if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Return) {
-            & $acceptSelection
-            $e.Handled = $true
-        }
-        if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Escape -and $browseUiState.ViewMode -ne 'profiles') {
-            & $returnToProfilesView
-            $e.Handled = $true
-        }
-    })
-
-    & $applyBrowseViewMode
-    if (-not [string]::IsNullOrWhiteSpace($InitialSelection)) {
-        & $selectByName $InitialSelection
-    }
-
-    $dlgResult = $dlg.ShowDialog($form)
-    if ($browseState.Archived) {
-        $script:BrowseDialogArchivedProfiles = $true
-    }
-    if ($browseState.Renamed) {
-        $script:BrowseDialogRenamedProfile = $browseState.RenamedTo
-    }
-    if ($browseState.RestoredFromBackup) {
-        $script:BrowseDialogRestoredFromBackup = $true
-    }
-    if ($dlgResult -eq [System.Windows.Forms.DialogResult]::OK -and $browseUiState.ViewMode -eq 'profiles') {
-        if ($list.SelectedItems.Count -gt 0 -and $entryByTag.ContainsKey([string]$list.SelectedItems[0].Tag)) {
-            return $entryByTag[[string]$list.SelectedItems[0].Tag].Name
-        }
-    }
-    return $null
-}
-
 function Test-ProfileExists {
     param([string]$ProfileName)
     $null -ne (Resolve-ProfileStorageRoot $ProfileName)
@@ -2580,164 +2285,850 @@ Start FLIMage after restoring.
     return ($result -eq [System.Windows.Forms.DialogResult]::OK)
 }
 
-function Confirm-OverwriteProfileSave {
-    param([string]$ProfileName)
-    $message = "Profile '$ProfileName' already exists.`nOverwrite it with the current settings?"
-    $result = [System.Windows.Forms.MessageBox]::Show(
-        $message,
-        "Confirm overwrite save",
-        [System.Windows.Forms.MessageBoxButtons]::OKCancel,
-        [System.Windows.Forms.MessageBoxIcon]::Warning
+function New-SavePasswordRecord {
+    param([Parameter(Mandatory = $true)][string]$Password)
+    $salt = New-Object byte[] 16
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($salt)
+    } finally {
+        $rng.Dispose()
+    }
+    $iterations = 100000
+    $derive = New-Object System.Security.Cryptography.Rfc2898DeriveBytes($Password, $salt, $iterations)
+    try {
+        $hash = $derive.GetBytes(32)
+    } finally {
+        $derive.Dispose()
+    }
+    return [pscustomobject]@{
+        Salt       = [Convert]::ToBase64String($salt)
+        Hash       = [Convert]::ToBase64String($hash)
+        Iterations = $iterations
+    }
+}
+
+function Test-SavePassword {
+    param(
+        [string]$Password,
+        [string]$SaltB64,
+        [string]$HashB64,
+        [int]$Iterations
     )
-    return ($result -eq [System.Windows.Forms.DialogResult]::OK)
+    if ([string]::IsNullOrEmpty($Password) -or [string]::IsNullOrWhiteSpace($SaltB64) -or [string]::IsNullOrWhiteSpace($HashB64)) {
+        return $false
+    }
+    if ($Iterations -lt 1) { return $false }
+    try {
+        $salt = [Convert]::FromBase64String($SaltB64)
+        $expected = [Convert]::FromBase64String($HashB64)
+        $derive = New-Object System.Security.Cryptography.Rfc2898DeriveBytes($Password, $salt, $Iterations)
+        try {
+            $actual = $derive.GetBytes($expected.Length)
+        } finally {
+            $derive.Dispose()
+        }
+    } catch {
+        return $false
+    }
+    if ($actual.Length -ne $expected.Length) { return $false }
+    $diff = 0
+    for ($i = 0; $i -lt $actual.Length; $i++) {
+        $diff = $diff -bor ($actual[$i] -bxor $expected[$i])
+    }
+    return ($diff -eq 0)
+}
+
+function Get-ProfilePasswordRecord {
+    param([string]$ProfileRoot)
+    if ([string]::IsNullOrWhiteSpace($ProfileRoot)) { return $null }
+    $manifestPath = Join-Path $ProfileRoot 'manifest.json'
+    if (-not (Test-Path -LiteralPath $manifestPath)) { return $null }
+    try {
+        $json = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not (Test-ManifestHasProperty -Json $json -PropertyName 'password_hash')) { return $null }
+        $iterations = 100000
+        if ($json.password_iterations) { $iterations = [int]$json.password_iterations }
+        return [pscustomobject]@{
+            Salt       = [string]$json.password_salt
+            Hash       = [string]$json.password_hash
+            Iterations = $iterations
+        }
+    } catch {
+        return $null
+    }
+}
+
+function Set-ProfilePasswordOnManifest {
+    param(
+        [string]$ProfileRoot,
+        [string]$Salt,
+        [string]$Hash,
+        [int]$Iterations = 100000,
+        [switch]$Clear
+    )
+    $manifestPath = Join-Path $ProfileRoot 'manifest.json'
+    if (-not (Test-Path -LiteralPath $manifestPath)) {
+        throw "Profile manifest was not found."
+    }
+    $json = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($propName in @('password_salt', 'password_hash', 'password_iterations')) {
+        if ($json.PSObject.Properties[$propName]) {
+            $json.PSObject.Properties.Remove($propName)
+        }
+    }
+    if (-not $Clear) {
+        $json | Add-Member -NotePropertyName 'password_salt' -NotePropertyValue $Salt -Force
+        $json | Add-Member -NotePropertyName 'password_hash' -NotePropertyValue $Hash -Force
+        $json | Add-Member -NotePropertyName 'password_iterations' -NotePropertyValue $Iterations -Force
+    }
+    Write-ProfileManifestJson -ProfileRoot $ProfileRoot -ManifestObject $json
+}
+
+function Confirm-OverwriteProfileSave {
+    param(
+        [string]$ProfileName,
+        $PasswordRecord = $null
+    )
+    $needsPassword = ($null -ne $PasswordRecord -and -not [string]::IsNullOrWhiteSpace([string]$PasswordRecord.Hash))
+    if (-not $needsPassword) {
+        $message = "Profile '$ProfileName' already exists.`nOverwrite it with the current settings?"
+        $result = [System.Windows.Forms.MessageBox]::Show(
+            $message,
+            "Confirm overwrite save",
+            [System.Windows.Forms.MessageBoxButtons]::OKCancel,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        )
+        return ($result -eq [System.Windows.Forms.DialogResult]::OK)
+    }
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text = 'Confirm overwrite save'
+    $dlg.ClientSize = New-Object System.Drawing.Size(440, 188)
+    $dlg.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+    $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dlg.MaximizeBox = $false
+    $dlg.MinimizeBox = $false
+    $dlg.ShowInTaskbar = $false
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Location = New-Object System.Drawing.Point(12, 12)
+    $lbl.Size = New-Object System.Drawing.Size(416, 72)
+    $lbl.Text = "Profile '$ProfileName' already exists and has a save password.`nEnter that password to overwrite it.`nRestore does not require the password."
+    $dlg.Controls.Add($lbl)
+
+    $txt = New-Object System.Windows.Forms.TextBox
+    $txt.Location = New-Object System.Drawing.Point(12, 92)
+    $txt.Size = New-Object System.Drawing.Size(416, 22)
+    $txt.UseSystemPasswordChar = $true
+    $dlg.Controls.Add($txt)
+
+    $btnOk = New-Object System.Windows.Forms.Button
+    $btnOk.Location = New-Object System.Drawing.Point(250, 140)
+    $btnOk.Size = New-Object System.Drawing.Size(84, 28)
+    $btnOk.Text = 'OK'
+    $dlg.AcceptButton = $btnOk
+    $dlg.Controls.Add($btnOk)
+
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Location = New-Object System.Drawing.Point(344, 140)
+    $btnCancel.Size = New-Object System.Drawing.Size(84, 28)
+    $btnCancel.Text = 'Cancel'
+    $dlg.CancelButton = $btnCancel
+    $dlg.Controls.Add($btnCancel)
+
+    $btnOk.Add_Click({
+        if (-not (Test-SavePassword -Password $txt.Text -SaltB64 $PasswordRecord.Salt -HashB64 $PasswordRecord.Hash -Iterations ([int]$PasswordRecord.Iterations))) {
+            [System.Windows.Forms.MessageBox]::Show(
+                'Password is incorrect.',
+                'Confirm overwrite save',
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            ) | Out-Null
+            return
+        }
+        $dlg.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $dlg.Close()
+    })
+    $btnCancel.Add_Click({
+        $dlg.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $dlg.Close()
+    })
+
+    $accepted = ($dlg.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK)
+    $dlg.Dispose()
+    return $accepted
+}
+
+function Show-SaveWithPasswordDialog {
+    param(
+        [string]$ProfileName,
+        [bool]$ProfileExists,
+        $PasswordRecord
+    )
+    $hasPassword = ($null -ne $PasswordRecord -and -not [string]::IsNullOrWhiteSpace([string]$PasswordRecord.Hash))
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text = 'Save with password'
+    $dlg.ClientSize = New-Object System.Drawing.Size(460, 292)
+    $dlg.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+    $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dlg.MaximizeBox = $false
+    $dlg.MinimizeBox = $false
+    $dlg.ShowInTaskbar = $false
+
+    $intro = "Save current settings into '$ProfileName'.`nFuture overwrites of this profile will require the password.`nRestore does not ask for it."
+    if ($ProfileExists) {
+        $intro = "Overwrite '$ProfileName' with the current settings.`nFuture overwrites will require the password.`nRestore does not ask for it."
+    }
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Location = New-Object System.Drawing.Point(12, 10)
+    $lbl.Size = New-Object System.Drawing.Size(436, 58)
+    $lbl.Text = $intro
+    $dlg.Controls.Add($lbl)
+
+    $y = 74
+    $txtCurrent = $null
+    if ($hasPassword) {
+        $lblCurrent = New-Object System.Windows.Forms.Label
+        $lblCurrent.Location = New-Object System.Drawing.Point(12, $y)
+        $lblCurrent.Size = New-Object System.Drawing.Size(436, 18)
+        $lblCurrent.Text = 'Current password:'
+        $dlg.Controls.Add($lblCurrent)
+        $y += 20
+        $txtCurrent = New-Object System.Windows.Forms.TextBox
+        $txtCurrent.Location = New-Object System.Drawing.Point(12, $y)
+        $txtCurrent.Size = New-Object System.Drawing.Size(436, 22)
+        $txtCurrent.UseSystemPasswordChar = $true
+        $dlg.Controls.Add($txtCurrent)
+        $y += 30
+    }
+
+    $chkRemove = New-Object System.Windows.Forms.CheckBox
+    $chkRemove.Location = New-Object System.Drawing.Point(12, $y)
+    $chkRemove.Size = New-Object System.Drawing.Size(436, 22)
+    $chkRemove.Text = 'Remove password (overwrite will no longer require it)'
+    $chkRemove.Visible = $hasPassword
+    $dlg.Controls.Add($chkRemove)
+    if ($hasPassword) { $y += 26 }
+
+    $lblNew = New-Object System.Windows.Forms.Label
+    $lblNew.Location = New-Object System.Drawing.Point(12, $y)
+    $lblNew.Size = New-Object System.Drawing.Size(436, 18)
+    $lblNew.Text = 'New password:'
+    $dlg.Controls.Add($lblNew)
+    $y += 20
+    $txtNew = New-Object System.Windows.Forms.TextBox
+    $txtNew.Location = New-Object System.Drawing.Point(12, $y)
+    $txtNew.Size = New-Object System.Drawing.Size(436, 22)
+    $txtNew.UseSystemPasswordChar = $true
+    $dlg.Controls.Add($txtNew)
+    $y += 28
+    $lblConfirm = New-Object System.Windows.Forms.Label
+    $lblConfirm.Location = New-Object System.Drawing.Point(12, $y)
+    $lblConfirm.Size = New-Object System.Drawing.Size(200, 18)
+    $lblConfirm.Text = 'Confirm password:'
+    $dlg.Controls.Add($lblConfirm)
+    $y += 20
+    $txtConfirm = New-Object System.Windows.Forms.TextBox
+    $txtConfirm.Location = New-Object System.Drawing.Point(12, $y)
+    $txtConfirm.Size = New-Object System.Drawing.Size(436, 22)
+    $txtConfirm.UseSystemPasswordChar = $true
+    $dlg.Controls.Add($txtConfirm)
+    $y += 36
+
+    $dlg.ClientSize = New-Object System.Drawing.Size(460, ($y + 40))
+
+    $btnOk = New-Object System.Windows.Forms.Button
+    $btnOk.Location = New-Object System.Drawing.Point(270, $y)
+    $btnOk.Size = New-Object System.Drawing.Size(84, 28)
+    $btnOk.Text = 'Save'
+    $dlg.AcceptButton = $btnOk
+    $dlg.Controls.Add($btnOk)
+
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Location = New-Object System.Drawing.Point(364, $y)
+    $btnCancel.Size = New-Object System.Drawing.Size(84, 28)
+    $btnCancel.Text = 'Cancel'
+    $dlg.CancelButton = $btnCancel
+    $dlg.Controls.Add($btnCancel)
+
+    $script:PwDlg = @{
+        Dialog         = $dlg
+        HasPassword    = $hasPassword
+        PasswordRecord = $PasswordRecord
+        TxtCurrent     = $txtCurrent
+        ChkRemove      = $chkRemove
+        TxtNew         = $txtNew
+        TxtConfirm     = $txtConfirm
+        LblNew         = $lblNew
+        LblConfirm     = $lblConfirm
+    }
+
+    $chkRemove.Add_CheckedChanged({
+        $state = $script:PwDlg
+        $enabled = -not $state.ChkRemove.Checked
+        $state.TxtNew.Enabled = $enabled
+        $state.TxtConfirm.Enabled = $enabled
+        $state.LblNew.Enabled = $enabled
+        $state.LblConfirm.Enabled = $enabled
+    })
+
+    $btnOk.Add_Click({
+        try {
+            $state = $script:PwDlg
+            $dialog = $state.Dialog
+            if ($state.HasPassword) {
+                $current = ''
+                if ($state.TxtCurrent) { $current = $state.TxtCurrent.Text }
+                $record = $state.PasswordRecord
+                if (-not (Test-SavePassword -Password $current -SaltB64 $record.Salt -HashB64 $record.Hash -Iterations ([int]$record.Iterations))) {
+                    [System.Windows.Forms.MessageBox]::Show(
+                        'Current password is incorrect.',
+                        'Save with password',
+                        [System.Windows.Forms.MessageBoxButtons]::OK,
+                        [System.Windows.Forms.MessageBoxIcon]::Warning
+                    ) | Out-Null
+                    return
+                }
+            }
+            if ($state.ChkRemove.Checked) {
+                $dialog.Tag = [pscustomobject]@{ Clear = $true; Salt = $null; Hash = $null; Iterations = 0 }
+                $dialog.DialogResult = [System.Windows.Forms.DialogResult]::OK
+                $dialog.Close()
+                return
+            }
+            if ([string]::IsNullOrEmpty($state.TxtNew.Text)) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    'Enter a password.',
+                    'Save with password',
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                ) | Out-Null
+                return
+            }
+            if ($state.TxtNew.Text -cne $state.TxtConfirm.Text) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    'Password and confirmation do not match.',
+                    'Save with password',
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                ) | Out-Null
+                return
+            }
+            $rec = New-SavePasswordRecord -Password $state.TxtNew.Text
+            $dialog.Tag = [pscustomobject]@{
+                Clear      = $false
+                Salt       = $rec.Salt
+                Hash       = $rec.Hash
+                Iterations = $rec.Iterations
+            }
+            $dialog.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $dialog.Close()
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show(
+                $_.Exception.Message,
+                'Save with password',
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Error
+            ) | Out-Null
+        }
+    })
+    $btnCancel.Add_Click({
+        $dlg.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $dlg.Close()
+    })
+
+    $accepted = ($dlg.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK)
+    $result = $dlg.Tag
+    $dlg.Dispose()
+    if (-not $accepted) { return $null }
+    return $result
+}
+
+function Get-SharedKeyCopyCandidates {
+    param(
+        [string]$InitFilesPath,
+        [ValidateSet('Default', 'Device')]
+        [string]$Kind
+    )
+    if ([string]::IsNullOrWhiteSpace($InitFilesPath) -or -not (Test-Path -LiteralPath $InitFilesPath)) {
+        return @()
+    }
+    $pattern = if ($Kind -eq 'Default') { 'Default-*.txt' } else { 'FLIM_deviceFile_V*.txt' }
+    return @(Get-ChildItem -LiteralPath $InitFilesPath -Filter $pattern -File -ErrorAction SilentlyContinue | Sort-Object Name)
+}
+
+function Test-SharedKeyCopySameFamily {
+    param(
+        [string]$SourceName,
+        [string]$TargetName
+    )
+    $sourceIsDefault = $SourceName -like 'Default-*.txt'
+    $targetIsDefault = $TargetName -like 'Default-*.txt'
+    $sourceIsDevice = $SourceName -like 'FLIM_deviceFile_V*.txt'
+    $targetIsDevice = $TargetName -like 'FLIM_deviceFile_V*.txt'
+    if ($sourceIsDefault -and $targetIsDefault) { return $true }
+    if ($sourceIsDevice -and $targetIsDevice) { return $true }
+    return $false
+}
+
+function Update-CopySharedKeyDialogLists {
+    param(
+        [ValidateSet('Default', 'Device')]
+        [string]$Kind
+    )
+    $ui = $script:CopyKeyUi
+    $ui.Kind = $Kind
+    $files = @(Get-SharedKeyCopyCandidates -InitFilesPath $ui.InitFilesPath -Kind $Kind)
+    $ui.ByName = @{}
+    $ui.Source.Items.Clear()
+    $ui.Target.Items.Clear()
+    foreach ($file in $files) {
+        $ui.ByName[$file.Name] = $file.FullName
+        [void]$ui.Source.Items.Add($file.Name)
+        [void]$ui.Target.Items.Add($file.Name)
+    }
+
+    $noun = if ($Kind -eq 'Default') { 'Default file' } else { 'FLIM_deviceFile_V* file' }
+    if ($files.Count -lt 2) {
+        $ui.Hint.Text = "Need at least two $noun files in Init_Files.`nDefault files and device files are never mixed."
+        $ui.CopyButton.Enabled = $false
+        return
+    }
+
+    $ui.CopyButton.Enabled = $true
+    $master = $files | Sort-Object LastWriteTimeUtc, Name -Descending | Select-Object -First 1
+    $ui.Source.SelectedItem = $master.Name
+    $targetIndex = 0
+    if ($ui.Target.Items.Count -gt 1 -and [string]$ui.Target.Items[0] -eq [string]$ui.Source.SelectedItem) {
+        $targetIndex = 1
+    }
+    $ui.Target.SelectedIndex = $targetIndex
+
+    $extra = "`nState.Acq.version on the target is not overwritten."
+    if ($Kind -eq 'Default' -and $script:PreserveUncagingCalibOnRestore) {
+        $extra += "`nUncaging calibration keys on the target are kept."
+    }
+    $ui.Hint.Text = "Copy shared keys from one $noun onto another in the live Init_Files folder.`nDefault files and device files are never mixed.`nKeys only in the target stay. Keys only in the source are not added.$extra"
+}
+
+function Show-CopySharedKeysDialog {
+    param([string]$InitFilesPath)
+
+    $defaultCount = @(Get-SharedKeyCopyCandidates -InitFilesPath $InitFilesPath -Kind 'Default').Count
+    $deviceCount = @(Get-SharedKeyCopyCandidates -InitFilesPath $InitFilesPath -Kind 'Device').Count
+    if ($defaultCount -lt 2 -and $deviceCount -lt 2) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "Need at least two Default-*.txt files, or two FLIM_deviceFile_V*.txt files, in Init_Files.`n`n$InitFilesPath",
+            'Copy shared keys',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information
+        ) | Out-Null
+        return $null
+    }
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text = 'Copy shared keys'
+    $dlg.ClientSize = New-Object System.Drawing.Size(560, 310)
+    $dlg.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+    $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dlg.MaximizeBox = $false
+    $dlg.MinimizeBox = $false
+    $dlg.ShowInTaskbar = $false
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Location = New-Object System.Drawing.Point(12, 10)
+    $lbl.Size = New-Object System.Drawing.Size(536, 96)
+    $dlg.Controls.Add($lbl)
+
+    $radDefault = New-Object System.Windows.Forms.RadioButton
+    $radDefault.Location = New-Object System.Drawing.Point(12, 112)
+    $radDefault.Size = New-Object System.Drawing.Size(160, 22)
+    $radDefault.Text = 'Default files'
+    $dlg.Controls.Add($radDefault)
+
+    $radDevice = New-Object System.Windows.Forms.RadioButton
+    $radDevice.Location = New-Object System.Drawing.Point(180, 112)
+    $radDevice.Size = New-Object System.Drawing.Size(360, 22)
+    $radDevice.Text = 'Device files (FLIM_deviceFile_V*)'
+    $dlg.Controls.Add($radDevice)
+
+    $lblSource = New-Object System.Windows.Forms.Label
+    $lblSource.Location = New-Object System.Drawing.Point(12, 146)
+    $lblSource.Size = New-Object System.Drawing.Size(80, 20)
+    $lblSource.Text = 'Source:'
+    $dlg.Controls.Add($lblSource)
+
+    $cmbSource = New-Object System.Windows.Forms.ComboBox
+    $cmbSource.Location = New-Object System.Drawing.Point(100, 144)
+    $cmbSource.Size = New-Object System.Drawing.Size(444, 22)
+    $cmbSource.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $dlg.Controls.Add($cmbSource)
+
+    $lblTarget = New-Object System.Windows.Forms.Label
+    $lblTarget.Location = New-Object System.Drawing.Point(12, 178)
+    $lblTarget.Size = New-Object System.Drawing.Size(80, 20)
+    $lblTarget.Text = 'Target:'
+    $dlg.Controls.Add($lblTarget)
+
+    $cmbTarget = New-Object System.Windows.Forms.ComboBox
+    $cmbTarget.Location = New-Object System.Drawing.Point(100, 176)
+    $cmbTarget.Size = New-Object System.Drawing.Size(444, 22)
+    $cmbTarget.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $dlg.Controls.Add($cmbTarget)
+
+    $btnOk = New-Object System.Windows.Forms.Button
+    $btnOk.Location = New-Object System.Drawing.Point(340, 266)
+    $btnOk.Size = New-Object System.Drawing.Size(100, 28)
+    $btnOk.Text = 'Copy'
+    $dlg.AcceptButton = $btnOk
+    $dlg.Controls.Add($btnOk)
+
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Location = New-Object System.Drawing.Point(448, 266)
+    $btnCancel.Size = New-Object System.Drawing.Size(96, 28)
+    $btnCancel.Text = 'Cancel'
+    $dlg.CancelButton = $btnCancel
+    $dlg.Controls.Add($btnCancel)
+
+    $script:CopyKeyUi = @{
+        Dialog      = $dlg
+        InitFilesPath = $InitFilesPath
+        Hint        = $lbl
+        Source      = $cmbSource
+        Target      = $cmbTarget
+        CopyButton  = $btnOk
+        ByName      = @{}
+        Kind        = 'Default'
+    }
+
+    $radDefault.Tag = 'Default'
+    $radDevice.Tag = 'Device'
+    $radDefault.Add_CheckedChanged({
+        param($sender, $eventArgs)
+        if ($script:CopyKeySync) { return }
+        if (-not $sender.Checked) { return }
+        Update-CopySharedKeyDialogLists -Kind ([string]$sender.Tag)
+    })
+    $radDevice.Add_CheckedChanged({
+        param($sender, $eventArgs)
+        if ($script:CopyKeySync) { return }
+        if (-not $sender.Checked) { return }
+        Update-CopySharedKeyDialogLists -Kind ([string]$sender.Tag)
+    })
+
+    $btnOk.Add_Click({
+        try {
+            $ui = $script:CopyKeyUi
+            $src = [string]$ui.Source.SelectedItem
+            $dstName = [string]$ui.Target.SelectedItem
+            if ([string]::IsNullOrWhiteSpace($src) -or [string]::IsNullOrWhiteSpace($dstName)) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    'Choose a source file and a target file.',
+                    'Copy shared keys',
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                ) | Out-Null
+                return
+            }
+            if ($src -eq $dstName) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    'Choose a different target file.',
+                    'Copy shared keys',
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                ) | Out-Null
+                return
+            }
+            if (-not (Test-SharedKeyCopySameFamily -SourceName $src -TargetName $dstName)) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    'Default files and device files cannot be mixed.',
+                    'Copy shared keys',
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                ) | Out-Null
+                return
+            }
+            $ui.Dialog.Tag = [pscustomobject]@{
+                Kind       = $ui.Kind
+                SourceName = $src
+                TargetName = $dstName
+                SourcePath = $ui.ByName[$src]
+                TargetPath = $ui.ByName[$dstName]
+            }
+            $ui.Dialog.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $ui.Dialog.Close()
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show(
+                $_.Exception.Message,
+                'Copy shared keys',
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Error
+            ) | Out-Null
+        }
+    })
+    $btnCancel.Add_Click({
+        $dlg.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $dlg.Close()
+    })
+
+    $startKind = if ($defaultCount -ge 2) { 'Default' } else { 'Device' }
+    $script:CopyKeySync = $true
+    $radDefault.Checked = ($startKind -eq 'Default')
+    $radDevice.Checked = ($startKind -eq 'Device')
+    $script:CopyKeySync = $false
+    Update-CopySharedKeyDialogLists -Kind $startKind
+
+    $accepted = ($dlg.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK)
+    $picked = $dlg.Tag
+    $dlg.Dispose()
+    if (-not $accepted) { return $null }
+    return $picked
 }
 
 Initialize-InitFilesPathAtStartup
 
 # --- GUI ---
 
+$script:ProfileViewMode = 'profiles'
+$script:ProfileSortColumn = 2
+$script:ProfileSortAscending = $false
+$script:HistoryProfileName = $null
+$script:ProfileEntryByTag = @{}
+$script:AdvancedExpanded = $false
+
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "FLIMage Profile Manager"
-$form.Size = New-Object System.Drawing.Size(520, 592)
-$form.StartPosition = "CenterScreen"
+$form.Text = 'FLIMage Profile Manager'
+$form.ClientSize = New-Object System.Drawing.Size(660, 548)
+$form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
 $form.MaximizeBox = $false
 
 $lblInit = New-Object System.Windows.Forms.Label
 $lblInit.Location = New-Object System.Drawing.Point(12, 12)
-$lblInit.Size = New-Object System.Drawing.Size(100, 20)
-$lblInit.Text = "Init_Files folder:"
+$lblInit.Size = New-Object System.Drawing.Size(110, 20)
+$lblInit.Text = 'Init_Files folder:'
 $form.Controls.Add($lblInit)
 
 $txtInit = New-Object System.Windows.Forms.TextBox
-$txtInit.Location = New-Object System.Drawing.Point(115, 10)
-$txtInit.Size = New-Object System.Drawing.Size(280, 22)
+$txtInit.Location = New-Object System.Drawing.Point(124, 10)
+$txtInit.Size = New-Object System.Drawing.Size(410, 22)
 $txtInit.Text = $script:InitFilesPath
 $form.Controls.Add($txtInit)
 
 $btnBrowseInit = New-Object System.Windows.Forms.Button
-$btnBrowseInit.Location = New-Object System.Drawing.Point(400, 8)
-$btnBrowseInit.Size = New-Object System.Drawing.Size(95, 25)
-$btnBrowseInit.Text = "Browse"
+$btnBrowseInit.Location = New-Object System.Drawing.Point(544, 8)
+$btnBrowseInit.Size = New-Object System.Drawing.Size(104, 25)
+$btnBrowseInit.Text = 'Browse'
 $form.Controls.Add($btnBrowseInit)
 
 $lblBase = New-Object System.Windows.Forms.Label
 $lblBase.Location = New-Object System.Drawing.Point(12, 42)
-$lblBase.Size = New-Object System.Drawing.Size(100, 20)
-$lblBase.Text = "Profiles folder:"
+$lblBase.Size = New-Object System.Drawing.Size(110, 20)
+$lblBase.Text = 'Profiles folder:'
 $form.Controls.Add($lblBase)
 
 $txtBase = New-Object System.Windows.Forms.TextBox
-$txtBase.Location = New-Object System.Drawing.Point(115, 40)
-$txtBase.Size = New-Object System.Drawing.Size(280, 22)
+$txtBase.Location = New-Object System.Drawing.Point(124, 40)
+$txtBase.Size = New-Object System.Drawing.Size(410, 22)
 $txtBase.Text = $script:ProfilesBase
 $form.Controls.Add($txtBase)
 
 $btnBrowse = New-Object System.Windows.Forms.Button
-$btnBrowse.Location = New-Object System.Drawing.Point(400, 38)
-$btnBrowse.Size = New-Object System.Drawing.Size(95, 25)
-$btnBrowse.Text = "Browse"
+$btnBrowse.Location = New-Object System.Drawing.Point(544, 38)
+$btnBrowse.Size = New-Object System.Drawing.Size(104, 25)
+$btnBrowse.Text = 'Browse'
 $form.Controls.Add($btnBrowse)
 
-$grpScope = New-Object System.Windows.Forms.GroupBox
-$grpScope.Location = New-Object System.Drawing.Point(12, 72)
-$grpScope.Size = New-Object System.Drawing.Size(488, 258)
-$grpScope.Text = "Save / Restore scope"
-$form.Controls.Add($grpScope)
+$lblFilter = New-Object System.Windows.Forms.Label
+$lblFilter.Location = New-Object System.Drawing.Point(12, 74)
+$lblFilter.AutoSize = $true
+$lblFilter.Text = 'Filter:'
+$form.Controls.Add($lblFilter)
 
-$chkAll = New-Object System.Windows.Forms.CheckBox
-$chkAll.Location = New-Object System.Drawing.Point(14, 22)
-$chkAll.Size = New-Object System.Drawing.Size(200, 22)
-$chkAll.Text = "All"
-$chkAll.Checked = $true
-$grpScope.Controls.Add($chkAll)
-
-$script:ComponentCheckboxes = @{}
-$y = 48
-foreach ($def in Get-ComponentDefinitions) {
-    $chk = New-Object System.Windows.Forms.CheckBox
-    $chk.Location = New-Object System.Drawing.Point(28, $y)
-    $chk.Size = New-Object System.Drawing.Size(450, 22)
-    $chk.Text = $def.Label
-    $chk.Checked = $true
-    $chk.Tag = $def.Key
-    $grpScope.Controls.Add($chk)
-    $script:ComponentCheckboxes[$def.Key] = $chk
-    $y += 26
-}
-
-$grpAdvanced = New-Object System.Windows.Forms.GroupBox
-$grpAdvanced.Location = New-Object System.Drawing.Point(12, 332)
-$grpAdvanced.Size = New-Object System.Drawing.Size(488, 58)
-$grpAdvanced.Text = "Advanced"
-$form.Controls.Add($grpAdvanced)
-
-$chkPreserveUncagingCalib = New-Object System.Windows.Forms.CheckBox
-$chkPreserveUncagingCalib.Location = New-Object System.Drawing.Point(14, 20)
-$chkPreserveUncagingCalib.AutoSize = $true
-$chkPreserveUncagingCalib.MaximumSize = New-Object System.Drawing.Size(460, 0)
-$chkPreserveUncagingCalib.Text = "Restore profile settings except uncaging calibration (recommended)"
-$chkPreserveUncagingCalib.Checked = $script:PreserveUncagingCalibOnRestore
-$grpAdvanced.Controls.Add($chkPreserveUncagingCalib)
-
-$lblProf = New-Object System.Windows.Forms.Label
-$lblProf.Location = New-Object System.Drawing.Point(12, 392)
-$lblProf.Size = New-Object System.Drawing.Size(100, 20)
-$lblProf.Text = "Profile:"
-$form.Controls.Add($lblProf)
-
-$combo = New-Object System.Windows.Forms.ComboBox
-$combo.Location = New-Object System.Drawing.Point(115, 390)
-$combo.Size = New-Object System.Drawing.Size(148, 22)
-$combo.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDown
-$combo.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
-$combo.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::ListItems
-$form.Controls.Add($combo)
-
-$btnBrowseProfile = New-Object System.Windows.Forms.Button
-$btnBrowseProfile.Location = New-Object System.Drawing.Point(268, 388)
-$btnBrowseProfile.Size = New-Object System.Drawing.Size(72, 25)
-$btnBrowseProfile.Text = "Browse..."
-$form.Controls.Add($btnBrowseProfile)
-
-$lblProfileHint = New-Object System.Windows.Forms.Label
-$lblProfileHint.Location = New-Object System.Drawing.Point(346, 393)
-$lblProfileHint.AutoSize = $true
-$lblProfileHint.Text = ""
-$form.Controls.Add($lblProfileHint)
+$txtFilter = New-Object System.Windows.Forms.TextBox
+$txtFilter.Location = New-Object System.Drawing.Point(56, 70)
+$txtFilter.Size = New-Object System.Drawing.Size(478, 22)
+$form.Controls.Add($txtFilter)
 
 $btnRefresh = New-Object System.Windows.Forms.Button
-$btnRefresh.Location = New-Object System.Drawing.Point(400, 388)
-$btnRefresh.Size = New-Object System.Drawing.Size(95, 25)
-$btnRefresh.Text = "Refresh"
+$btnRefresh.Location = New-Object System.Drawing.Point(544, 68)
+$btnRefresh.Size = New-Object System.Drawing.Size(104, 25)
+$btnRefresh.Text = 'Refresh'
 $form.Controls.Add($btnRefresh)
 
+$lblViewMode = New-Object System.Windows.Forms.Label
+$lblViewMode.Location = New-Object System.Drawing.Point(12, 98)
+$lblViewMode.Size = New-Object System.Drawing.Size(360, 18)
+$lblViewMode.Text = 'Profiles'
+$form.Controls.Add($lblViewMode)
+
+$btnBackToProfiles = New-Object System.Windows.Forms.Button
+$btnBackToProfiles.Location = New-Object System.Drawing.Point(430, 94)
+$btnBackToProfiles.Size = New-Object System.Drawing.Size(218, 24)
+$btnBackToProfiles.Text = 'Back to profiles'
+$btnBackToProfiles.Visible = $false
+$form.Controls.Add($btnBackToProfiles)
+
+$list = New-Object System.Windows.Forms.ListView
+$list.Location = New-Object System.Drawing.Point(12, 122)
+$list.Size = New-Object System.Drawing.Size(636, 220)
+$list.View = [System.Windows.Forms.View]::Details
+$list.FullRowSelect = $true
+$list.HideSelection = $false
+$list.MultiSelect = $false
+$list.GridLines = $true
+[void]$list.Columns.Add('Profile', 300)
+[void]$list.Columns.Add('Modified', 160)
+[void]$list.Columns.Add('Restored', 160)
+$form.Controls.Add($list)
+
+$lblCount = New-Object System.Windows.Forms.Label
+$lblCount.Location = New-Object System.Drawing.Point(12, 346)
+$lblCount.Size = New-Object System.Drawing.Size(636, 18)
+$form.Controls.Add($lblCount)
+
+$lblSelection = New-Object System.Windows.Forms.Label
+$lblSelection.Location = New-Object System.Drawing.Point(12, 364)
+$lblSelection.Size = New-Object System.Drawing.Size(636, 36)
+$lblSelection.Font = New-Object System.Drawing.Font($lblSelection.Font.FontFamily, ($lblSelection.Font.Size * 2), $lblSelection.Font.Style)
+$lblSelection.AutoEllipsis = $true
+$lblSelection.Text = 'No row selected.'
+$form.Controls.Add($lblSelection)
+
+$btnSave = New-Object System.Windows.Forms.Button
+$btnSave.Location = New-Object System.Drawing.Point(12, 408)
+$btnSave.Size = New-Object System.Drawing.Size(200, 34)
+$btnSave.Text = 'Save'
+$form.Controls.Add($btnSave)
+
+$btnRestore = New-Object System.Windows.Forms.Button
+$btnRestore.Location = New-Object System.Drawing.Point(220, 408)
+$btnRestore.Size = New-Object System.Drawing.Size(200, 34)
+$btnRestore.Text = 'Restore'
+$form.Controls.Add($btnRestore)
+
+$btnNewProfile = New-Object System.Windows.Forms.Button
+$btnNewProfile.Location = New-Object System.Drawing.Point(428, 408)
+$btnNewProfile.Size = New-Object System.Drawing.Size(220, 34)
+$btnNewProfile.Text = 'New profile'
+$form.Controls.Add($btnNewProfile)
+
 $lblFlimageWarning = New-Object System.Windows.Forms.Label
-$lblFlimageWarning.Location = New-Object System.Drawing.Point(12, 420)
-$lblFlimageWarning.Size = New-Object System.Drawing.Size(488, 18)
-$lblFlimageWarning.Text = "Close FLIMage before Save or Restore."
+$lblFlimageWarning.Location = New-Object System.Drawing.Point(12, 448)
+$lblFlimageWarning.Size = New-Object System.Drawing.Size(636, 18)
+$lblFlimageWarning.Text = 'Close FLIMage before Save or Restore.'
 $lblFlimageWarning.ForeColor = [System.Drawing.Color]::FromArgb(192, 0, 0)
 $lblFlimageWarning.Visible = $false
 $form.Controls.Add($lblFlimageWarning)
 
-$btnSave = New-Object System.Windows.Forms.Button
-$btnSave.Location = New-Object System.Drawing.Point(115, 444)
-$btnSave.Size = New-Object System.Drawing.Size(175, 32)
-$btnSave.Text = "Save current"
-$form.Controls.Add($btnSave)
-
-$btnRestore = New-Object System.Windows.Forms.Button
-$btnRestore.Location = New-Object System.Drawing.Point(300, 444)
-$btnRestore.Size = New-Object System.Drawing.Size(195, 32)
-$btnRestore.Text = "Restore (before launch)"
-$form.Controls.Add($btnRestore)
+$btnAdvancedToggle = New-Object System.Windows.Forms.Button
+$btnAdvancedToggle.Location = New-Object System.Drawing.Point(12, 472)
+$btnAdvancedToggle.Size = New-Object System.Drawing.Size(140, 28)
+$btnAdvancedToggle.Text = 'Advanced >>'
+$form.Controls.Add($btnAdvancedToggle)
 
 $lblStatus = New-Object System.Windows.Forms.Label
-$lblStatus.Location = New-Object System.Drawing.Point(12, 484)
-$lblStatus.Size = New-Object System.Drawing.Size(488, 72)
-$lblStatus.Text = "Ready. Default scope: All."
+$lblStatus.Location = New-Object System.Drawing.Point(160, 468)
+$lblStatus.Size = New-Object System.Drawing.Size(488, 40)
+$lblStatus.Text = 'Ready. Scope: all.'
 $form.Controls.Add($lblStatus)
-$lblFlimageWarning.BringToFront()
+
+$grpAdvanced = New-Object System.Windows.Forms.GroupBox
+$grpAdvanced.Location = New-Object System.Drawing.Point(12, 512)
+$grpAdvanced.Size = New-Object System.Drawing.Size(636, 360)
+$grpAdvanced.Text = 'Advanced'
+$grpAdvanced.Visible = $false
+$form.Controls.Add($grpAdvanced)
+
+$chkAll = New-Object System.Windows.Forms.CheckBox
+$chkAll.Location = New-Object System.Drawing.Point(14, 22)
+$chkAll.Size = New-Object System.Drawing.Size(200, 22)
+$chkAll.Text = 'All'
+$chkAll.Checked = $true
+$grpAdvanced.Controls.Add($chkAll)
+
+$script:ComponentCheckboxes = @{}
+$y = 46
+foreach ($def in Get-ComponentDefinitions) {
+    $chk = New-Object System.Windows.Forms.CheckBox
+    $chk.Location = New-Object System.Drawing.Point(28, $y)
+    $chk.Size = New-Object System.Drawing.Size(590, 22)
+    $chk.Text = $def.Label
+    $chk.Checked = $true
+    $chk.Tag = $def.Key
+    $grpAdvanced.Controls.Add($chk)
+    $script:ComponentCheckboxes[$def.Key] = $chk
+    $y += 24
+}
+
+$chkPreserveUncagingCalib = New-Object System.Windows.Forms.CheckBox
+$chkPreserveUncagingCalib.Location = New-Object System.Drawing.Point(14, $y)
+$chkPreserveUncagingCalib.AutoSize = $true
+$chkPreserveUncagingCalib.MaximumSize = New-Object System.Drawing.Size(600, 0)
+$chkPreserveUncagingCalib.Text = 'Restore profile settings except uncaging calibration (recommended)'
+$chkPreserveUncagingCalib.Checked = $script:PreserveUncagingCalibOnRestore
+$grpAdvanced.Controls.Add($chkPreserveUncagingCalib)
+$y += 32
+
+$btnArchive = New-Object System.Windows.Forms.Button
+$btnArchive.Location = New-Object System.Drawing.Point(14, $y)
+$btnArchive.Size = New-Object System.Drawing.Size(100, 28)
+$btnArchive.Text = 'Archive'
+$grpAdvanced.Controls.Add($btnArchive)
+
+$script:UiToolTip = New-Object System.Windows.Forms.ToolTip
+$script:UiToolTip.AutoPopDelay = 30000
+$script:UiToolTip.InitialDelay = 300
+$script:UiToolTip.ReshowDelay = 100
+$script:UiToolTip.ShowAlways = $true
+
+$btnRename = New-Object System.Windows.Forms.Button
+$btnRename.Location = New-Object System.Drawing.Point(122, $y)
+$btnRename.Size = New-Object System.Drawing.Size(100, 28)
+$btnRename.Text = 'Rename'
+$grpAdvanced.Controls.Add($btnRename)
+
+$btnMonthlyRestore = New-Object System.Windows.Forms.Button
+$btnMonthlyRestore.Location = New-Object System.Drawing.Point(230, $y)
+$btnMonthlyRestore.Size = New-Object System.Drawing.Size(190, 28)
+$btnMonthlyRestore.Text = 'Monthly backups'
+$grpAdvanced.Controls.Add($btnMonthlyRestore)
+
+$btnPreRestoreBrowse = New-Object System.Windows.Forms.Button
+$btnPreRestoreBrowse.Location = New-Object System.Drawing.Point(428, $y)
+$btnPreRestoreBrowse.Size = New-Object System.Drawing.Size(190, 28)
+$btnPreRestoreBrowse.Text = 'Recent 30 backups'
+$grpAdvanced.Controls.Add($btnPreRestoreBrowse)
+$y += 36
+
+$btnProfileHistory = New-Object System.Windows.Forms.Button
+$btnProfileHistory.Location = New-Object System.Drawing.Point(14, $y)
+$btnProfileHistory.Size = New-Object System.Drawing.Size(208, 28)
+$btnProfileHistory.Text = 'Profile history (10)'
+$grpAdvanced.Controls.Add($btnProfileHistory)
+
+$btnCopyKeys = New-Object System.Windows.Forms.Button
+$btnCopyKeys.Location = New-Object System.Drawing.Point(230, $y)
+$btnCopyKeys.Size = New-Object System.Drawing.Size(388, 28)
+$btnCopyKeys.Text = 'Copy shared keys...'
+$grpAdvanced.Controls.Add($btnCopyKeys)
+$y += 36
+
+$btnSaveWithPassword = New-Object System.Windows.Forms.Button
+$btnSaveWithPassword.Location = New-Object System.Drawing.Point(14, $y)
+$btnSaveWithPassword.Size = New-Object System.Drawing.Size(208, 28)
+$btnSaveWithPassword.Text = 'Save with password...'
+$grpAdvanced.Controls.Add($btnSaveWithPassword)
+
+$lblPasswordHint = New-Object System.Windows.Forms.Label
+$lblPasswordHint.Location = New-Object System.Drawing.Point(230, ($y + 6))
+$lblPasswordHint.Size = New-Object System.Drawing.Size(390, 20)
+$lblPasswordHint.Text = 'Blocks overwrite only. Restore stays open.'
+$grpAdvanced.Controls.Add($lblPasswordHint)
+
+$grpAdvanced.Height = $y + 48
 
 $script:SyncingCheckboxes = $false
 
@@ -2774,17 +3165,8 @@ function Get-SelectedComponentSummary {
             $parts += $def.Key
         }
     }
-    if ($parts.Count -eq 0) { return "(none)" }
-    return ($parts -join ", ")
-}
-
-$chkAll.Add_CheckedChanged({
-    if ($script:SyncingCheckboxes) { return }
-    Set-AllComponentCheckboxes $chkAll.Checked
-})
-
-foreach ($chk in $script:ComponentCheckboxes.Values) {
-    $chk.Add_CheckedChanged({ Update-AllCheckboxFromComponents })
+    if ($parts.Count -eq 0) { return '(none)' }
+    return ($parts -join ', ')
 }
 
 function Update-InitFilesPathFromUi {
@@ -2824,23 +3206,211 @@ function Update-FlimageRunningWarning {
     $lblFlimageWarning.Visible = $running
 }
 
-function Update-ProfileNameHint {
-    Update-ProfilesBaseFromUi
-    $name = $combo.Text.Trim()
-    if ([string]::IsNullOrWhiteSpace($name)) {
-        $lblProfileHint.Text = ""
+function Confirm-NotRunning {
+    if (-not (Test-FLIMageRunning)) { return $true }
+    [System.Windows.Forms.MessageBox]::Show(
+        'FLIMage appears to be running. Close it before Save or Restore.',
+        'Warning',
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Warning
+    ) | Out-Null
+    return $false
+}
+
+function Get-MainProfileEntries {
+    switch ($script:ProfileViewMode) {
+        'monthly' { return @(Get-MonthlyBackupListEntries) }
+        'prerestore' { return @(Get-PreRestoreBackupListEntries) }
+        'profilehistory' { return @(Get-ProfileHistoryListEntries -ProfileName $script:HistoryProfileName) }
+        default { return @(Get-ProfileListEntries) }
+    }
+}
+
+function Get-SelectedProfileListEntry {
+    if ($list.SelectedItems.Count -eq 0) { return $null }
+    $tag = [string]$list.SelectedItems[0].Tag
+    if ($script:ProfileEntryByTag.ContainsKey($tag)) {
+        return $script:ProfileEntryByTag[$tag]
+    }
+    return $null
+}
+
+function Update-ProfileColumnHeaders {
+    $profileHeader = 'Profile'
+    $modifiedHeader = 'Modified'
+    $restoredHeader = 'Restored'
+    if ($script:ProfileSortColumn -eq 0) {
+        $profileHeader += $(if ($script:ProfileSortAscending) { ' ^' } else { ' v' })
+    } elseif ($script:ProfileSortColumn -eq 1) {
+        $modifiedHeader += $(if ($script:ProfileSortAscending) { ' ^' } else { ' v' })
+    } elseif ($script:ProfileSortColumn -eq 2) {
+        $restoredHeader += $(if ($script:ProfileSortAscending) { ' ^' } else { ' v' })
+    }
+    $list.Columns[0].Text = $profileHeader
+    $list.Columns[1].Text = $modifiedHeader
+    $list.Columns[2].Text = $restoredHeader
+}
+
+function Update-ProfileSelectionLabel {
+    $entry = Get-SelectedProfileListEntry
+    if (-not $entry) {
+        $lblSelection.Text = 'No row selected.'
         return
     }
-    $storage = Resolve-ProfileStorageRoot $name
-    if ($storage -and $storage.Kind -eq 'auto_backup') {
-        $lblProfileHint.Text = "AutoBackup"
-        $lblProfileHint.ForeColor = [System.Drawing.Color]::FromArgb(0, 102, 153)
-    } elseif ($storage) {
-        $lblProfileHint.Text = ""
-    } else {
-        $lblProfileHint.Text = "New profile"
-        $lblProfileHint.ForeColor = [System.Drawing.Color]::FromArgb(192, 0, 0)
+    $suffix = ''
+    if ($entry.HasSavePassword -and $script:ProfileViewMode -eq 'profiles') {
+        $suffix = '  |  overwrite requires password'
     }
+    $lblSelection.Text = ('Selected: {0}{1}' -f (Get-ProfileListDisplayName -Entry $entry), $suffix)
+}
+
+function Update-ProfileActionButtons {
+    $isProfiles = ($script:ProfileViewMode -eq 'profiles')
+    $hasSelection = ($list.SelectedItems.Count -gt 0)
+    $btnSave.Enabled = $isProfiles
+    $btnArchive.Enabled = $isProfiles -and $hasSelection
+    $btnRename.Enabled = $isProfiles -and $hasSelection
+    $btnProfileHistory.Enabled = $isProfiles -and $hasSelection
+    $btnBackToProfiles.Visible = -not $isProfiles
+    if ($isProfiles) {
+        $lblViewMode.Text = 'Profiles'
+        $btnRestore.Text = 'Restore'
+    }
+}
+
+function Select-MainProfileByTag {
+    param([string]$Tag)
+    if ([string]::IsNullOrWhiteSpace($Tag)) { return }
+    foreach ($item in $list.Items) {
+        if ([string]$item.Tag -eq $Tag) {
+            $item.Selected = $true
+            $item.Focused = $true
+            $item.EnsureVisible()
+            break
+        }
+    }
+}
+
+function Select-MainProfileByName {
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return }
+    foreach ($entry in (Get-MainProfileEntries)) {
+        if ($entry.Name -eq $Name) {
+            Select-MainProfileByTag -Tag $entry.StorageRoot
+            break
+        }
+    }
+}
+
+function Update-MainProfileList {
+    $keepTag = $null
+    if ($list.SelectedItems.Count -gt 0) {
+        $keepTag = [string]$list.SelectedItems[0].Tag
+    }
+
+    $list.BeginUpdate()
+    $list.Items.Clear()
+    $script:ProfileEntryByTag = @{}
+    $filter = $txtFilter.Text.Trim()
+    $allEntries = @(Get-MainProfileEntries)
+    $filtered = @($allEntries | Where-Object { Test-ProfileListEntryMatchesFilter -Entry $_ -Filter $filter })
+    $sorted = @(Sort-ProfileListEntries -Entries $filtered -SortColumn $script:ProfileSortColumn -Ascending $script:ProfileSortAscending)
+    foreach ($entry in $sorted) {
+        $tag = [string]$entry.StorageRoot
+        $script:ProfileEntryByTag[$tag] = $entry
+        $item = New-Object System.Windows.Forms.ListViewItem((Get-ProfileListDisplayName -Entry $entry))
+        [void]$item.SubItems.Add([string]$entry.ModifiedAt)
+        [void]$item.SubItems.Add([string]$entry.RestoredAt)
+        $item.Tag = $tag
+        [void]$list.Items.Add($item)
+    }
+    $list.EndUpdate()
+    Update-ProfileColumnHeaders
+    $countLabel = switch ($script:ProfileViewMode) {
+        'monthly' { 'monthly backup(s)' }
+        'prerestore' { 'pre-restore snapshot(s)' }
+        'profilehistory' { 'history snapshot(s)' }
+        default { 'profile(s)' }
+    }
+    $lblCount.Text = if ($filter) {
+        ('{0} shown / {1} total' -f $sorted.Count, $allEntries.Count)
+    } else {
+        ('{0} {1}' -f $allEntries.Count, $countLabel)
+    }
+    if ($keepTag -and $script:ProfileEntryByTag.ContainsKey($keepTag)) {
+        Select-MainProfileByTag -Tag $keepTag
+    } elseif ($list.Items.Count -gt 0) {
+        $list.Items[0].Selected = $true
+        $list.Items[0].Focused = $true
+        $list.EnsureVisible(0)
+    }
+    Update-ProfileActionButtons
+    Update-ProfileSelectionLabel
+}
+
+function Set-ProfileViewMode {
+    param(
+        [string]$Mode,
+        [string]$HistoryName = $null
+    )
+    $script:ProfileViewMode = $Mode
+    if ($Mode -eq 'profiles') {
+        $script:HistoryProfileName = $null
+        $script:ProfileSortColumn = 2
+        $script:ProfileSortAscending = $false
+        $lblViewMode.Text = 'Profiles'
+        $btnRestore.Text = 'Restore'
+    } elseif ($Mode -eq 'monthly') {
+        $script:ProfileSortColumn = 1
+        $script:ProfileSortAscending = $false
+        $lblViewMode.Text = 'Monthly auto-backups (restore only)'
+        $btnRestore.Text = 'Restore backup'
+    } elseif ($Mode -eq 'profilehistory') {
+        $script:HistoryProfileName = $HistoryName
+        $script:ProfileSortColumn = 1
+        $script:ProfileSortAscending = $false
+        $lblViewMode.Text = "Profile history: $HistoryName (restore only)"
+        $btnRestore.Text = 'Restore backup'
+    } else {
+        $script:ProfileSortColumn = 1
+        $script:ProfileSortAscending = $false
+        $lblViewMode.Text = 'Recent pre-restore backups (restore only)'
+        $btnRestore.Text = 'Restore backup'
+    }
+    Update-MainProfileList
+}
+
+function Set-AdvancedPanelVisible {
+    param([bool]$Visible)
+    $script:AdvancedExpanded = $Visible
+    $grpAdvanced.Visible = $Visible
+    $wanted = $grpAdvanced.Bottom + 16
+    if ($Visible) {
+        $btnAdvancedToggle.Text = 'Advanced <<'
+        $screen = [System.Windows.Forms.Screen]::FromControl($form).WorkingArea
+        $chrome = $form.Height - $form.ClientSize.Height
+        $maxClientH = [Math]::Max(560, $screen.Height - $chrome - 24)
+        $form.ClientSize = New-Object System.Drawing.Size(660, ([Math]::Min($wanted, $maxClientH)))
+        if ($maxClientH -lt $wanted) {
+            $form.AutoScroll = $true
+            $form.AutoScrollMinSize = New-Object System.Drawing.Size(0, $wanted)
+        } else {
+            $form.AutoScroll = $false
+            $form.AutoScrollMinSize = New-Object System.Drawing.Size(0, 0)
+        }
+    } else {
+        $btnAdvancedToggle.Text = 'Advanced >>'
+        $form.AutoScroll = $false
+        $form.AutoScrollMinSize = New-Object System.Drawing.Size(0, 0)
+        $form.AutoScrollPosition = New-Object System.Drawing.Point(0, 0)
+        $form.ClientSize = New-Object System.Drawing.Size(660, 548)
+    }
+}
+
+function Update-ArchiveLocationHint {
+    if (-not $script:UiToolTip) { return }
+    $text = Get-ArchiveLocationHelpText
+    $script:UiToolTip.SetToolTip($btnArchive, $text)
 }
 
 function Refresh-ProfileList {
@@ -2848,47 +3418,210 @@ function Refresh-ProfileList {
     if (-not (Test-Path -LiteralPath $script:ProfilesBase)) {
         New-Item -ItemType Directory -Path $script:ProfilesBase -Force | Out-Null
     }
-    $selected = $combo.Text
-    $combo.Items.Clear()
-    foreach ($name in Get-ProfileNames) {
-        [void]$combo.Items.Add($name)
-    }
-    if (-not [string]::IsNullOrWhiteSpace($selected)) {
-        $combo.Text = $selected
-    } elseif ($combo.Items.Count -gt 0) {
-        $combo.SelectedIndex = 0
-    }
-    $initOk = if (Test-InitFilesPathValid (Get-InitFilesPath)) { "OK" } else { "INVALID" }
-    Update-Status ("Init_Files ({0}): {1}`nProfiles: {2}. Scope: {3}." -f $initOk, (Get-InitFilesPath), $script:ProfilesBase, (Get-SelectedComponentSummary))
+    Update-MainProfileList
+    Update-ArchiveLocationHint
+    $initOk = if (Test-InitFilesPathValid (Get-InitFilesPath)) { 'OK' } else { 'INVALID' }
+    Update-Status ("Init_Files ({0}). Scope: {1}." -f $initOk, (Get-SelectedComponentSummary))
     Update-FlimageRunningWarning
-    Update-ProfileNameHint
 }
 
-$combo.Add_TextChanged({ Update-ProfileNameHint })
-$combo.Add_SelectedIndexChanged({ Update-ProfileNameHint })
-
-function Get-SelectedProfileName {
-    $name = $combo.Text.Trim()
-    if ([string]::IsNullOrWhiteSpace($name)) {
-        throw "Enter or select a profile name."
+function Invoke-SaveCurrentSettings {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProfileName,
+        [switch]$SkipOverwriteConfirm,
+        $PasswordAction = $null
+    )
+    if (-not (Confirm-NotRunning)) { return }
+    if (-not (Test-InitFilesPathValid (Get-InitFilesPath))) {
+        throw 'Init_Files folder is missing or invalid. Set Init_Files folder first.'
     }
-    return $name
+    if (-not (Test-IsValidProfileName $ProfileName)) {
+        throw 'Enter a valid profile name (no invalid path characters).'
+    }
+    Sync-ManagerConfigFromUi
+    $existed = Test-ProfileExists $ProfileName
+    if ($existed -and -not $SkipOverwriteConfirm) {
+        $record = Get-ProfilePasswordRecord -ProfileRoot (Get-ProfileRoot $ProfileName)
+        if (-not (Confirm-OverwriteProfileSave -ProfileName $ProfileName -PasswordRecord $record)) { return }
+    }
+
+    $components = Get-SelectedComponents
+    $saveResult = Save-Profile -ProfileName $ProfileName -Components $components
+    $passwordNote = ''
+    if ($PasswordAction) {
+        if ($PasswordAction.Clear) {
+            Set-ProfilePasswordOnManifest -ProfileRoot (Get-ProfileRoot $ProfileName) -Clear
+            $passwordNote = "`n`nOverwrite password removed."
+        } else {
+            Set-ProfilePasswordOnManifest -ProfileRoot (Get-ProfileRoot $ProfileName) `
+                -Salt $PasswordAction.Salt -Hash $PasswordAction.Hash -Iterations ([int]$PasswordAction.Iterations)
+            $passwordNote = "`n`nOverwrite password is set. Restore does not require it."
+        }
+    }
+
+    $noSettingChanges = ($saveResult -and $saveResult.NoChanges)
+    if ($noSettingChanges -and -not $PasswordAction) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "No changes were detected in the selected scope.`nThe profile was not modified and no changelog entry was added.",
+            'No changes',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information
+        ) | Out-Null
+        return
+    }
+
+    if ($script:ProfileViewMode -ne 'profiles') {
+        $script:ProfileViewMode = 'profiles'
+        $script:HistoryProfileName = $null
+        $script:ProfileSortColumn = 2
+        $script:ProfileSortAscending = $false
+    }
+    Refresh-ProfileList
+    Select-MainProfileByName -Name $ProfileName
+
+    $scope = Get-SelectedComponentSummary
+    if ($noSettingChanges) {
+        $saveMsg = "Settings were unchanged.`n`nProfile: $ProfileName$passwordNote"
+        $saveTitle = 'Password updated'
+    } elseif (-not $existed) {
+        $saveMsg = "Saved as a new profile.`n`nProfile: $ProfileName`nScope: $scope$passwordNote"
+        $saveTitle = 'New profile saved'
+    } else {
+        $saveMsg = "Profile overwritten successfully.`n`nProfile: $ProfileName`nScope: $scope"
+        $changelogPath = Get-ProfileSaveChangelogPath -ProfileRoot (Get-ProfileRoot $ProfileName)
+        if (Test-Path -LiteralPath $changelogPath) {
+            $saveMsg += "`n`nChangelog appended to:`n$changelogPath"
+        }
+        $saveMsg += $passwordNote
+        $saveTitle = 'Profile saved'
+    }
+    [System.Windows.Forms.MessageBox]::Show(
+        $saveMsg,
+        $saveTitle,
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Information
+    ) | Out-Null
 }
 
-function Confirm-NotRunning {
-    if (-not (Test-FLIMageRunning)) { return $true }
-    [System.Windows.Forms.MessageBox]::Show(
-        "FLIMage appears to be running. Close it before Save or Restore.",
-        "Warning",
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        [System.Windows.Forms.MessageBoxIcon]::Warning
-    ) | Out-Null
-    return $false
+function Show-ProfileNameDialog {
+    param(
+        [string]$Title = 'New profile',
+        [string]$Prompt = 'Profile name:'
+    )
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text = $Title
+    $dlg.ClientSize = New-Object System.Drawing.Size(380, 118)
+    $dlg.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+    $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dlg.MaximizeBox = $false
+    $dlg.MinimizeBox = $false
+    $dlg.ShowInTaskbar = $false
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Location = New-Object System.Drawing.Point(12, 14)
+    $lbl.Size = New-Object System.Drawing.Size(356, 20)
+    $lbl.Text = $Prompt
+    $dlg.Controls.Add($lbl)
+
+    $txt = New-Object System.Windows.Forms.TextBox
+    $txt.Location = New-Object System.Drawing.Point(12, 38)
+    $txt.Size = New-Object System.Drawing.Size(356, 22)
+    $dlg.Controls.Add($txt)
+
+    $btnOk = New-Object System.Windows.Forms.Button
+    $btnOk.Location = New-Object System.Drawing.Point(204, 72)
+    $btnOk.Size = New-Object System.Drawing.Size(78, 28)
+    $btnOk.Text = 'OK'
+    $dlg.AcceptButton = $btnOk
+    $dlg.Controls.Add($btnOk)
+
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Location = New-Object System.Drawing.Point(290, 72)
+    $btnCancel.Size = New-Object System.Drawing.Size(78, 28)
+    $btnCancel.Text = 'Cancel'
+    $dlg.CancelButton = $btnCancel
+    $dlg.Controls.Add($btnCancel)
+
+    $btnOk.Add_Click({
+        try {
+            $name = $txt.Text.Trim()
+            if (-not (Test-IsValidProfileName $name)) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    'Enter a valid profile name (no invalid path characters).',
+                    $dlg.Text,
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                ) | Out-Null
+                return
+            }
+            $dlg.Tag = $name
+            $dlg.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $dlg.Close()
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show(
+                $_.Exception.Message,
+                $dlg.Text,
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Error
+            ) | Out-Null
+        }
+    })
+    $btnCancel.Add_Click({
+        $dlg.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $dlg.Close()
+    })
+
+    if ($dlg.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) {
+        return [string]$dlg.Tag
+    }
+    return $null
 }
+
+function Get-SaveWithPasswordTargetName {
+    if ($script:ProfileViewMode -eq 'profiles') {
+        $entry = Get-SelectedProfileListEntry
+        if ($entry) { return [string]$entry.Name }
+    }
+    return Show-ProfileNameDialog -Title 'Save with password' -Prompt 'Profile name to protect:'
+}
+
+$chkAll.Add_CheckedChanged({
+    if ($script:SyncingCheckboxes) { return }
+    Set-AllComponentCheckboxes $chkAll.Checked
+})
+foreach ($chk in $script:ComponentCheckboxes.Values) {
+    $chk.Add_CheckedChanged({ Update-AllCheckboxFromComponents })
+}
+
+$txtFilter.Add_TextChanged({ Update-MainProfileList })
+$list.Add_SelectedIndexChanged({
+    Update-ProfileActionButtons
+    Update-ProfileSelectionLabel
+})
+$list.Add_ColumnClick({
+    param($sender, $e)
+    if ($e.Column -gt 2) { return }
+    if ($e.Column -eq $script:ProfileSortColumn) {
+        $script:ProfileSortAscending = -not $script:ProfileSortAscending
+    } else {
+        $script:ProfileSortColumn = $e.Column
+        $script:ProfileSortAscending = $true
+    }
+    Update-MainProfileList
+})
+
+$btnAdvancedToggle.Add_Click({
+    Set-AdvancedPanelVisible -Visible (-not $script:AdvancedExpanded)
+})
+
+$btnBackToProfiles.Add_Click({
+    Set-ProfileViewMode -Mode 'profiles'
+})
 
 $btnBrowseInit.Add_Click({
     $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dlg.Description = "Select FLIMage Init_Files folder"
+    $dlg.Description = 'Select FLIMage Init_Files folder'
     Update-InitFilesPathFromUi
     if (Test-Path -LiteralPath (Get-InitFilesPath)) {
         $dlg.SelectedPath = Get-InitFilesPath
@@ -2897,8 +3630,8 @@ $btnBrowseInit.Add_Click({
         $txtInit.Text = $dlg.SelectedPath
         if (-not (Test-InitFilesPathValid $dlg.SelectedPath)) {
             [System.Windows.Forms.MessageBox]::Show(
-                "This folder does not look like a valid Init_Files folder yet.",
-                "Warning",
+                'This folder does not look like a valid Init_Files folder yet.',
+                'Warning',
                 [System.Windows.Forms.MessageBoxButtons]::OK,
                 [System.Windows.Forms.MessageBoxIcon]::Warning
             ) | Out-Null
@@ -2922,94 +3655,35 @@ $btnBrowse.Add_Click({
 
 $btnRefresh.Add_Click({ Refresh-ProfileList })
 
-$btnBrowseProfile.Add_Click({
-    Sync-ManagerConfigFromUi
-    $script:BrowseDialogArchivedProfiles = $false
-    $script:BrowseDialogRenamedProfile = $null
-    $script:BrowseDialogRestoredFromBackup = $false
-    $picked = Show-ProfileBrowseDialog -InitialSelection $combo.Text.Trim()
-    Refresh-ProfileList
-    if ($script:BrowseDialogRestoredFromBackup) {
-        Update-ProfileNameHint
-    } elseif ($picked) {
-        $combo.Text = $picked
-        Update-ProfileNameHint
-    } elseif ($script:BrowseDialogRenamedProfile) {
-        $combo.Text = $script:BrowseDialogRenamedProfile
-        Update-ProfileNameHint
-    } elseif ($script:BrowseDialogArchivedProfiles -and $combo.Text.Trim()) {
-        if (-not (Test-ProfileExists $combo.Text.Trim())) {
-            $combo.Text = ''
-            Update-ProfileNameHint
-        }
+$btnNewProfile.Add_Click({
+    try {
+        $name = Show-ProfileNameDialog -Title 'New profile' -Prompt 'New profile name:'
+        if ([string]::IsNullOrWhiteSpace($name)) { return }
+        Invoke-SaveCurrentSettings -ProfileName $name
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show(
+            $_.Exception.Message,
+            'New profile',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        ) | Out-Null
     }
 })
 
 $btnSave.Add_Click({
-    if (-not (Confirm-NotRunning)) { return }
     try {
-        if (-not (Test-InitFilesPathValid (Get-InitFilesPath))) {
-            throw "Init_Files folder is missing or invalid. Set Init_Files folder first."
+        if ($script:ProfileViewMode -ne 'profiles') {
+            throw 'Switch back to the profile list before overwriting a profile.'
         }
-        Sync-ManagerConfigFromUi
-        $name = Get-SelectedProfileName
-        $isNewProfile = -not (Test-ProfileExists $name)
-        if (-not $isNewProfile) {
-            if (-not (Confirm-OverwriteProfileSave -ProfileName $name)) { return }
+        $entry = Get-SelectedProfileListEntry
+        if (-not $entry) {
+            throw 'Select a profile in the list.'
         }
-        $components = Get-SelectedComponents
-        $syncDefaultsInProfile = $false
-        if ($components.initRoot) {
-            $syncResult = Invoke-DefaultSyncPromptOnSave -InitFilesPath (Get-InitFilesPath)
-            if ($syncResult.Action -eq 'Cancel') { return }
-            if ($syncResult.Action -eq 'Yes') { $syncDefaultsInProfile = $true }
-        }
-        $saveResult = Save-Profile -ProfileName $name -Components $components
-        if ($saveResult -and $saveResult.NoChanges) {
-            [System.Windows.Forms.MessageBox]::Show(
-                "No changes were detected in the selected scope.`nThe profile was not modified and no changelog entry was added.",
-                "No changes",
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Information
-            ) | Out-Null
-            return
-        }
-        $syncSummary = $null
-        if ($syncDefaultsInProfile) {
-            $profileInit = Join-Path (Get-ProfileRoot $name) "Init_Files"
-            if (Test-Path -LiteralPath $profileInit) {
-                $syncSummary = Sync-DefaultSettingsAcrossVersions -InitFilesPath $profileInit
-            }
-        }
-        Refresh-ProfileList
-        $scope = Get-SelectedComponentSummary
-        $changelogPath = Get-ProfileSaveChangelogPath -ProfileRoot (Get-ProfileRoot $name)
-        if ($isNewProfile) {
-            $saveMsg = "Saved as a new profile.`n`nProfile: $name`nScope: $scope"
-            $saveTitle = "New profile saved"
-        } else {
-            $saveMsg = "Profile overwritten successfully.`n`nProfile: $name`nScope: $scope"
-            if (Test-Path -LiteralPath $changelogPath) {
-                $saveMsg += "`n`nChangelog appended to:`n$changelogPath"
-            }
-            $saveTitle = "Profile saved"
-        }
-        if ($syncSummary) {
-            $masterSaved = $syncSummary.MasterSavedAt.ToString('g')
-            $saveMsg += "`n`nDefault sync in profile (master: $($syncSummary.MasterName), last saved $masterSaved):"
-            $saveMsg += "`n$($syncSummary.FilesUpdated) file(s), $($syncSummary.KeysUpdated) shared key(s) updated in the profile copy."
-            $saveMsg += "`nLive Init_Files was not modified."
-        }
-        [System.Windows.Forms.MessageBox]::Show(
-            $saveMsg,
-            $saveTitle,
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Information
-        ) | Out-Null
+        Invoke-SaveCurrentSettings -ProfileName ([string]$entry.Name)
     } catch {
         [System.Windows.Forms.MessageBox]::Show(
             $_.Exception.Message,
-            "Error",
+            'Save',
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Error
         ) | Out-Null
@@ -3020,34 +3694,176 @@ $btnRestore.Add_Click({
     if (-not (Confirm-NotRunning)) { return }
     try {
         if (-not (Test-InitFilesPathValid (Get-InitFilesPath))) {
-            throw "Init_Files folder is missing or invalid. Set Init_Files folder first."
+            throw 'Init_Files folder is missing or invalid. Set Init_Files folder first.'
         }
         Sync-ManagerConfigFromUi
-        $name = Get-SelectedProfileName
-        if (-not (Test-ProfileExists $name)) {
-            throw "Profile not found: $name"
+        $entry = Get-SelectedProfileListEntry
+        if (-not $entry) {
+            throw 'Select a profile or backup row.'
         }
-        $scope = Get-SelectedComponentSummary
-        if (-not (Confirm-OverwriteRestore -ProfileName $name -Scope $scope)) { return }
-
-        $components = Get-SelectedComponents
-        $preRestorePath = Invoke-PreRestoreBackupBeforeRestore -Components $components -TargetProfileName $name
-        Restore-Profile -ProfileName $name -Components $components
-        $restoredStorage = Resolve-ProfileStorageRoot $name
-        if ($restoredStorage) {
-            Update-ProfileManifestRestoredAt -ProfileRoot $restoredStorage.Root
+        if ($script:ProfileViewMode -eq 'profiles') {
+            $name = [string]$entry.Name
+            if (-not (Test-ProfileExists $name)) {
+                throw "Profile not found: $name"
+            }
+            $scope = Get-SelectedComponentSummary
+            if (-not (Confirm-OverwriteRestore -ProfileName $name -Scope $scope)) { return }
+            $components = Get-SelectedComponents
+            $preRestorePath = Invoke-PreRestoreBackupBeforeRestore -Components $components -TargetProfileName $name
+            Restore-Profile -ProfileName $name -Components $components
+            $restoredStorage = Resolve-ProfileStorageRoot $name
+            if ($restoredStorage) {
+                Update-ProfileManifestRestoredAt -ProfileRoot $restoredStorage.Root
+            }
+            Refresh-ProfileList
+            Select-MainProfileByName -Name $name
+            Update-Status ("Restored: {0}. Scope: {1}. Pre-restore backup saved. Start FLIMage." -f $name, $scope)
+            [System.Windows.Forms.MessageBox]::Show(
+                "Profile '$name' has been restored.`n`nScope: $scope`n`nPre-restore backup saved to:`n$preRestorePath`n`nYou can start FLIMage now.",
+                'Restore complete',
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Information
+            ) | Out-Null
+        } else {
+            $components = Get-SelectedComponents
+            $scope = Get-SelectedComponentSummary
+            if (Invoke-RestoreFromBrowseBackupEntry -Entry $entry -Components $components -Scope $scope) {
+                Refresh-ProfileList
+            }
         }
-        Update-Status ("Restored: {0}. Scope: {1}. Pre-restore backup saved. Start FLIMage." -f $name, $scope)
+    } catch {
         [System.Windows.Forms.MessageBox]::Show(
-            "Profile '$name' has been restored.`n`nScope: $scope`n`nPre-restore backup saved to:`n$preRestorePath`n`nYou can start FLIMage now.",
-            "Restore complete",
+            $_.Exception.Message,
+            'Error',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        ) | Out-Null
+    }
+})
+
+$btnArchive.Add_Click({
+    $entry = Get-SelectedProfileListEntry
+    if (-not $entry -or $script:ProfileViewMode -ne 'profiles') {
+        [System.Windows.Forms.MessageBox]::Show(
+            'Select a profile to archive.',
+            'Archive',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information
+        ) | Out-Null
+        return
+    }
+    try {
+        Sync-ManagerConfigFromUi
+        if (Invoke-ArchiveProfile -ProfileName ([string]$entry.Name)) {
+            Refresh-ProfileList
+        }
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show(
+            $_.Exception.Message,
+            'Archive failed',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        ) | Out-Null
+    }
+})
+
+$btnRename.Add_Click({
+    $entry = Get-SelectedProfileListEntry
+    if (-not $entry -or $script:ProfileViewMode -ne 'profiles') {
+        [System.Windows.Forms.MessageBox]::Show(
+            'Select a profile to rename.',
+            'Rename',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information
+        ) | Out-Null
+        return
+    }
+    $name = [string]$entry.Name
+    $newName = Show-RenameProfileDialog -CurrentName $name
+    if (-not $newName) { return }
+    try {
+        Sync-ManagerConfigFromUi
+        $renamed = Invoke-RenameProfile -OldName $name -NewName $newName
+        Refresh-ProfileList
+        Select-MainProfileByName -Name $renamed
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show(
+            $_.Exception.Message,
+            'Rename failed',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        ) | Out-Null
+    }
+})
+
+$btnMonthlyRestore.Add_Click({
+    Set-ProfileViewMode -Mode 'monthly'
+})
+
+$btnPreRestoreBrowse.Add_Click({
+    Set-ProfileViewMode -Mode 'prerestore'
+})
+
+$btnProfileHistory.Add_Click({
+    $entry = Get-SelectedProfileListEntry
+    if (-not $entry -or $script:ProfileViewMode -ne 'profiles') {
+        [System.Windows.Forms.MessageBox]::Show(
+            'Select a profile first, then open its history.',
+            'Profile history',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information
+        ) | Out-Null
+        return
+    }
+    Set-ProfileViewMode -Mode 'profilehistory' -HistoryName ([string]$entry.Name)
+})
+
+$btnCopyKeys.Add_Click({
+    if (-not (Confirm-NotRunning)) { return }
+    try {
+        if (-not (Test-InitFilesPathValid (Get-InitFilesPath))) {
+            throw 'Init_Files folder is missing or invalid. Set Init_Files folder first.'
+        }
+        Sync-ManagerConfigFromUi
+        $picked = Show-CopySharedKeysDialog -InitFilesPath (Get-InitFilesPath)
+        if (-not $picked) { return }
+        if (-not (Test-SharedKeyCopySameFamily -SourceName $picked.SourceName -TargetName $picked.TargetName)) {
+            throw 'Default files and device files cannot be mixed.'
+        }
+        $keysUpdated = Merge-DefaultSetupFromMaster -MasterPath $picked.SourcePath -TargetPath $picked.TargetPath
+        $family = if ($picked.Kind -eq 'Device') { 'device files' } else { 'Default files' }
+        [System.Windows.Forms.MessageBox]::Show(
+            "Shared keys copied ($family).`n`nSource: $($picked.SourceName)`nTarget: $($picked.TargetName)`nKeys updated: $keysUpdated`n`nLive Init_Files was modified.",
+            'Copy shared keys',
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Information
         ) | Out-Null
     } catch {
         [System.Windows.Forms.MessageBox]::Show(
             $_.Exception.Message,
-            "Error",
+            'Copy shared keys',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        ) | Out-Null
+    }
+})
+
+$btnSaveWithPassword.Add_Click({
+    try {
+        $name = Get-SaveWithPasswordTargetName
+        if ([string]::IsNullOrWhiteSpace($name)) { return }
+        $exists = Test-ProfileExists $name
+        $record = $null
+        if ($exists) {
+            $record = Get-ProfilePasswordRecord -ProfileRoot (Get-ProfileRoot $name)
+        }
+        $action = Show-SaveWithPasswordDialog -ProfileName $name -ProfileExists $exists -PasswordRecord $record
+        if (-not $action) { return }
+        Invoke-SaveCurrentSettings -ProfileName $name -SkipOverwriteConfirm -PasswordAction $action
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show(
+            $_.Exception.Message,
+            'Save with password',
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Error
         ) | Out-Null
@@ -3055,7 +3871,6 @@ $btnRestore.Add_Click({
 })
 
 $script:LastFlimageRunning = $null
-
 $script:FlimageWatchTimer = New-Object System.Windows.Forms.Timer
 $script:FlimageWatchTimer.Interval = 1500
 $script:FlimageWatchTimer.Add_Tick({ Update-FlimageRunningWarning })
@@ -3064,6 +3879,10 @@ $form.Add_FormClosed({
         $script:FlimageWatchTimer.Stop()
         $script:FlimageWatchTimer.Dispose()
         $script:FlimageWatchTimer = $null
+    }
+    if ($script:UiToolTip) {
+        $script:UiToolTip.Dispose()
+        $script:UiToolTip = $null
     }
 })
 
