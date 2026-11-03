@@ -120,6 +120,47 @@ def test_replaceable_rules():
         assert m._is_replaceable(p, seg)[0]  # re-seeded from seg (overwrite_seg_roi_masks)
 
 
+def test_subtract_shaft_removes_overlap_and_keeps_empty_frames():
+    spine = np.stack([disk((30, 30), 15, 15, 4)] * 3).astype(np.uint8)
+    shaft = np.zeros_like(spine)
+    shaft[0, :, 17:] = 1   # overlaps the right part of the spine
+    shaft[2] = 1           # would remove the whole ROI -> frame kept
+    out, removed = m.subtract_shaft(spine, shaft)
+    assert removed[0] > 0 and not (out[0] & shaft[0]).any() and out[0].any()
+    assert removed[1] == 0 and np.array_equal(out[1], spine[1])
+    assert removed[2] == 0 and np.array_equal(out[2], spine[2])
+    assert out.dtype == spine.dtype
+
+
+def test_trimmed_reference_keeps_roi_size_constant():
+    # spine ROI next to a fixed shaft; later frames move the spine 3 px toward the shaft
+    ref = np.zeros((40, 40), np.uint8)
+    ref[10:16, 20:26] = 1                       # 36 px
+    shaft = np.zeros((40, 40), np.uint8)
+    shaft[16:22, :] = 1                         # horizontal shaft just below
+    shift_y, shift_x = 2, -1                    # raw -> GUI shift of the reference row
+    trimmed, removed = m.trim_reference_roi(ref, shaft, shift_y, shift_x)
+    gui = m._int_shift(ref, shift_y, shift_x) > 0
+    assert removed == int((gui & (shaft > 0)).sum()) > 0
+    assert not (m._int_shift(trimmed, shift_y, shift_x).astype(bool) & (shaft > 0)).any()
+    picks = [dict(flim="a_002.flim", head=(5, 13, 23), status="tracked"),
+             dict(flim="a_003.flim", head=(5, 16, 23), status="tracked")]   # moved 3 px down
+    fi = pd.DataFrame(dict(filename=["a_002.flim", "a_003.flim"], phase=["pre", "post"],
+                           shift_y=[shift_y, shift_y], shift_x=[shift_x, shift_x]))
+    stack, _ = m.build_type_a_stack(picks, picks[0], trimmed, fi)
+    sizes = stack.reshape(len(stack), -1).sum(1)
+    assert sizes[0] == sizes[1] == int(trimmed.sum()), sizes
+    # the former frame-by-frame subtraction would have shrunk the moved frame
+    old, _ = m.subtract_shaft(m.build_type_a_stack(picks, picks[0], ref, fi)[0],
+                              np.stack([shaft, shaft]))
+    old_sizes = old.reshape(len(old), -1).sum(1)
+    assert old_sizes[1] < old_sizes[0], old_sizes
+    # nothing left after trimming -> ROI kept
+    full = np.ones((40, 40), np.uint8)
+    kept, n = m.trim_reference_roi(ref, full, 0, 0)
+    assert n == 0 and np.array_equal(kept, ref)
+
+
 def test_apply_end_to_end_synthetic():
     """Queue job -> tracked Spine mask on disk; second run keeps a GUI edit untouched."""
     import csv
@@ -202,6 +243,23 @@ def test_apply_end_to_end_synthetic():
                 assert abs(cy - 30) < 0.5 and abs(cx - 35) < 0.5, (i, cy, cx)
             side = json.loads(open(os.path.join(tif_dir, base + "_Spine_roi_mask_source.json")).read())
             assert side["reference_frame"] == names[2] and side["lost_frames"] == []
+            assert side["shaft_removed_px"] is None  # no shaft mask on disk yet
+            # With a shaft mask on disk the overlapping pixels are removed (fresh mask -> replaceable).
+            shaft = np.zeros((7,) + shape, np.uint8)
+            shaft[:, 30:, :] = 1  # lower half of the spine disk
+            tifffile.imwrite(os.path.join(tif_dir, base + "_DendriticShaft_roi_mask.tif"), shaft)
+            s_sh = m.apply_tracked_spine_rois(df, queue_root=str(q.root))
+            assert s_sh.status.tolist() == ["written"], s_sh.to_dict("records")
+            out_sh = tifffile.imread(os.path.join(tif_dir, base + "_Spine_roi_mask.tif"))
+            assert not (out_sh.astype(bool) & shaft.astype(bool)).any() and out_sh.any(axis=(1, 2)).all()
+            side = json.loads(open(os.path.join(tif_dir, base + "_Spine_roi_mask_source.json")).read())
+            # trimmed once in the reference frame: one count, same ROI size in every frame
+            assert side["shaft_removed_px"] > 0 and side["sha1"] == m._sha(out_sh > 0)
+            sizes = out_sh.reshape(len(out_sh), -1).sum(1)
+            assert (sizes == sizes[0]).all(), sizes
+            os.remove(os.path.join(tif_dir, base + "_DendriticShaft_roi_mask.tif"))
+            m.apply_tracked_spine_rois(df, queue_root=str(q.root))
+            out = tifffile.imread(os.path.join(tif_dir, base + "_Spine_roi_mask.tif"))
             # User edits the mask in the GUI -> a second run must keep it.
             edited = out.copy()
             edited[5] = 0

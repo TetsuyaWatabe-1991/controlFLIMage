@@ -10,7 +10,9 @@ quantification yet are quantified when they are shown).
 Keys:
     Left / Right   previous / next set
     E  (or Enter)  edit the ROIs of this set in the existing ROI GUI (Spine, then Shaft);
-                   afterwards this set is re-quantified and the display is updated
+                   afterwards this set is re-quantified and the display is updated.
+                   Reject in that edit window writes the same flag and pkl column as R
+                   and refreshes this tiled view (it does not un-reject).
     R              toggle reject (same flag file and pkl column as the ROI table GUI).
                    Rejected sets stay in the list and keep their images and data, so a
                    mistaken reject can simply be toggled back.
@@ -41,6 +43,7 @@ import shutil
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -139,12 +142,14 @@ class ReviewSession:
     def __init__(self, pkl_path: str, csv_path: str | None = None, *, ch_1or2: int = 2, z_plus_minus: int = 1,
                  photon_threshold: int = 15, total_photon_threshold: int = 1000,
                  skip_lifetime_analysis: bool = True, uncaging_roi_keyframe_count: int | None = None,
-                 show_alignment_r: bool = True, time_window_min: tuple[float, float] | None = None):
+                 show_alignment_r: bool = True, time_window_min: tuple[float, float] | None = None,
+                 uncaging_lifetime_bin_frames: int | None = None):
         self.pkl_path = pkl_path
         self.csv_path = csv_path or default_csv_for_pkl(pkl_path)
         self.ch, self.zpm = ch_1or2, z_plus_minus
         self.photon_threshold, self.total_photon_threshold = photon_threshold, total_photon_threshold
         self.skip_lifetime_analysis = skip_lifetime_analysis
+        self.uncaging_lifetime_bin_frames = uncaging_lifetime_bin_frames
         self.uncaging_roi_keyframe_count = uncaging_roi_keyframe_count
         self.show_alignment_r = show_alignment_r
         self.df = pd.read_pickle(pkl_path)
@@ -241,6 +246,7 @@ class ReviewSession:
                 total_photon_threshold=self.total_photon_threshold,
                 skip_lifetime_analysis=self.skip_lifetime_analysis,
                 background_mode=g.BACKGROUND_MODE_MIP_P20,
+                uncaging_lifetime_bin_frames=self.uncaging_lifetime_bin_frames,
             )
             new_q = pd.read_csv(out) if os.path.exists(out) else None
         self._backup_once()
@@ -269,11 +275,48 @@ class ReviewSession:
         return new_state
 
 
+@dataclass(frozen=True)
+class RoiEditOutcome:
+    """What the ROI edit window did before it closed."""
+
+    masks_changed: bool = False
+    rejected: bool = False
+
+
+def roi_edit_outcome_from(result: object) -> RoiEditOutcome:
+    """Accept the edit helper's outcome, or a legacy bool (masks changed only)."""
+    if isinstance(result, RoiEditOutcome):
+        return result
+    if isinstance(result, dict):
+        return RoiEditOutcome(
+            masks_changed=bool(result.get("masks_changed", False)),
+            rejected=bool(result.get("rejected", False)),
+        )
+    return RoiEditOutcome(masks_changed=bool(result), rejected=False)
+
+
+def apply_roi_edit_outcome(session: ReviewSession, outcome: RoiEditOutcome) -> bool:
+    """Store Reject from the edit window on the flag file and pkl.
+
+    Returns True when ROI masks changed and this set should be re-quantified.
+    Reject does not flip an already-rejected set back to accepted.
+    """
+    if outcome.rejected and not session.rejected():
+        session.toggle_reject()
+    return bool(outcome.masks_changed)
+
 
 # --------------------------------------------------------------------------- Qt viewer
-def _edit_rois_in_gui(session: ReviewSession) -> bool:
-    """Open the existing ROI GUI for Spine, then Shaft. True if any mask file changed."""
-    from gui_integration_tiff_only import launch_roi_analysis_gui_tiff_only
+def _edit_rois_in_gui(session: ReviewSession, launch=None) -> RoiEditOutcome:
+    """Open the existing ROI GUI for Spine, then Shaft.
+
+    Reject in that window stops the remaining ROI types and is reported so the
+    tiled set review can mark the same set rejected.
+    """
+    if launch is None:
+        from gui_integration_tiff_only import launch_roi_analysis_gui_tiff_only
+
+        launch = launch_roi_analysis_gui_tiff_only
     from gui_roi_respan_seg_masks import RESPAN_ROI_TYPES
 
     grp, s, tiff = session.current
@@ -283,14 +326,19 @@ def _edit_rois_in_gui(session: ReviewSession) -> bool:
         return os.path.getmtime(p) if os.path.exists(p) else None
 
     before = {t: stamp(f"{base}_{t}_roi_mask.tif") for t in RESPAN_ROI_TYPES}
+    rejected = False
     for roi_type in RESPAN_ROI_TYPES:
-        res = launch_roi_analysis_gui_tiff_only(
+        res = launch(
             session.df, tiff, grp, s, header=roi_type, save_tiff_path=f"{base}_{roi_type}_roi_mask.tif",
             shortcut_host=None, uncaging_roi_keyframe_count=session.uncaging_roi_keyframe_count,
         )
+        if isinstance(res, dict) and res.get("rejected"):
+            rejected = True
+            break
         if not isinstance(res, dict) or res.get("exit_kind") == "cancel":
             break
-    return any(stamp(f"{base}_{t}_roi_mask.tif") != before[t] for t in RESPAN_ROI_TYPES)
+    changed = any(stamp(f"{base}_{t}_roi_mask.tif") != before[t] for t in RESPAN_ROI_TYPES)
+    return RoiEditOutcome(masks_changed=changed, rejected=rejected)
 
 
 def make_viewer(session: ReviewSession, edit_fn=_edit_rois_in_gui):
@@ -382,12 +430,19 @@ def make_viewer(session: ReviewSession, edit_fn=_edit_rois_in_gui):
             self.redraw()
 
         def edit(self):
-            changed = edit_fn(self.session)
-            if changed:
+            outcome = roi_edit_outcome_from(edit_fn(self.session))
+            requantify = apply_roi_edit_outcome(self.session, outcome)
+            self._update_combo_item()
+            if requantify:
                 self.status.setText("re-quantifying ...")
                 self.repaint()
                 n = self.session.requantify_current()
-                self.redraw(f"ROI updated; re-quantified ({n} rows)")
+                msg = f"ROI updated; re-quantified ({n} rows)"
+                if outcome.rejected:
+                    msg = "rejected; " + msg
+                self.redraw(msg)
+            elif outcome.rejected:
+                self.redraw("rejected (R again to undo)")
             else:
                 self.redraw("no ROI change")
 

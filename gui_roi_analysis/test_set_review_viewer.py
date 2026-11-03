@@ -29,6 +29,86 @@ sys.path.append(os.path.dirname(HERE))
 import set_review_viewer as v  # noqa: E402
 
 
+def _tiny_session(td: str) -> v.ReviewSession:
+    tiff = os.path.join(td, "set.tif")
+    open(tiff, "wb").close()
+    pkl = os.path.join(td, "combined.pkl")
+    csv = os.path.join(td, "combined_intensity_lifetime_all_frames.csv")
+    pd.DataFrame({
+        "group": ["g"],
+        "nth_set_label": [1.0],
+        "after_align_save_path": [tiff],
+        "reject": [0],
+    }).to_pickle(pkl)
+    pd.DataFrame({
+        "group": ["g"],
+        "set_label": [1.0],
+        "phase": ["pre"],
+    }).to_csv(csv, index=False)
+    return v.ReviewSession(pkl, csv, show_alignment_r=False)
+
+
+def test_edit_reject_is_stored_and_does_not_unreject() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        session = _tiny_session(td)
+        calls = []
+
+        def launch(*_args, **kwargs):
+            calls.append(kwargs["header"])
+            return {"rejected": True, "exit_kind": "reject"}
+
+        outcome = v._edit_rois_in_gui(session, launch=launch)
+        assert calls == ["Spine"], calls
+        assert outcome.rejected and not outcome.masks_changed
+        assert v.apply_roi_edit_outcome(session, outcome) is False
+        assert session.rejected()
+        tiff = session.current[2]
+        assert os.path.exists(v.reject_flag_path(tiff))
+        saved = pd.read_pickle(session.pkl_path)
+        assert (saved.reject == 1).all()
+        again = v.apply_roi_edit_outcome(session, v.RoiEditOutcome(masks_changed=False, rejected=True))
+        assert again is False and session.rejected()
+        assert v.roi_edit_outcome_from(True) == v.RoiEditOutcome(masks_changed=True, rejected=False)
+
+
+def test_edit_reject_refreshes_tiled_viewer_label() -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt5.QtWidgets import QApplication
+
+    class _Review:
+        def __init__(self):
+            self.notes = []
+            self.rejected = False
+            self.uncaging_xy = None
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    orig_load, orig_draw = v.load_set_review, v.draw_set_review
+    v.load_set_review = lambda *a, **k: _Review()
+    v.draw_set_review = lambda fig, review: []
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            session = _tiny_session(td)
+            session.uncaging_xy = lambda: None
+            window = v.make_viewer(
+                session,
+                edit_fn=lambda _s: v.RoiEditOutcome(masks_changed=False, rejected=True),
+            )
+            window.show()
+            app.processEvents()
+            assert "[REJECTED]" not in window.combo.itemText(0)
+            window.edit()
+            app.processEvents()
+            assert session.rejected()
+            assert "[REJECTED]" in window.combo.itemText(0)
+            assert window.reject_button.text().startswith("Un-reject")
+            assert window.status.text().startswith("rejected")
+            window.close()
+            app.processEvents()
+    finally:
+        v.load_set_review = orig_load
+        v.draw_set_review = orig_draw
+
+
 def test_replace_set_rows_keeps_order():
     q = pd.DataFrame({"group": list("aabbcc"), "set_label": [0, 0, 1, 1, 0, 0], "x": range(6)})
     new = pd.DataFrame({"group": ["b"] * 3, "set_label": [1] * 3, "x": [10, 11, 12]})
@@ -191,5 +271,9 @@ if __name__ == "__main__":
     a = ap.parse_args()
     test_replace_set_rows_keeps_order()
     print("PASS test_replace_set_rows_keeps_order")
+    test_edit_reject_is_stored_and_does_not_unreject()
+    print("PASS test_edit_reject_is_stored_and_does_not_unreject")
+    test_edit_reject_refreshes_tiled_viewer_label()
+    print("PASS test_edit_reject_refreshes_tiled_viewer_label")
     if a.sets:
         integration(a.sets)

@@ -785,6 +785,7 @@ def run_tiff_uncaging_roi_respan(
     uncaging_roi_keyframe_count: int | None = None,
     overwrite_seg_roi_masks: bool = False,
     skip_lifetime_analysis: bool = False,
+    uncaging_lifetime_bin_frames: int | None = None,
     fast_mode: bool = False,
     spine_roi_source: str = "seg",
     respan_track_queue_root: str | None = None,
@@ -832,6 +833,10 @@ def run_tiff_uncaging_roi_respan(
       window changes the sets of a loaded combined_df, the stacks are rebuilt.
 
     Set skip_lifetime_analysis=True to quantify intensity only (lifetime/total_photon as NaN).
+    uncaging_lifetime_bin_frames: 8 or 16 sums that many uncaging frames before one lifetime
+    fit (written on the first frame of the bin). None leaves uncaging lifetime per frame.
+    skip_lifetime_analysis=True skips every lifetime fit, uncaging frames included (the bin
+    setting is then ignored).
     """
     if uncaging_frame_num is None:
         uncaging_frame_num = [33, 34, 35, 36, 55, 80, 144]
@@ -860,6 +865,7 @@ def run_tiff_uncaging_roi_respan(
         f"uncaging_roi_keyframe_count: {uncaging_roi_keyframe_count}",
         f"overwrite_seg_roi_masks: {overwrite_seg_roi_masks}",
         f"skip_lifetime_analysis: {skip_lifetime_analysis}",
+        f"uncaging_lifetime_bin_frames: {uncaging_lifetime_bin_frames}",
         f"fast_mode: {fast_mode}",
         f"spine_roi_source: {spine_roi_source}",
         f"time_window_min: {time_window_min}",
@@ -1124,7 +1130,11 @@ def run_tiff_uncaging_roi_respan(
             ).astype(int)
 
         if skip_lifetime_analysis:
-            print("Quantifying intensity from FLIM (lifetime skipped)...")
+            print("Quantifying intensity from FLIM (lifetime skipped, uncaging frames included)...")
+        elif uncaging_lifetime_bin_frames:
+            print(
+                f"Quantifying intensity and lifetime; uncaging lifetime every {int(uncaging_lifetime_bin_frames)} frames..."
+            )
         else:
             print("Quantifying intensity and lifetime from FLIM...")
         quantify_intensity_from_flim(
@@ -1136,6 +1146,7 @@ def run_tiff_uncaging_roi_respan(
             total_photon_threshold=total_photon_threshold,
             skip_lifetime_analysis=skip_lifetime_analysis,
             background_mode=BACKGROUND_MODE_MIP_P20,
+            uncaging_lifetime_bin_frames=uncaging_lifetime_bin_frames,
         )
 
         summary.append(f"df_save_path: {df_save_path}")

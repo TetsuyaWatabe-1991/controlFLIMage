@@ -212,6 +212,29 @@ def save_roi_mask_from_gui_to_tiff(gui_instance, save_path, header="ROI"):
         return None
 
 
+def projection_without_uncaging(stack: np.ndarray, phases=None, n_pre: int = 0,
+                                n_unc: int = 0) -> tuple[np.ndarray, int]:
+    """Max projection over time (and z for 4D) of the pre and post frames only.
+
+    Uncaging frames (bright uncaging / calcium signal) are left out of the overview image.
+    phases: per-frame phase strings (frame_info.csv); without them, frames
+    n_pre .. n_pre + n_unc - 1 are taken as uncaging frames (TIFF order pre, unc, post).
+    Falls back to all frames when nothing would be left. Returns (2D image, frames used).
+    """
+    n = stack.shape[0]
+    if phases is not None and len(phases) == n:
+        use = np.array([not str(p).lower().startswith("unc") for p in phases])
+    else:
+        use = np.ones(n, bool)
+        use[n_pre:n_pre + n_unc] = False
+    if not use.any():
+        use[:] = True
+    img = stack[use].max(axis=0)
+    while img.ndim > 2:
+        img = img.max(axis=0)
+    return img, int(use.sum())
+
+
 def launch_roi_analysis_gui_tiff_only(
     combined_df,
     tiff_data_path,
@@ -413,6 +436,14 @@ def launch_roi_analysis_gui_tiff_only(
             file_info["frame_info_df"] = None
     else:
         file_info["frame_info_df"] = None
+
+    # Overview image without the uncaging frames
+    if after_align_tiff_data.ndim >= 3:
+        fi = file_info.get("frame_info_df")
+        phases = fi["phase"].tolist() if fi is not None else None
+        max_proj_image, n_used = projection_without_uncaging(
+            after_align_tiff_data, phases, n_pre_frames, n_unc_frames)
+        print(f"Max projection over {n_used} of {after_align_tiff_data.shape[0]} frames (uncaging frames left out)")
 
     # Check if QApplication already exists
     app = QApplication.instance()

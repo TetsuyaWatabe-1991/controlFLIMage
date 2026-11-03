@@ -11,17 +11,22 @@ For every set (after create_roi_masks_from_seg_masks, before the ROI GUI):
    previous frame carried by the global shift; a candidate must lie within
    MAX_STEP_XY_UM in xy and MAX_STEP_DZ slices in z, otherwise the frame is "lost" and
    the previous ROI is carried by the global shift.
-2. Reference ROI = RESPAN outline of the LAST pre frame, dilated by 1 px (fixed_d1).
+2. Reference ROI = RESPAN outline of the LAST pre frame, dilated by ROI_DILATE_PX (0 = outline as-is).
    Every frame gets the same shape, translated by the rounded head displacement.
 3. Convert to the after_align_full frame of the GUI TIFF (integer shift relative to
    the first pre of the set, same as _rebuild_one_set_full_size). Uncaging frames use
    the last-pre ROI (they are aligned to the last pre there).
+   With SUBTRACT_SHAFT, the <base>_DendriticShaft_roi_mask.tif pixels are removed ONCE, in
+   the reference (last pre) frame, and the trimmed shape is what every frame gets: the ROI
+   keeps the same size in all frames. (Until 2026-10-16 the shaft was subtracted frame by
+   frame; the fixed shaft ROI then cut off more of a spine ROI that had moved toward the
+   shaft, e.g. 121 -> 80 px within one set, mixing ROI size into the time course.)
 4. Write <base>_Spine_roi_mask.tif only when the existing Spine mask is still the
    seg_masks initialisation (or was written by this module and not edited since).
    A mask edited in the GUI is never overwritten. A sidecar
    <base>_Spine_roi_mask_source.json records the source, hash, lost frames and heads.
 
-DendriticShaft and Background masks are not touched.
+DendriticShaft and Background masks are not modified.
 """
 
 from __future__ import annotations
@@ -44,8 +49,13 @@ sys.path.insert(0, str(_REPO / "controlFLIMage" / "developing" / "mushroom_detec
 MAX_STEP_XY_UM = 1.0
 MAX_STEP_DZ = 3
 FIRST_FRAME_MAX_XY_UM = 2.0
-ROI_DILATE_PX = 1
-SOURCE = "respan_tracked_lastpre_d1"
+# RESPAN outline used as-is (0). The former 1 px dilation made ROIs larger than manual ROIs
+# (130 vs 94 px) and agreed less with them (manual_roi_repeatability, 20261012 B6_0908).
+ROI_DILATE_PX = 0
+# Remove the DendriticShaft ROI pixels (as written, not dilated) from the Spine ROI; this
+# lowered the auto-vs-manual difference (median 0.148 -> 0.095, 20261012 B6_0908).
+SUBTRACT_SHAFT = True
+SOURCE = f"respan_tracked_lastpre_d{ROI_DILATE_PX}" + ("_noshaftref" if SUBTRACT_SHAFT else "")
 
 
 def _norm(p) -> str:
@@ -213,8 +223,40 @@ def build_type_a_stack(picks: list[dict], ref_pick: dict, ref_roi: np.ndarray,
     return np.stack(masks, 0).astype(np.uint8), notes
 
 
+def trim_reference_roi(ref_roi: np.ndarray, shaft_gui: np.ndarray, shift_y: int,
+                       shift_x: int) -> tuple[np.ndarray, int]:
+    """Reference ROI (raw coordinates) minus the shaft ROI of the reference frame. Pure function.
+
+    shaft_gui is the DendriticShaft mask of the reference row in GUI (after_align_full)
+    coordinates; the raw ROI appears there moved by (shift_y, shift_x). The trimmed shape is
+    moved back to raw coordinates. If nothing would be left, the ROI is kept as is.
+    Returns (trimmed raw ROI, removed pixels).
+    """
+    gui = _int_shift(ref_roi, shift_y, shift_x) > 0
+    keep = gui & ~(shaft_gui > 0)
+    if not keep.any():
+        return ref_roi, 0
+    trimmed = _int_shift(keep.astype(ref_roi.dtype), -shift_y, -shift_x)
+    return trimmed, int(gui.sum() - keep.sum())
+
+
+def subtract_shaft(stack: np.ndarray, shaft: np.ndarray) -> tuple[np.ndarray, list[int]]:
+    """Spine stack minus the Shaft stack, frame by frame (former method, kept for comparison).
+
+    A frame that would become empty keeps its Spine ROI. Returns the new stack and the
+    number of removed pixels per frame.
+    """
+    out, removed = stack.copy(), []
+    for i in range(len(stack)):
+        keep = (stack[i] > 0) & ~(shaft[i] > 0)
+        if keep.any():
+            out[i] = keep.astype(stack.dtype)
+        removed.append(int((stack[i] > 0).sum() - (out[i] > 0).sum()))
+    return out, removed
+
+
 def reference_roi(job_dir: Path, pick: dict, xy_um: float) -> np.ndarray:
-    """RESPAN outline of one tracked frame (raw full-frame coordinates), dilated by 1 px."""
+    """RESPAN outline of one tracked frame (raw full-frame coordinates), dilated by ROI_DILATE_PX."""
     import respan_mushroom_core as rmc
 
     run_dir = job_dir / "run"
@@ -226,7 +268,9 @@ def reference_roi(job_dir: Path, pick: dict, xy_um: float) -> np.ndarray:
     r = pick["row"]
     g = rmc._compute_spine_geometry(dict(r, y=r["_cy"], x=r["_cx"]), zyx, labels, xy_um, vols,
                                     int(float(r["spine_id"])), low_int_mask_2d=low)
-    roi_c = ndi.binary_dilation(np.asarray(g["spine_outline_mask_2d"]) > 0, iterations=ROI_DILATE_PX)
+    roi_c = np.asarray(g["spine_outline_mask_2d"]) > 0
+    if ROI_DILATE_PX > 0:  # iterations=0 would dilate until nothing changes
+        roi_c = ndi.binary_dilation(roi_c, iterations=ROI_DILATE_PX)
     full = np.zeros(tuple(pick["full_shape_yx"]), bool)
     y0, x0 = pick["y0"], pick["x0"]
     h, w = min(roi_c.shape[0], full.shape[0] - y0), min(roi_c.shape[1], full.shape[1] - x0)
@@ -267,7 +311,7 @@ def apply_tracked_spine_rois(combined_df: pd.DataFrame, *, queue_root: str | Non
     from respan_uncaging_log import parse_uncaging_records
 
     summary = []
-    print("Spine ROIs from RESPAN tracking (last pre outline + 1 px)...")
+    print(f"Spine ROIs from RESPAN tracking ({SOURCE})...")
     for fp_wo in combined_df["filepath_without_number"].unique():
         fgroup = combined_df[combined_df["filepath_without_number"] == fp_wo]
         hdir = highmag_savefolder_from_filepath_without_number(fp_wo)
@@ -324,6 +368,17 @@ def apply_tracked_spine_rois(combined_df: pd.DataFrame, *, queue_root: str | Non
                         summary.append(row)
                         continue
                     ref_roi = reference_roi(Path(ref["job_dir"]), ref, tr["xy_um"])
+                    shaft_removed = None
+                    shaft_path = os.path.join(os.path.dirname(tiff), f"{base}_DendriticShaft_roi_mask.tif")
+                    if SUBTRACT_SHAFT and os.path.exists(shaft_path):
+                        shaft = tifffile.imread(shaft_path)
+                        shaft = shaft[None] if shaft.ndim == 2 else shaft
+                        fnames = [str(f).lower() for f in frame_info.filename]
+                        ref_i = fnames.index(os.path.basename(ref["flim"]).lower())
+                        if ref_i < len(shaft) and shaft[ref_i].shape == ref_roi.shape:
+                            fr = frame_info.iloc[ref_i]
+                            ref_roi, shaft_removed = trim_reference_roi(
+                                ref_roi, shaft[ref_i], int(fr.shift_y), int(fr.shift_x))
                     stack, notes = build_type_a_stack(picks, ref, ref_roi, frame_info)
                     n_expected = (int(sdf["n_pre_frames"].iloc[0]) + int(sdf["n_unc_frames"].iloc[0])
                                   + int(sdf["n_post_frames"].iloc[0]))
@@ -336,7 +391,7 @@ def apply_tracked_spine_rois(combined_df: pd.DataFrame, *, queue_root: str | Non
                     Path(out_path).with_name(Path(out_path).stem + "_source.json").write_text(json.dumps(
                         {"source": SOURCE, "sha1": _sha(stack > 0), "spine_stem": rec.spine_stem,
                          "reference_frame": os.path.basename(ref["flim"]), "roi_area_px": int(ref_roi.sum()),
-                         "frame_notes": notes,
+                         "frame_notes": notes, "shaft_removed_px": shaft_removed,
                          "lost_frames": lost, "job_key": key, "not_processed": tr["missing"],
                          "frames": [{"flim": os.path.basename(p["flim"]), "status": p["status"],
                                      "step_um": p["step_um"]} for p in picks]}, indent=1), encoding="utf-8")

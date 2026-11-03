@@ -300,12 +300,13 @@ def plot_max_proj_uncaging(
             plt.close()
 
 
-LEGACY_GCAMP_NFRAMES = (4, 32, 33, 34, 55, 264)
-# 264-frame protocol: Ch1 (index 0). Python slices, stop excluded.
+LEGACY_GCAMP_NFRAMES = (4, 32, 33, 34, 55, 264, 304)
+# 264- and 304-frame protocols: Ch1 (index 0). Python slices, stop excluded.
 # Pre 13:17 -> frames 13..16; Post 21:25 -> frames 21..24.
 N264_GCAMP_CH = 0
 N264_GCAMP_PRE = slice(13, 17)
 N264_GCAMP_POST = slice(21, 25)
+N264_LIKE_GCAMP_NFRAMES = (264, 304)
 
 
 def uncaging_pre_post_frame_slices(statedict, n_frames):
@@ -385,7 +386,7 @@ def legacy_gcamp_pre_post(imagearray):
         gc_pre = imagearray[4, 0, 0, :, :, :].sum(axis=-1)
         gc_unc = imagearray[5, 0, 0, :, :, :].sum(axis=-1)
         return gc_pre, gc_unc
-    if n == 264:
+    if n in N264_LIKE_GCAMP_NFRAMES:
         gc_pre = _sum_gcamp_frames(imagearray, N264_GCAMP_PRE, ch=N264_GCAMP_CH)
         gc_unc = _sum_gcamp_frames(imagearray, N264_GCAMP_POST, ch=N264_GCAMP_CH)
         return gc_pre, gc_unc
@@ -438,7 +439,7 @@ def plot_GCaMP_F_F0(each_file, slope = 0, intercept = 0,
         elif n_frames in [55]:
             GCpre = imagearray[4,0,0,:,:,:].sum(axis=-1)
             GCunc = imagearray[5,0,0,:,:,:].sum(axis=-1)
-        elif n_frames == 264:
+        elif n_frames in N264_LIKE_GCAMP_NFRAMES:
             GCpre = _sum_gcamp_frames(imagearray, N264_GCAMP_PRE, ch=N264_GCAMP_CH)
             GCunc = _sum_gcamp_frames(imagearray, N264_GCAMP_POST, ch=N264_GCAMP_CH)
             if plot_RFP_also and imagearray.shape[2] > 1:

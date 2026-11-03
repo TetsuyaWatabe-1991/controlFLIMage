@@ -76,8 +76,10 @@ class LTPGroupAnalysisConfig:
     )
     from_thorlab_to_coherent_factor: float = 1.0 / 3.0
     roi_name_list: Sequence[str] = ("Spine", "DendriticShaft")
+    # nFrames -> 1-based index of the first uncaging frame (FramesBeforeUncage).
+    # 264: unc_30Hz_1s_x4 and the other 264-frame protocols (FramesBeforeUncage = 16).
     unc_total_frame_first_unc_dict: Mapping[int, int] = field(
-        default_factory=lambda: {33: 2, 55: 5, 80: 8, 144: 8}
+        default_factory=lambda: {33: 2, 55: 5, 80: 8, 144: 8, 264: 16}
     )
     # 0 keeps the mean color; 1 fades individual traces to white. Applied to every condition.
     mean_sem_indiv_lightness: float = 0.65

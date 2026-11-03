@@ -2530,6 +2530,48 @@ def _add_nearest_neighbor_xy(rows: list[dict[str, Any]], xy_pixel_um: float) -> 
         row["nearest_neighbor_spine_id"] = spine_ids[nearest_idx]
 
 
+# Spine selection at batch time. "typicality": ini excluded = 0 when the typicality score
+# (ongoing/ASIcontroller/spine_typicality, trained on clean typical / not-typical labels)
+# is >= the threshold; "auto_rating": legacy 1-4 band rating (accept >= 4).
+SPINE_SELECTION_MODES = ("typicality", "auto_rating")
+BATCH_SELECTION_COLUMNS = ("selection", "typicality_score", "typicality_score_model", "typicality_gates_failed",
+                           "batch_excluded")
+TYPICALITY_DIR = Path(__file__).resolve().parents[3] / "ongoing" / "ASIcontroller" / "spine_typicality"
+
+
+def typicality_for_mushrooms(
+    zyx: np.ndarray,
+    class_labels_zyx: np.ndarray,
+    mushrooms: dict[int, dict[str, Any]],
+    xy_pixel_um: float,
+    z_pixel_um: float,
+) -> tuple[dict[int, dict[str, Any]], float] | None:
+    """Typicality score per mushroom spine and the model threshold, or None if unavailable."""
+    try:
+        if str(TYPICALITY_DIR) not in sys.path:
+            sys.path.insert(0, str(TYPICALITY_DIR))
+        import typicality_score as ts
+
+        model = ts.load_model()
+        field = ts.field_from_arrays(zyx, class_labels_zyx)
+        ids = list(mushrooms)
+        spines = []
+        for sid in ids:
+            info = mushrooms[sid]
+            row = info["row"]
+            nn = row.get("nearest_neighbor_xy_um")
+            spines.append(dict(head_zyx=info["geometry"]["head_zyx"], head_area_um2=float(row["head_area"]),
+                               head_vol_um3=float(info["head_vol_um3"]), nearest_neighbor_xy_um=float(nn) if nn else None))
+        df = ts.score_spines(field, spines, float(xy_pixel_um), float(z_pixel_um), model)
+        out = {sid: dict(score=float(r.typicality_score), score_model=float(r.typicality_score_model),
+                         gates_failed=str(r.typicality_gates_failed or ""))
+               for sid, r in zip(ids, df.itertuples())}
+        return out, float(model.get("threshold", 0.6))
+    except Exception as exc:  # never block the batch: fall back to auto_rating
+        print(f"  WARNING: typicality scoring unavailable ({exc!r}); using auto_rating for this FLIM")
+        return None
+
+
 def detect_mushroom_from_flim_respan(
     flim_path: str | Path,
     *,
@@ -2550,8 +2592,18 @@ def detect_mushroom_from_flim_respan(
     save_per_mushroom_z_triplets: bool = False,
     auto_rate: bool = True,
     z_edge_reject_slices: int = Z_EDGE_REJECT_SLICES,
+    selection: str = "typicality",
+    typicality_threshold: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Run RESPAN on a FLIM file, keep mushroom spines only, and save markers."""
+    """Run RESPAN on a FLIM file, keep mushroom spines only, and save markers.
+
+    selection: "typicality" (default; ini excluded = 0 when typicality score >=
+    typicality_threshold, default = the model's threshold, 0.6) or "auto_rating" (legacy,
+    accept auto_rating >= 4). Z-edge spines are rejected in both modes. If typicality
+    scoring fails, the FLIM falls back to auto_rating (warning printed).
+    """
+    if selection not in SPINE_SELECTION_MODES:
+        raise ValueError(f"selection must be one of {SPINE_SELECTION_MODES}, got {selection!r}")
     flim_path = Path(flim_path)
     if not flim_path.is_file():
         raise FileNotFoundError(f"FLIM file not found: {flim_path}")
@@ -2715,6 +2767,15 @@ def detect_mushroom_from_flim_respan(
     if n_removed:
         print(f"  cleared {n_removed} prior mushroom spine output file(s) in {savefolder}")
 
+    typicality: dict[int, dict[str, Any]] | None = None
+    if selection == "typicality":
+        res = typicality_for_mushrooms(zyx, class_labels_zyx, mushrooms, xy_pixel_um, z_pixel_um)
+        if res is not None:
+            typicality, model_thr = res
+            thr = float(typicality_threshold) if typicality_threshold is not None else model_thr
+            n_ok = sum(v["score"] >= thr for v in typicality.values())
+            print(f"  typicality selection: {n_ok}/{len(typicality)} spine(s) with score >= {thr:g}")
+
     feature_rows: list[dict[str, Any]] = []
     saved_inipaths: list[str] = []
     for spine_idx, (spine_id, mushroom_info) in enumerate(mushrooms.items()):
@@ -2785,11 +2846,15 @@ def detect_mushroom_from_flim_respan(
         z_edge_forced_reject = z_index_in_edge_reject_slices(
             head_zyx[0], zyx.shape[0], z_edge_reject_slices
         )
+        typ = typicality.get(spine_id) if typicality is not None else None
         if save_per_spine_ini:
-            ini_excluded = ini_excluded_for_auto_rating(
-                auto_rating,
-                force_excluded=z_edge_forced_reject,
-            )
+            if typ is not None:
+                ini_excluded = 0 if (typ["score"] >= thr and not z_edge_forced_reject) else 1
+            else:
+                ini_excluded = ini_excluded_for_auto_rating(
+                    auto_rating,
+                    force_excluded=z_edge_forced_reject,
+                )
             save_spine_dend_info(
                 [round(head_zyx[0]), round(head_zyx[1]), round(head_zyx[2])],
                 geom["dend_slope"],
@@ -2826,6 +2891,9 @@ def detect_mushroom_from_flim_respan(
             rating_note = ""
             if auto_rating is not None:
                 rating_note = f", auto-rating {auto_rating} ({auto_rating_label})"
+            if typ is not None:
+                rating_note += f", typicality {typ['score']:.2f}" + (
+                    f" (gate: {typ['gates_failed']})" if typ["gates_failed"] else "")
             if z_edge_forced_reject:
                 rating_note += (
                     f", Z-edge reject (Z={int(round(head_zyx[0]))}/"
@@ -2867,6 +2935,13 @@ def detect_mushroom_from_flim_respan(
                 auto_rating_label=auto_rating_label,
                 auto_rating_reason=auto_rating_reason,
             )
+        )
+        feature_rows[-1].update(
+            selection="typicality" if typ is not None else "auto_rating",
+            typicality_score=typ["score"] if typ is not None else np.nan,
+            typicality_score_model=typ["score_model"] if typ is not None else np.nan,
+            typicality_gates_failed=typ["gates_failed"] if typ is not None else "",
+            batch_excluded=ini_excluded if save_per_spine_ini else np.nan,
         )
 
     save_mushroom_features_csv(savefolder, base_name, feature_rows)
@@ -3370,7 +3445,11 @@ def upsert_feature_csv_row(
     base_name: str,
     feature_row: dict[str, Any],
 ) -> str:
-    """Insert or replace one spine row in the per-FLIM feature CSV."""
+    """Insert or replace one spine row in the per-FLIM feature CSV.
+
+    Batch-time selection columns (BATCH_SELECTION_COLUMNS) of the replaced row are kept, so
+    the batch decision stays comparable with a later review decision.
+    """
     import pandas as pd
 
     out_path = Path(savefolder) / f"{base_name}_respan_mushroom_features.csv"
@@ -3378,6 +3457,12 @@ def upsert_feature_csv_row(
     if out_path.is_file():
         rows = pd.read_csv(out_path).to_dict(orient="records")
     spine_id = int(feature_row["respan_spine_id"])
+    old = next((r for r in rows if int(r.get("respan_spine_id", -1)) == spine_id), None)
+    if old is not None:
+        feature_row = dict(feature_row)
+        for k in BATCH_SELECTION_COLUMNS:
+            if k in old and k not in feature_row:
+                feature_row[k] = old[k]
     rows = [r for r in rows if int(r.get("respan_spine_id", -1)) != spine_id]
     rows.append(feature_row)
     rows.sort(key=lambda r: int(r.get("spine_index", 0)))

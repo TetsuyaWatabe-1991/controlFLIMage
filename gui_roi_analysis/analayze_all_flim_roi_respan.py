@@ -10,7 +10,7 @@ from flim_summarize_func import format_respan_path_assignments  # noqa: E402
 from gui_roi_respan_seg_masks import run_tiff_uncaging_roi_respan
 
 # %% set parameters (aligned with tpem_low_high_spine_multi_merged_titrate_uncaging_pow_respan.py)
-ch_1or2 = 1
+ch_1or2 = 2
 z_plus_minus = 1
 uncaging_at_nth = 2
 pre_length = uncaging_at_nth + 1
@@ -32,14 +32,21 @@ local_crop_half_size = 60  # unused while local align is off
 # Set overwrite_seg_roi_masks=True to reset all ROI masks from seg_masks on re-run.
 uncaging_roi_keyframe_count = 3
 overwrite_seg_roi_masks = False
+# True: intensity only, no lifetime fit at all (uncaging frames included; the bin below is ignored).
 skip_lifetime_analysis = True
+# Used only when skip_lifetime_analysis is False: decays of this many consecutive uncaging
+# frames are summed, then one lifetime is fit and stored on the first frame of the bin.
+# Use 8 first; set 16 for a wider bin. None fits every uncaging frame.
+# A short tail (264 frames / 16 = 16 bins + 8 frames) is kept.
+uncaging_lifetime_bin_frames = 8
 # Lifetime fit per ROI and frame: pixels with <= photon_threshold photons are left out of
 # the decay; the lifetime is NaN when the ROI total of the remaining pixels is below
-# total_photon_threshold (former default 1000).
+# total_photon_threshold (former default 1000). For a binned uncaging lifetime the
+# per-pixel cut is still per frame, and total_photon_threshold applies to the summed bin.
 photon_threshold = 15
 total_photon_threshold = 300
 # induction (~33 or 36 averaged frames), common TS (55), uncaging_2Hz30pulses (80), uncaging1hz (144)
-uncaging_frame_num = [33, 34, 35, 36, 55, 80, 144]
+uncaging_frame_num = [33, 34, 35, 36, 55, 80, 144, 264]
 
 # Default False keeps the original (slower) path. True: skip repeated FLIM decode,
 # header-only shape peek, intensity cache, no PNG/small TIFF, lighter align.
@@ -53,12 +60,14 @@ spine_roi_source = "respan_tracked"
 # Time window (minutes from uncaging). Pre/post frames outside it are removed from their
 # set: they are not in the TIFF, the viewer or the quantification. None keeps all frames.
 # Changing it rebuilds the TIFF stacks of an existing combined_df_respan.pkl.
-time_window_min = (-40, 50)
+time_window_min = (-40, 60)
 
 # ROI review:
 #   "viewer": quantify every set with the pre-filled ROIs first, then open the set review
 #             viewer (Left/Right: move, E: edit ROIs in the ROI GUI -> this set is
 #             re-quantified, R: reject / un-reject, U: uncaging position).
+#             Reject inside the edit window writes the samえe reject flag as R and
+#             refreshes the tiled set (it does not un-reject).
 #             Only the sets that need it are edited.
 #   "table" : open the ROI table GUI before quantification (former flow).
 roi_review = "viewer"
@@ -80,6 +89,7 @@ viewer_kwargs = dict(
     ch_1or2=ch_1or2,
     z_plus_minus=z_plus_minus,
     skip_lifetime_analysis=skip_lifetime_analysis,
+    uncaging_lifetime_bin_frames=uncaging_lifetime_bin_frames,
     photon_threshold=photon_threshold,
     total_photon_threshold=total_photon_threshold,
     uncaging_roi_keyframe_count=uncaging_roi_keyframe_count,
@@ -106,6 +116,7 @@ else:
         uncaging_roi_keyframe_count=uncaging_roi_keyframe_count,
         overwrite_seg_roi_masks=overwrite_seg_roi_masks,
         skip_lifetime_analysis=skip_lifetime_analysis,
+        uncaging_lifetime_bin_frames=uncaging_lifetime_bin_frames,
         photon_threshold=photon_threshold,
         total_photon_threshold=total_photon_threshold,
         fast_mode=fast_mode,

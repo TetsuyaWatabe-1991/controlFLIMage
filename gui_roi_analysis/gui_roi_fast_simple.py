@@ -1750,6 +1750,129 @@ def save_drift_corrected_roi_masks(combined_df: pd.DataFrame, roi_types: list[st
     return combined_df
 
 
+def uncaging_lifetime_bin_ranges(n_frames: int, bin_frames: int) -> list[tuple[int, int]]:
+    """Half-open [start, end) ranges of uncaging frames. The last bin may be shorter."""
+    if bin_frames < 1:
+        raise ValueError(f"uncaging_lifetime_bin_frames must be >= 1, got {bin_frames}")
+    if n_frames < 0:
+        raise ValueError(f"n_frames must be >= 0, got {n_frames}")
+    return [(start, min(start + bin_frames, n_frames)) for start in range(0, n_frames, bin_frames)]
+
+
+def masked_decay_histogram(
+    frame_bins: np.ndarray,
+    mask: np.ndarray,
+    photon_threshold: int,
+) -> np.ndarray:
+    """Sum the decay inside the ROI after dropping pixels with <= photon_threshold photons.
+
+    frame_bins: (H, W, n_time_bins). mask: (H, W), nonzero is inside the ROI.
+    """
+    n_time = int(frame_bins.shape[-1])
+    if mask.shape != frame_bins.shape[:2]:
+        return np.zeros(n_time, dtype=np.float64)
+    intensity = np.sum(frame_bins, axis=-1)
+    keep = (mask > 0) & (intensity > photon_threshold)
+    if not np.any(keep):
+        return np.zeros(n_time, dtype=np.float64)
+    return np.sum(frame_bins[keep], axis=0).astype(np.float64)
+
+
+def binned_uncaging_lifetime_records(
+    imagearray: np.ndarray,
+    roi_raw: dict,
+    n_pre: int,
+    *,
+    bin_frames: int,
+    photon_threshold: int,
+    total_photon_threshold: int,
+    fitter: FLIMLifetimeFitter,
+    sync_rate: float,
+) -> list[dict]:
+    """One lifetime per bin of uncaging frames, for Spine and DendriticShaft.
+
+    Each frame uses its own raw ROI mask. Pixels at or below photon_threshold are
+    dropped per frame, then the remaining histograms are summed across the bin and
+    fit once. The lifetime is stored on the first frame of the bin (slice = start).
+    A short tail bin is kept; unc_lifetime_bin_n is the number of frames actually summed.
+    """
+    if imagearray.ndim != 6:
+        raise ValueError(
+            "uncaging lifetime binning needs a FLIM array (frames, Z, C, Y, X, time bins), "
+            f"got ndim={imagearray.ndim}"
+        )
+    n_frames = int(imagearray.shape[0])
+    n_ch = int(imagearray.shape[2])
+    n_time = int(imagearray.shape[5])
+    ps_per_unit = (10 ** 12) / sync_rate / n_time
+    roi_types = [name for name in ("Spine", "DendriticShaft") if name in roi_raw]
+    records = []
+    for start, end in uncaging_lifetime_bin_ranges(n_frames, bin_frames):
+        rec: dict[str, Any] = {
+            "slice": start,
+            "unc_lifetime_bin_frames": int(bin_frames),
+            "unc_lifetime_bin_start": start,
+            "unc_lifetime_bin_n": end - start,
+        }
+        for ch_idx, ch_name in enumerate(["Ch1", "Ch2"]):
+            if ch_idx >= n_ch:
+                continue
+            for roi_type in roi_types:
+                hist = np.zeros(n_time, dtype=np.float64)
+                stack = roi_raw[roi_type]
+                for t in range(start, end):
+                    stack_i = n_pre + t
+                    if stack_i >= stack.shape[0]:
+                        continue
+                    hist += masked_decay_histogram(
+                        np.asarray(imagearray[t, 0, ch_idx], dtype=np.float64),
+                        stack[stack_i],
+                        photon_threshold,
+                    )
+                total = float(np.sum(hist))
+                rec[f"{roi_type}_{ch_name}_total_photon"] = total
+                if total < total_photon_threshold:
+                    rec[f"{roi_type}_{ch_name}_lifetime"] = np.nan
+                    continue
+                try:
+                    result = fitter.fit_double_exponential(
+                        np.arange(n_time), hist, ps_per_unit, sync_rate
+                    )
+                    rec[f"{roi_type}_{ch_name}_lifetime"] = result.get("lifetime", np.nan)
+                except Exception:
+                    rec[f"{roi_type}_{ch_name}_lifetime"] = np.nan
+        records.append(rec)
+    return records
+
+
+def apply_binned_uncaging_lifetime(rows: list[dict], records: list[dict]) -> None:
+    """Write bin metadata on every uncaging row, and the fit on the bin's first frame."""
+    if not records:
+        return
+    ordered = sorted(records, key=lambda r: int(r["unc_lifetime_bin_start"]))
+    for row in rows:
+        if row.get("phase") != "unc":
+            continue
+        slice_i = int(row["slice"])
+        rec = None
+        for candidate in ordered:
+            start = int(candidate["unc_lifetime_bin_start"])
+            if start <= slice_i < start + int(candidate["unc_lifetime_bin_n"]):
+                rec = candidate
+                break
+        if rec is None:
+            continue
+        row["unc_lifetime_bin_frames"] = rec["unc_lifetime_bin_frames"]
+        row["unc_lifetime_bin_start"] = rec["unc_lifetime_bin_start"]
+        row["unc_lifetime_bin_n"] = rec["unc_lifetime_bin_n"]
+        if slice_i != int(rec["slice"]):
+            continue
+        for key, value in rec.items():
+            if key in ("slice", "unc_lifetime_bin_frames", "unc_lifetime_bin_start", "unc_lifetime_bin_n"):
+                continue
+            row[key] = value
+
+
 def _row_from_flim_data(
     imagearray: np.ndarray,
     iminfo,
@@ -1886,6 +2009,15 @@ def _row_from_flim_data(
     return row
 
 
+def effective_uncaging_lifetime_bin(skip_lifetime_analysis: bool, bin_frames: int | None) -> int | None:
+    """Uncaging lifetime bin actually used: None whenever skip_lifetime_analysis is True."""
+    if skip_lifetime_analysis:
+        if bin_frames:
+            print(f"skip_lifetime_analysis=True: uncaging lifetime binning ({int(bin_frames)} frames) ignored")
+        return None
+    return bin_frames
+
+
 def quantify_intensity_from_flim(
     combined_df: pd.DataFrame,
     ch_1or2: int,
@@ -1897,6 +2029,7 @@ def quantify_intensity_from_flim(
     skip_lifetime_analysis: bool = False,
     background_mode: str = BACKGROUND_MODE_ROI,
     use_intensity_cache: bool = True,
+    uncaging_lifetime_bin_frames: int | None = None,
 ):
     """
     Quantify intensity and lifetime from FLIM. Per FLIM file, per frame, per Ch, per ROI.
@@ -1908,7 +2041,15 @@ def quantify_intensity_from_flim(
     Pre/post: Z-proj with z_plus_minus; time_sec=0. Uncaging: per-frame time_sec from FLIM metadata.
     Output CSV includes intensity, time_sec, total_photon, lifetime (Spine/DendriticShaft).
     When skip_lifetime_analysis is True, lifetime fitting is skipped and total_photon/lifetime are NaN.
+    uncaging_lifetime_bin_frames: if set (8 or 16), uncaging decays are summed in bins of
+    that many frames and one lifetime is written on the first frame of each bin.
+    None keeps per-frame uncaging lifetime.
+    skip_lifetime_analysis=True skips ALL lifetime fitting, uncaging frames included:
+    uncaging_lifetime_bin_frames is then ignored (effective_uncaging_lifetime_bin).
     """
+    uncaging_lifetime_bin_frames = effective_uncaging_lifetime_bin(
+        skip_lifetime_analysis, uncaging_lifetime_bin_frames
+    )
     def _is_rejected(set_df):
         """Return True if this group/set is rejected (skip intensity/lifetime quantification)."""
         if 'reject' not in set_df.columns or len(set_df) == 0:
@@ -1937,13 +2078,21 @@ def quantify_intensity_from_flim(
     if total_items == 0:
         print("No frames to quantify. Skipping.")
         return pd.DataFrame()
-    if skip_lifetime_analysis:
+    bin_unc_lifetime = uncaging_lifetime_bin_frames is not None and int(uncaging_lifetime_bin_frames) >= 1
+    if bin_unc_lifetime:
+        print(
+            f"Uncaging lifetime binned by {int(uncaging_lifetime_bin_frames)} frames "
+            f"(per-frame photon_threshold={photon_threshold}, "
+            f"per-bin total_photon_threshold={total_photon_threshold}); "
+            f"{total_items} frames (printing every 10%)"
+        )
+    elif skip_lifetime_analysis:
         print(f"Intensity quantification (lifetime skipped): {total_items} frames (printing every 10%)")
     else:
         print(f"Intensity & lifetime quantification: {total_items} frames (printing every 10%)")
     next_pct = 10
     processed = 0
-    fitter = None if skip_lifetime_analysis else FLIMLifetimeFitter()
+    fitter = None if (skip_lifetime_analysis and not bin_unc_lifetime) else FLIMLifetimeFitter()
 
     all_rows = []
     for each_filepath_without_number in combined_df["filepath_without_number"].unique():
@@ -2034,25 +2183,45 @@ def quantify_intensity_from_flim(
                 if len(unc_df) > 0:
                     unc_path = unc_df.iloc[0]["file_path"]
                     if os.path.exists(unc_path):
-                        imagearray_unc, iminfo_unc = _load_for_quant(unc_path)
+                        if bin_unc_lifetime or not skip_lifetime_analysis:
+                            iminfo_unc = FileReader()
+                            iminfo_unc.read_imageFile(unc_path, True)
+                            imagearray_unc = np.array(iminfo_unc.image)
+                        else:
+                            imagearray_unc, iminfo_unc = _load_for_quant(unc_path)
                         T = imagearray_unc.shape[0]
                         frame_times = _get_frame_times_from_flim(unc_path)
                         if len(frame_times) != T:
                             frame_times = [np.nan] * T
                         acq_time_list = iminfo_unc.acqTime if iminfo_unc.acqTime else []
+                        unc_row_start = len(all_rows)
+                        # Binning replaces per-frame uncaging fits; intensity stays one row per frame.
+                        unc_skip_lifetime = True if bin_unc_lifetime else skip_lifetime_analysis
                         for t in range(T):
                             time_sec = frame_times[t] if frame_times else np.nan
                             acq_str = acq_time_list[t] if t < len(acq_time_list) else ""
                             all_rows.append(_row_from_flim_data(
                                 imagearray_unc, iminfo_unc, unc_path, t, n_pre + t, "unc", time_sec, acq_str,
                                 roi_raw, corrected_uncaging_z, z_plus_minus, each_set_label, each_group,
-                                fitter, sync_rate, photon_threshold, total_photon_threshold, skip_lifetime_analysis,
+                                fitter, sync_rate, photon_threshold, total_photon_threshold, unc_skip_lifetime,
                                 background_mode=background_mode,
                             ))
                             processed += 1
                             if total_items > 0 and 100 * processed >= total_items * next_pct:
                                 print(f"  Progress: {next_pct}% ({processed}/{total_items} frames)")
                                 next_pct += 10
+                        if bin_unc_lifetime:
+                            records = binned_uncaging_lifetime_records(
+                                imagearray_unc,
+                                roi_raw,
+                                n_pre,
+                                bin_frames=int(uncaging_lifetime_bin_frames),
+                                photon_threshold=photon_threshold,
+                                total_photon_threshold=total_photon_threshold,
+                                fitter=fitter,
+                                sync_rate=sync_rate,
+                            )
+                            apply_binned_uncaging_lifetime(all_rows[unc_row_start:], records)
 
                 post_df = each_set_df[each_set_df["phase"] == "post"].sort_values("nth_omit_induction")
                 for stack_i, (_, row_post) in enumerate(post_df.iterrows()):
@@ -2099,7 +2268,12 @@ def quantify_intensity_from_flim(
         rest = [c for c in out_df.columns if c not in lead]
         out_df = out_df[[c for c in lead if c in out_df.columns] + rest]
         out_df.to_csv(output_csv_path, index=False)
-        if skip_lifetime_analysis:
+        if bin_unc_lifetime:
+            print(
+                f"Saved intensity quantification; uncaging lifetime every "
+                f"{int(uncaging_lifetime_bin_frames)} frames to {output_csv_path}"
+            )
+        elif skip_lifetime_analysis:
             print(f"Saved intensity quantification (lifetime skipped) to {output_csv_path}")
         else:
             print(f"Saved intensity & lifetime quantification to {output_csv_path}")

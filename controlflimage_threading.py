@@ -10,7 +10,7 @@ import os
 import glob
 import math
 import subprocess
-from time import sleep
+from time import monotonic, sleep
 from datetime import datetime
 import numpy as np
 import cv2
@@ -239,6 +239,137 @@ def kill_process(target_name = "FLIMage.exe"):
                 pass
     print("Done")
 
+
+# A normal highmag grab in this rig finishes in about 30 s. A lowmag stack
+# occasionally runs longer than 120 s. The wait used to be capped by interval_sec
+# (often 50 s) and, when that loop ended, still returned success while FLIMage
+# was grabbing. The limit below is independent of interval_sec.
+GRAB_TIMEOUT_CAP_SEC = 300.0
+GRAB_QUERY_ERROR_LIMIT = 5
+
+
+def resolve_grab_timeout_sec(expected_grab_duration_sec: float) -> float:
+    """Wall-clock limit for one grab.
+
+    300 s. A short expected duration does not lower this: a lowmag stack can
+    outlast that hint. FLIMAGE_GRAB_TIMEOUT_SEC replaces this for tests.
+    An explicit max_waiting_sec on the wait call still wins over this value.
+
+    Args:
+        expected_grab_duration_sec: hint passed to set_param. Not the limit.
+
+    Returns:
+        Timeout in seconds.
+    """
+    del expected_grab_duration_sec
+    override = os.environ.get("FLIMAGE_GRAB_TIMEOUT_SEC")
+    if override:
+        return float(override)
+    return GRAB_TIMEOUT_CAP_SEC
+
+
+def poll_until_grab_stops(
+    is_grabbing,
+    *,
+    timeout_sec: float,
+    sleep_every_sec: float,
+    clock,
+    sleep_fn,
+    on_timeout,
+    max_query_errors: int = GRAB_QUERY_ERROR_LIMIT,
+) -> tuple[bool, str]:
+    """Poll until the grab stops or timeout_sec is crossed.
+
+    Args:
+        is_grabbing: returns 0 when FLIMage is not grabbing. May raise.
+        timeout_sec: wall time from clock() == 0. Not an iteration count.
+        sleep_every_sec: pause between polls.
+        clock: seconds since the wait started.
+        sleep_fn: called with sleep_every_sec between polls.
+        on_timeout: called with elapsed seconds when the limit is crossed
+            while the grab is still running.
+        max_query_errors: failed IsGrabbing queries before giving up.
+
+    Returns:
+        (True, "done") when a poll reports not grabbing.
+        (False, "timeout") after on_timeout.
+        (False, "query_failed") when IsGrabbing fails too many times.
+    """
+    errors = 0
+    while True:
+        elapsed = float(clock())
+        if elapsed > float(timeout_sec):
+            on_timeout(elapsed)
+            return False, "timeout"
+        try:
+            grabbing = int(is_grabbing())
+        except Exception:
+            errors += 1
+            if errors > max_query_errors:
+                return False, "query_failed"
+            sleep_fn(sleep_every_sec)
+            continue
+        if grabbing == 0:
+            return True, "done"
+        sleep_fn(sleep_every_sec)
+
+
+def release_stuck_grab(
+    send_stop,
+    is_grabbing,
+    *,
+    sleep_fn,
+    clock,
+    stop_wait_sec: float,
+    kill,
+    screenshot,
+) -> str:
+    """Send StopGrab, then kill FLIMage if it is still grabbing.
+
+    Args:
+        send_stop: sends StopGrab.
+        is_grabbing: returns 0 when the grab has ended. May raise.
+        sleep_fn: pause while waiting for StopGrab.
+        clock: seconds, increasing.
+        stop_wait_sec: how long to wait after StopGrab before killing.
+        kill: terminates FLIMage.
+        screenshot: captures the screen before the kill.
+
+    Returns:
+        "stopped" when IsGrabbing clears, otherwise "killed".
+    """
+    send_stop()
+    deadline = float(clock()) + float(stop_wait_sec)
+    while float(clock()) < deadline:
+        try:
+            if int(is_grabbing()) == 0:
+                return "stopped"
+        except Exception:
+            break
+        remaining = deadline - float(clock())
+        if remaining <= 0:
+            break
+        sleep_fn(min(0.5, remaining))
+    screenshot()
+    kill()
+    return "killed"
+
+
+def wait_until_path_exists(
+    path: str,
+    *,
+    timeout_sec: float,
+    clock,
+    sleep_fn,
+    exists,
+) -> bool:
+    """True when exists(path) within timeout_sec of clock() == 0."""
+    while True:
+        if exists(path):
+            return True
+        if float(clock()) > float(timeout_sec):
+            return False
+        sleep_fn(0.2)
 
 
 class Control_flimage():
@@ -853,12 +984,64 @@ class Control_flimage():
         # self.convert_shifts_pix_to_micro(self.shifts_zyx_pixel)
         
 
+    def _next_flim_path(self) -> str | None:
+        """Path FLIMage will write on the next grab, from the current file state."""
+        try:
+            folder = str(self.get_val_sendCommand("State.Files.pathName")).strip().strip('"')
+            base = str(self.get_val_sendCommand("State.Files.baseName")).strip().strip('"')
+            counter = int(float(self.get_val_sendCommand("State.Files.fileCounter")))
+        except Exception as exc:
+            print("Could not determine the next FLIM path:", repr(exc), flush=True)
+            return None
+        if not folder or not base:
+            return None
+        return os.path.join(folder, f"{base}{counter:03d}.flim")
+
+    def _stop_stuck_grab(self, elapsed: float) -> None:
+        """StopGrab, then kill FLIMage if the grab does not end."""
+        wait_sec = float(os.environ.get("FLIMAGE_STOP_GRAB_WAIT_SEC", "5"))
+        print(
+            f"Grab still running after {elapsed:.0f} s. Sending StopGrab.",
+            flush=True,
+        )
+        origin = monotonic()
+
+        def send_stop() -> None:
+            self.flim.sendCommand("StopGrab")
+
+        def is_grabbing() -> int:
+            return self.get_01_sendCommand("IsGrabbing")
+
+        outcome = release_stuck_grab(
+            send_stop,
+            is_grabbing,
+            sleep_fn=sleep,
+            clock=lambda: monotonic() - origin,
+            stop_wait_sec=wait_sec,
+            kill=lambda: kill_process(target_name="FLIMage.exe"),
+            screenshot=lambda: pyautogui.hotkey("winleft", "printscreen"),
+        )
+        if outcome == "stopped":
+            print(
+                "StopGrab ended the grab. This acquisition is still a failure.",
+                flush=True,
+            )
+            return
+        print(
+            "Grab still running after StopGrab. Killing FLIMage and reconnecting.",
+            flush=True,
+        )
+        self.reconnect()
+
     def acquisition_include_connect_wait(self,
                                          sleep_every_sec=0.5, 
                                          overwrite_warning_click_yes=False,
                                          return_failure=False,
-                                         max_waiting_sec=180):
+                                         max_waiting_sec=None,
+                                         expected_flim_path=None):
         self.flim_connect_check()
+        if expected_flim_path is None:
+            expected_flim_path = self._next_flim_path()
         self.flim.sendCommand('StartGrab')
         if overwrite_warning_click_yes:
             print("click yes in overwrite warning")
@@ -867,6 +1050,7 @@ class Control_flimage():
         success = self.wait_while_grabbing(
             sleep_every_sec=sleep_every_sec,
             max_waiting_sec=max_waiting_sec,
+            expected_flim_path=expected_flim_path,
         )
         if success:
             print("Acquisition successful")
@@ -879,6 +1063,7 @@ class Control_flimage():
                 sleep_every_sec=sleep_every_sec,
                 overwrite_warning_click_yes=True,
                 max_waiting_sec=max_waiting_sec,
+                expected_flim_path=expected_flim_path,
             )
             
 
@@ -921,30 +1106,94 @@ class Control_flimage():
                     break
         return True
     
-    def wait_while_grabbing(self,sleep_every_sec=0.2, max_waiting_sec = 180):
-        sleep(self.expected_grab_duration_sec)
-        error_count = 0
-        now = datetime.now()
-        for i in range(int(self.interval_sec/sleep_every_sec)):
-            if (datetime.now() - now).total_seconds() > max_waiting_sec:
-                print("Max waiting time reached. Breaking...")
-                # take screenshot of the screen
-                pyautogui.hotkey("winleft", "printscreen")
-                kill_process(target_name = "FLIMage.exe")
-                self.reconnect()
+    def wait_while_grabbing(self, sleep_every_sec=0.2, max_waiting_sec=None,
+                            expected_flim_path=None):
+        """Wait until FLIMage is not grabbing.
+
+        Success requires IsGrabbing == 0 before the time limit. Reaching the
+        limit, or ending a poll loop, is not success. The limit is not
+        interval_sec. When max_waiting_sec is omitted it is
+        resolve_grab_timeout_sec (300 s, or FLIMAGE_GRAB_TIMEOUT_SEC).
+
+        On timeout, StopGrab is sent. If FLIMage is still grabbing a few
+        seconds later, FLIMage is killed and the pipe is reconnected.
+
+        Args:
+            sleep_every_sec: pause between IsGrabbing polls.
+            max_waiting_sec: explicit limit. None uses the default resolver.
+            expected_flim_path: when set, success also requires this file to
+                appear within FLIMAGE_GRAB_FILE_WAIT_SEC (default 5 s).
+
+        Returns:
+            True only when the grab has stopped and, if requested, the file exists.
+        """
+        if max_waiting_sec is None:
+            max_waiting_sec = resolve_grab_timeout_sec(
+                getattr(self, "expected_grab_duration_sec", 0) or 0
+            )
+        max_waiting_sec = float(max_waiting_sec)
+        print(
+            f"Waiting for grab to finish (limit {max_waiting_sec:.0f} s)",
+            flush=True,
+        )
+        origin = monotonic()
+
+        def clock() -> float:
+            return monotonic() - origin
+
+        lead = min(
+            max(0.0, float(getattr(self, "expected_grab_duration_sec", 0) or 0)),
+            max_waiting_sec,
+        )
+        if lead > 0:
+            sleep(lead)
+
+        progress = {"mark": 0}
+
+        def sleep_fn(seconds: float) -> None:
+            sleep(seconds)
+            print(" - ", end="", flush=True)
+            elapsed = clock()
+            mark = int(elapsed // 30)
+            if mark > progress["mark"]:
+                progress["mark"] = mark
+                print(f"\nStill grabbing after {int(elapsed)} s", flush=True)
+
+        finished, reason = poll_until_grab_stops(
+            lambda: self.get_01_sendCommand("IsGrabbing"),
+            timeout_sec=max_waiting_sec,
+            sleep_every_sec=sleep_every_sec,
+            clock=clock,
+            sleep_fn=sleep_fn,
+            on_timeout=self._stop_stuck_grab,
+        )
+        if reason == "query_failed":
+            print("ERROR on getting a reply for 'IsGrabbing'. Reconnecting.", flush=True)
+            self.reconnect()
+            print("\n *** END wait_while_grabbing *** \n")
+            return False
+        if not finished:
+            print("\n *** END wait_while_grabbing *** \n")
+            return False
+        print("BREAK wait_while_grabbing")
+        if expected_flim_path:
+            file_wait = float(os.environ.get("FLIMAGE_GRAB_FILE_WAIT_SEC", "5"))
+            file_origin = monotonic()
+            appeared = wait_until_path_exists(
+                expected_flim_path,
+                timeout_sec=file_wait,
+                clock=lambda: monotonic() - file_origin,
+                sleep_fn=sleep,
+                exists=os.path.isfile,
+            )
+            if not appeared:
+                print(
+                    "Grab finished but file is missing:",
+                    expected_flim_path,
+                    flush=True,
+                )
+                print("\n *** END wait_while_grabbing *** \n")
                 return False
-            try:
-                if self.get_01_sendCommand('IsGrabbing')==0:
-                    print("BREAK wait_while_grabbing")
-                    break
-            except:
-                print("ERROR on getting a reply for 'IsGrabbing'. Try again.")
-                error_count+=1
-                if error_count>5:
-                    self.reconnect()
-                    return False
-            sleep(sleep_every_sec)
-            print(" - ", end="")
         print("\n *** END wait_while_grabbing *** \n")
         return True
 
