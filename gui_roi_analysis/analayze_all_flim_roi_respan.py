@@ -8,6 +8,7 @@ if _FORUSE_DIR not in sys.path:
 
 from flim_summarize_func import format_respan_path_assignments  # noqa: E402
 from gui_roi_respan_seg_masks import run_tiff_uncaging_roi_respan
+from ltp_group_analysis import GCaMPWindow  # noqa: E402
 
 # %% set parameters (aligned with tpem_low_high_spine_multi_merged_titrate_uncaging_pow_respan.py)
 ch_1or2 = 2
@@ -46,7 +47,15 @@ uncaging_lifetime_bin_frames = 8
 photon_threshold = 15
 total_photon_threshold = 300
 # induction (~33 or 36 averaged frames), common TS (55), uncaging_2Hz30pulses (80), uncaging1hz (144)
-uncaging_frame_num = [33, 34, 35, 36, 55, 80, 144, 264]
+uncaging_frame_num = [33, 34, 35, 36, 55, 80, 144, 264, 280]
+
+# GCaMP windows for lengths that need their own frames. Keys are uncaging row
+# counts. Ranges are 0-based and stop-exclusive, so frames 0..15 and 18..19 are
+# (0, 16) and (18, 20). Saved beside the pkl and read by the LTP script.
+# Lengths omitted here keep the built-in rule, or FramesBeforeUncage from the file.
+gcamp_windows = {
+    280: GCaMPWindow(baseline=(0, 16), response=(18, 20), time_zero=15),
+}
 
 # Default False keeps the original (slower) path. True: skip repeated FLIM decode,
 # header-only shape peek, intensity cache, no PNG/small TIFF, lighter align.
@@ -103,6 +112,10 @@ if start_with_viewer:
     _session = launch_set_review_viewer(viewer_pkl_path, None, **viewer_kwargs)
     df_save_path_1 = _session.pkl_path if _session else None
     out_csv_path = _session.csv_path if _session else None
+    if df_save_path_1:
+        from flim_summarize_func import save_gcamp_windows
+
+        print(f"Saved GCaMP windows: {save_gcamp_windows(df_save_path_1, gcamp_windows)}")
 else:
     print("Running respan ROI analysis.\nExplorer will pop up to select the FLIM file.")
     df_save_path_1, out_csv_path = run_tiff_uncaging_roi_respan(
@@ -123,6 +136,7 @@ else:
         spine_roi_source=spine_roi_source,
         time_window_min=time_window_min,
         align_reference=align_reference,
+        gcamp_windows=gcamp_windows,
         skip_roi_gui=(roi_review == "viewer"),
         # predefined_df_path=r"G:\ImagingData\Tetsuya\20260610\auto3\combined_df_respan.pkl",
         # flim_path=r"G:\ImagingData\Tetsuya\20260610\auto3\pos3__highmag_1_002.flim",

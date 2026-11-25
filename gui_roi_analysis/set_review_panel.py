@@ -29,6 +29,13 @@ import tifffile
 ROI_COLORS = {"Spine": "red", "DendriticShaft": "deepskyblue"}
 CROP_HALF_PX = 24
 PRE_POST_VMAX_PERCENTILE = 99.5
+# Image tiles: 6 columns x 3 rows. Frames through REVIEW_PRIORITY_MIN are shown in
+# full when they fit; Post is thinned to stay inside this cap, and later Post
+# frames fill whatever tiles remain.
+REVIEW_N_COLS = 6
+REVIEW_N_ROWS = 3
+MAX_REVIEW_FRAMES = REVIEW_N_COLS * REVIEW_N_ROWS
+REVIEW_PRIORITY_MIN = 35.0
 
 
 @dataclass
@@ -52,6 +59,130 @@ class SetReview:
     # Uncaging position (FLIM header) in GUI TIFF (after_align_full) pixels, drawn as a
     # yellow cross on the uncaging frames.
     uncaging_xy: tuple[float, float] | None = None
+
+
+# A set is auto-rejected when at least this many pre/post frames have the uncaging
+# plane further outside the z-stack than the projection half-window (z_plus_minus).
+# One slice past the last plane still overlaps that window; more than that means the
+# projected image does not contain the uncaging plane at all.
+OFFSTACK_MIN_FRAMES = 3
+# Reject when at least this fraction of the spine crop shown in the viewer is the
+# alignment's zero fill. A black edge of the full field that stays outside that
+# crop is not a cut the reviewer sees (20261029 sets 19 and 22). Set 29 is 0.48.
+CROP_CUTOFF_MIN_FRACTION = 0.25
+
+
+def zero_border_fraction(image: np.ndarray) -> float:
+    """Widest all-zero edge strip, as a fraction of that side. 0 when there is none."""
+    img = np.asarray(image)
+    if img.ndim != 2 or min(img.shape) == 0:
+        return 0.0
+    blank = img <= 0
+
+    def _run(flags: np.ndarray) -> int:
+        n = 0
+        for value in flags:
+            if not value:
+                break
+            n += 1
+        return n
+
+    height, width = blank.shape
+    strips = (
+        _run(blank.all(axis=1)) / height,
+        _run(blank.all(axis=1)[::-1]) / height,
+        _run(blank.all(axis=0)) / width,
+        _run(blank.all(axis=0)[::-1]) / width,
+    )
+    return float(max(strips))
+
+
+def _zero_border_widths(image: np.ndarray) -> tuple[int, int, int, int]:
+    """All-zero strip width on each side: top, bottom, left, right."""
+    img = np.asarray(image)
+    blank = img <= 0
+
+    def _run(flags: np.ndarray) -> int:
+        n = 0
+        for value in flags:
+            if not value:
+                break
+            n += 1
+        return n
+
+    return (
+        _run(blank.all(axis=1)),
+        _run(blank.all(axis=1)[::-1]),
+        _run(blank.all(axis=0)),
+        _run(blank.all(axis=0)[::-1]),
+    )
+
+
+def crop_zero_border_fraction(image: np.ndarray, mask: np.ndarray, *, crop_half: int = CROP_HALF_PX) -> float:
+    """Fraction of the viewer spine crop that is alignment zero-fill.
+
+    The crop is the same box the viewer draws (slid inside the field). A black
+    edge that does not enter that box contributes 0.
+    """
+    img = np.asarray(image)
+    roi = np.asarray(mask) > 0
+    if img.ndim != 2 or roi.shape != img.shape or not roi.any():
+        return 0.0
+    ys, xs = np.nonzero(roi)
+    height, width = img.shape
+    y0, y1, x0, x1 = _crop_box((float(ys.mean()), float(xs.mean())), (height, width), crop_half)
+    top, bottom, left, right = _zero_border_widths(img)
+    black_y = np.zeros(height, dtype=bool)
+    black_x = np.zeros(width, dtype=bool)
+    if top:
+        black_y[:top] = True
+    if bottom:
+        black_y[height - bottom:] = True
+    if left:
+        black_x[:left] = True
+    if right:
+        black_x[width - right:] = True
+    crop = np.zeros((height, width), dtype=bool)
+    crop[y0:y1, x0:x1] = True
+    area = int(crop.sum())
+    if area == 0:
+        return 0.0
+    black = crop & (black_y[:, None] | black_x[None, :])
+    return float(black.sum() / area)
+
+
+def crop_hits_zero_border(image: np.ndarray, mask: np.ndarray, *, crop_half: int = CROP_HALF_PX,
+                          min_fraction: float = CROP_CUTOFF_MIN_FRACTION) -> bool:
+    """True when the displayed spine crop is substantially the alignment fill."""
+    return crop_zero_border_fraction(image, mask, crop_half=crop_half) >= min_fraction
+
+
+def alignment_cutoff_fraction(stack: np.ndarray, phases: list[str]) -> float:
+    """Largest zero-border fraction among pre/post frames. 0 when there are none."""
+    worst = 0.0
+    n = min(len(stack), len(phases))
+    for i in range(n):
+        if str(phases[i]).strip().lower() not in ("pre", "post"):
+            continue
+        worst = max(worst, zero_border_fraction(stack[i]))
+    return worst
+
+
+def uncaging_plane_offstack_count(frame_info: pd.DataFrame, *, z_plus_minus: int) -> int:
+    """Pre/post frames whose uncaging plane misses the z projection window.
+
+    A frame counts when ``z_center`` is more than ``z_plus_minus`` slices outside
+    ``[0, n_z - 1]``. Returns 0 when the columns are absent.
+    """
+    if frame_info is None or not {"phase", "z_center", "n_z"}.issubset(frame_info.columns):
+        return 0
+    phase = frame_info["phase"].astype(str).str.lower()
+    rows = frame_info[phase.isin(["pre", "post"])]
+    center = pd.to_numeric(rows["z_center"], errors="coerce")
+    n_z = pd.to_numeric(rows["n_z"], errors="coerce")
+    usable = center.notna() & n_z.notna() & (n_z > 0)
+    dist = np.maximum(np.maximum(0 - center, 0), center - (n_z - 1))
+    return int((usable & (dist > int(z_plus_minus))).sum())
 
 
 def _crop_box(center_yx: tuple[float, float], shape: tuple[int, int], half: int) -> tuple[int, int, int, int]:
@@ -80,6 +211,77 @@ def normalized_quant(set_quant: pd.DataFrame, ch: int = 2) -> pd.DataFrame:
     return out.sort_values("t_min")
 
 
+def evenly_spaced(n: int, k: int) -> list[int]:
+    """k indices spread across ``0 .. n-1``, including both ends when k >= 2."""
+    if k <= 0 or n <= 0:
+        return []
+    if k >= n:
+        return list(range(n))
+    if k == 1:
+        return [0]
+    # 0.5 rounds away from zero so the middle of an odd gap is not pulled early.
+    raw = [int(i * (n - 1) / (k - 1) + 0.5) for i in range(k)]
+    chosen: list[int] = []
+    used: set[int] = set()
+    for i in raw:
+        i = min(max(i, 0), n - 1)
+        if i not in used:
+            used.add(i)
+            chosen.append(i)
+    if len(chosen) < k:
+        for i in range(n):
+            if i not in used:
+                used.add(i)
+                chosen.append(i)
+            if len(chosen) == k:
+                break
+        chosen.sort()
+    return chosen
+
+
+def select_review_picks(
+    pre: list[int],
+    unc: list[int],
+    post: list[int],
+    time_min_by_index: dict[int, float],
+    *,
+    max_frames: int = MAX_REVIEW_FRAMES,
+    priority_min: float = REVIEW_PRIORITY_MIN,
+) -> list[tuple[int, str]]:
+    """Frames to draw, at most ``max_frames``.
+
+    Every pre frame and the first and last uncaging frame are kept. Post frames
+    at or before ``priority_min`` are kept in full when they fit, and thinned
+    evenly (first and last kept) when they do not. Post frames after that fill
+    any tiles still free, also thinned. A post frame with no time is treated as
+    inside the priority window.
+    """
+    picks: list[tuple[int, str]] = [(i, f"Pre {k + 1}") for k, i in enumerate(pre)]
+    if unc:
+        picks.append((unc[0], "Unc first"))
+        if unc[-1] != unc[0]:
+            picks.append((unc[-1], "Unc last"))
+    budget = max(0, max_frames - len(picks))
+    early: list[tuple[int, int]] = []
+    late: list[tuple[int, int]] = []
+    for k, i in enumerate(post):
+        t = time_min_by_index.get(i, float("nan"))
+        if np.isfinite(t) and t > priority_min:
+            late.append((i, k))
+        else:
+            early.append((i, k))
+    if len(early) <= budget:
+        early_keep = early
+        late_idx = evenly_spaced(len(late), budget - len(early))
+        late_keep = [late[j] for j in late_idx]
+    else:
+        early_keep = [early[j] for j in evenly_spaced(len(early), budget)]
+        late_keep = []
+    for i, k in early_keep + late_keep:
+        picks.append((i, f"Post {k + 1}"))
+    return picks
+
+
 def load_set_review(tiff_path: str, set_quant: pd.DataFrame, *, title: str = "", ch: int = 2,
                     corr: pd.DataFrame | None = None,
                     crop_half_px: int = CROP_HALF_PX) -> SetReview:
@@ -98,12 +300,20 @@ def load_set_review(tiff_path: str, set_quant: pd.DataFrame, *, title: str = "",
     pre = [i for i, p in enumerate(phases) if p == "pre"]
     post = [i for i, p in enumerate(phases) if p == "post"]
     unc = [i for i, p in enumerate(phases) if p.startswith("unc")]
-    picks = [(i, f"Pre {k + 1}") for k, i in enumerate(pre)]
-    if unc:
-        picks += [(unc[0], "Unc first"), (unc[-1], "Unc last")]
     q = normalized_quant(set_quant, ch)
     t_by_file = {os.path.basename(str(f)).lower(): t for f, t in zip(q.file_path, q.t_min)}
-    picks += [(i, f"Post {k + 1}") for k, i in enumerate(post)]
+    time_min_by_index = {}
+    for i, name in enumerate(fi["filename"].astype(str)):
+        t = t_by_file.get(name.lower())
+        if t is not None and np.isfinite(t):
+            time_min_by_index[i] = float(t)
+    picks = select_review_picks(pre, unc, post, time_min_by_index)
+    n_available = len(pre) + len(post) + (1 if unc else 0) + (1 if unc and unc[-1] != unc[0] else 0)
+    if len(picks) < n_available:
+        title = (title or os.path.basename(base)) + (
+            f"   [showing {len(picks)} of {n_available} frames; "
+            f"post thinned, priority through {int(REVIEW_PRIORITY_MIN)} min]"
+        )
 
     ref = pre[-1] if pre else 0
     if "Spine" in masks and masks["Spine"][ref].any():
@@ -150,7 +360,7 @@ def load_set_review(tiff_path: str, set_quant: pd.DataFrame, *, title: str = "",
                      crop_box=(y0, y1, x0, x1), notes=notes)
 
 
-def draw_set_review(fig, review: SetReview, *, n_cols: int = 6) -> list:
+def draw_set_review(fig, review: SetReview, *, n_cols: int = REVIEW_N_COLS) -> list:
     """Draw the panel into a matplotlib figure (cleared first).
 
     Returns one (axes, ReviewFrame) pair per crop (for click handling).

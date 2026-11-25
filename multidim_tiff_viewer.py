@@ -442,6 +442,20 @@ def z_stack_multi_z_click(stack_array, pre_assigned_pix_zyx_list=[], show_text =
         
     return pix_zyx_list
 
+def pos_id_after_delete(deleted_pos_id: int, n_remaining: int) -> int:
+    """1-based position to show after deleting ``deleted_pos_id``.
+
+    The position that followed the deleted one keeps that number, so the view
+    stays on it and Delete can remove it next. Deleting the last position
+    returns 1 when any position remains, and 0 when the list is empty.
+    """
+    if n_remaining < 1:
+        return 0
+    if int(deleted_pos_id) > n_remaining:
+        return 1
+    return int(deleted_pos_id)
+
+
 def z_stack_multi_z_click_with_delete(stack_array, pre_assigned_pix_zyx_list=[], show_text = "",
                                       lowmag_zoom=None, highmag_zoom=None):
     first_text_at_upper = "Click each position and click assign"
@@ -576,12 +590,25 @@ def z_stack_multi_z_click_with_delete(stack_array, pre_assigned_pix_zyx_list=[],
             
         if event == 'Delete':
             if values['pos'] >= 1 and len(ZYX_pixel_clicked_list) >= values['pos']:
-                nthpos = int(values['pos'] - 1)
-                deleted_pos = ZYX_pixel_clicked_list.pop(nthpos)
-                window['notification'].update(f"Deleted position {int(values['pos'])} at Z={deleted_pos[0]+1}, Y={deleted_pos[1]}, X={deleted_pos[2]}")
-                # Reset position slider if it's now out of range
-                if values['pos'] > len(ZYX_pixel_clicked_list):
-                    window['pos'].update(0)
+                deleted_id = int(values['pos'])
+                deleted_pos = ZYX_pixel_clicked_list.pop(deleted_id - 1)
+                next_id = pos_id_after_delete(deleted_id, len(ZYX_pixel_clicked_list))
+                values['pos'] = next_id
+                window['pos'].update(next_id)
+                if next_id >= 1:
+                    z_display = int(ZYX_pixel_clicked_list[next_id - 1][0]) + 1
+                    NthSlice = z_display
+                    values['Z'] = z_display
+                    if len(TiffShape) == 3:
+                        window['Z'].update(z_display)
+                    window['notification'].update(
+                        f"Deleted position {deleted_id} at Z={deleted_pos[0]+1}, "
+                        f"Y={deleted_pos[1]}, X={deleted_pos[2]}. Now at position {next_id}."
+                    )
+                else:
+                    window['notification'].update(
+                        f"Deleted position {deleted_id}. No positions left."
+                    )
             else:
                 window['notification'].update("No position selected to delete")
             

@@ -48,6 +48,125 @@ def _tiny_session(td: str) -> v.ReviewSession:
     return v.ReviewSession(pkl, csv, show_alignment_r=False)
 
 
+def _frame_info(centers: list[float], *, n_z: int = 11, phase: str = "post") -> pd.DataFrame:
+    return pd.DataFrame({
+        "phase": [phase] * len(centers),
+        "z_center": centers,
+        "n_z": [n_z] * len(centers),
+        "filename": [f"f{i}.flim" for i in range(len(centers))],
+    })
+
+
+def test_offstack_count_ignores_a_one_slice_overhang() -> None:
+    """dist == z_plus_minus still overlaps the projection window; dist greater does not."""
+    from set_review_panel import uncaging_plane_offstack_count
+
+    fi = _frame_info([10, 11, 12, 14, -1])  # n_z-1=10; dist 0, 1, 2, 4, 1
+    assert uncaging_plane_offstack_count(fi, z_plus_minus=1) == 2
+    unc = _frame_info([20, 20], phase="unc")
+    assert uncaging_plane_offstack_count(unc, z_plus_minus=1) == 0
+    assert uncaging_plane_offstack_count(pd.DataFrame({"phase": ["pre"]}), z_plus_minus=1) == 0
+
+
+def test_offstack_reject_writes_flag_and_leaves_mild_sets() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        bad = os.path.join(td, "bad_after_align_full.tif")
+        mild = os.path.join(td, "mild_after_align_full.tif")
+        open(bad, "wb").close()
+        open(mild, "wb").close()
+        _frame_info([12, 13, 14, 10]).to_csv(os.path.splitext(bad)[0] + "_frame_info.csv", index=False)
+        _frame_info([10, 11, 11]).to_csv(os.path.splitext(mild)[0] + "_frame_info.csv", index=False)
+        df = pd.DataFrame({
+            "group": ["g", "g", "h", "h"],
+            "nth_set_label": [0.0, 0.0, 1.0, 1.0],
+            "after_align_save_path": [bad, bad, mild, mild],
+            "reject": [0, 0, 0, 0],
+        })
+        newly = v.apply_offstack_rejects(df, z_plus_minus=1)
+        assert len(newly) == 1 and newly[0].startswith("g set 0:") and "3 pre/post frames" in newly[0]
+        assert os.path.exists(v.reject_flag_path(bad))
+        assert "outside the z-stack" in open(v.reject_flag_path(bad), encoding="utf-8").read()
+        assert (df[df.group == "g"].reject == 1).all()
+        assert (df[df.group == "h"].reject == 0).all()
+        assert not os.path.exists(v.reject_flag_path(mild))
+        # already rejected: do not rewrite the flag, do not clear it
+        open(v.reject_flag_path(bad), "w", encoding="utf-8").write("kept\n")
+        again = v.apply_offstack_rejects(df, z_plus_minus=1)
+        assert again == []
+        assert open(v.reject_flag_path(bad), encoding="utf-8").read() == "kept\n"
+
+
+def test_viewer_session_auto_rejects_offstack_set() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        tiff = os.path.join(td, "set_after_align_full.tif")
+        open(tiff, "wb").close()
+        _frame_info([12, 13, 15, 9]).to_csv(os.path.splitext(tiff)[0] + "_frame_info.csv", index=False)
+        pkl = os.path.join(td, "combined.pkl")
+        csv = os.path.join(td, "combined_intensity_lifetime_all_frames.csv")
+        pd.DataFrame({
+            "group": ["g"],
+            "nth_set_label": [0.0],
+            "after_align_save_path": [tiff],
+            "reject": [0],
+        }).to_pickle(pkl)
+        pd.DataFrame({"group": ["g"], "set_label": [0.0], "phase": ["pre"]}).to_csv(csv, index=False)
+        session = v.ReviewSession(pkl, csv, show_alignment_r=False, z_plus_minus=1)
+        assert session.rejected()
+        saved = pd.read_pickle(pkl)
+        assert (saved.reject == 1).all()
+        assert os.path.exists(v.reject_flag_path(tiff))
+
+
+def _spine_at(shape: tuple[int, int], y: int, x: int) -> np.ndarray:
+    mask = np.zeros(shape, dtype=np.uint8)
+    mask[y:y + 8, x:x + 8] = 1
+    return mask
+
+
+def test_cutoff_reject_drops_a_shifted_off_field() -> None:
+    """A black field edge rejects only when it enters the spine crop."""
+    import tifffile
+
+    from set_review_panel import crop_hits_zero_border
+
+    cut = np.ones((128, 128), dtype=np.float32)
+    cut[:, :34] = 0
+    near = _spine_at(cut.shape, 60, 8)
+    far = _spine_at(cut.shape, 60, 80)
+    nick = np.ones_like(cut)
+    nick[:8, :] = 0
+    assert crop_hits_zero_border(cut, near)
+    assert not crop_hits_zero_border(cut, far)
+    # A thin black edge in the corner of the crop is still a usable image.
+    assert not crop_hits_zero_border(nick, _spine_at(nick.shape, 10, 60))
+    with tempfile.TemporaryDirectory() as td:
+        bad = os.path.join(td, "bad_after_align_full.tif")
+        ok = os.path.join(td, "ok_after_align_full.tif")
+        tifffile.imwrite(bad, np.stack([cut, cut]))
+        tifffile.imwrite(ok, np.stack([cut, cut]))
+        tifffile.imwrite(os.path.splitext(bad)[0] + "_Spine_roi_mask.tif", np.stack([near, near]))
+        tifffile.imwrite(os.path.splitext(ok)[0] + "_Spine_roi_mask.tif", np.stack([far, far]))
+        for path in (bad, ok):
+            pd.DataFrame({"phase": ["pre", "post"], "filename": ["a.flim", "b.flim"]}).to_csv(
+                os.path.splitext(path)[0] + "_frame_info.csv", index=False
+            )
+        df = pd.DataFrame({
+            "group": ["g", "h"],
+            "nth_set_label": [0.0, 0.0],
+            "after_align_save_path": [bad, ok],
+            "reject": [0, 0],
+        })
+        newly = v.apply_cutoff_rejects(df)
+        assert len(newly) == 1 and newly[0].startswith("g set 0:") and "spine crop" in newly[0]
+        assert (df.loc[df.group == "g", "reject"] == 1).all()
+        assert (df.loc[df.group == "h", "reject"] == 0).all()
+        assert not os.path.exists(v.reject_flag_path(ok))
+        kept = v.reject_flag_path(bad)
+        open(kept, "w", encoding="utf-8").write("kept\n")
+        assert v.apply_cutoff_rejects(df) == []
+        assert open(kept, encoding="utf-8").read() == "kept\n"
+
+
 def test_edit_reject_is_stored_and_does_not_unreject() -> None:
     with tempfile.TemporaryDirectory() as td:
         session = _tiny_session(td)
@@ -271,6 +390,14 @@ if __name__ == "__main__":
     a = ap.parse_args()
     test_replace_set_rows_keeps_order()
     print("PASS test_replace_set_rows_keeps_order")
+    test_offstack_count_ignores_a_one_slice_overhang()
+    print("PASS test_offstack_count_ignores_a_one_slice_overhang")
+    test_offstack_reject_writes_flag_and_leaves_mild_sets()
+    print("PASS test_offstack_reject_writes_flag_and_leaves_mild_sets")
+    test_viewer_session_auto_rejects_offstack_set()
+    print("PASS test_viewer_session_auto_rejects_offstack_set")
+    test_cutoff_reject_drops_a_shifted_off_field()
+    print("PASS test_cutoff_reject_drops_a_shifted_off_field")
     test_edit_reject_is_stored_and_does_not_unreject()
     print("PASS test_edit_reject_is_stored_and_does_not_unreject")
     test_edit_reject_refreshes_tiled_viewer_label()

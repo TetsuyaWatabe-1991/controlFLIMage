@@ -32,10 +32,208 @@ if _FORUSE_DIR not in sys.path:
     sys.path.insert(0, _FORUSE_DIR)
 
 from custom_plot import plt  # noqa: E402
-from flim_summarize_func import reshape_axes_to_2d  # noqa: E402
+from flim_summarize_func import load_gcamp_windows, reshape_axes_to_2d  # noqa: E402
 
 
 UNKNOWN_CONDITION = "unknown"
+
+# nFrames -> 1-based index of the first uncaging frame (FramesBeforeUncage).
+# 264: unc_30Hz_1s_x4 and the other 264-frame protocols (FramesBeforeUncage = 16).
+# F0 is the mean of slices before this index; the summary point is that frame.
+DEFAULT_UNC_FIRST_FRAME: dict[int, int] = {33: 2, 55: 5, 80: 8, 144: 8, 264: 16}
+
+
+@dataclass(frozen=True)
+class GCaMPWindow:
+    """Custom GCaMP baseline and response for one uncaging length.
+
+    Frame numbers are 0-based ``slice`` values. ``stop`` is exclusive.
+    F0 is the mean of ``baseline``. The summary F/F0 is the mean of the
+    per-frame transient over ``response`` (one frame is ``(i, i + 1)``).
+    ``time_zero`` is the frame placed at t = 0; the default is the last
+    baseline frame.
+    """
+
+    baseline: tuple[int, int]
+    response: tuple[int, int]
+    time_zero: int | None = None
+
+    def __post_init__(self) -> None:
+        b0, b1 = int(self.baseline[0]), int(self.baseline[1])
+        r0, r1 = int(self.response[0]), int(self.response[1])
+        if b0 < 0 or b1 <= b0:
+            raise ValueError(
+                f"GCaMP baseline range must be non-empty and start at >= 0, got {(b0, b1)}"
+            )
+        if r0 < 0 or r1 <= r0:
+            raise ValueError(
+                f"GCaMP response range must be non-empty and start at >= 0, got {(r0, r1)}"
+            )
+        tz = (b1 - 1) if self.time_zero is None else int(self.time_zero)
+        if tz < 0:
+            raise ValueError(f"GCaMP time_zero must be >= 0, got {tz}")
+        object.__setattr__(self, "baseline", (b0, b1))
+        object.__setattr__(self, "response", (r0, r1))
+        object.__setattr__(self, "time_zero", tz)
+
+
+@dataclass(frozen=True)
+class GCaMPRule:
+    """Resolved GCaMP framing for one uncaging length.
+
+    kind "builtin": historical formula. ``first_unc_frame`` is the 1-based
+    FramesBeforeUncage index. F0 is the mean of ``slice < first_unc_frame``,
+    t = 0 is that frame minus one, and the summary point is the frame at
+    that index.
+    kind "window": ``window`` supplies the baseline, response, and t = 0.
+    """
+
+    kind: str
+    first_unc_frame: int | None = None
+    window: GCaMPWindow | None = None
+    source: str = ""
+
+    @property
+    def time_zero_index(self) -> int:
+        """0-based frame placed at t = 0."""
+        if self.kind == "window":
+            return int(self.window.time_zero)
+        return int(self.first_unc_frame) - 1
+
+
+def gcamp_windows_for_session(
+    df_save_path: str,
+    override: Mapping[int, GCaMPWindow] | None = None,
+) -> dict[int, GCaMPWindow]:
+    """Windows for one session: the ROI sidecar, then per-length config overrides."""
+    windows: dict[int, GCaMPWindow] = {}
+    for n_frames, record in load_gcamp_windows(df_save_path).items():
+        windows[n_frames] = GCaMPWindow(
+            baseline=tuple(record["baseline"]),
+            response=tuple(record["response"]),
+            time_zero=record["time_zero"],
+        )
+    for n_frames, window in (override or {}).items():
+        if not isinstance(window, GCaMPWindow):
+            raise TypeError(
+                f"gcamp_windows[{n_frames}] must be a GCaMPWindow, got {type(window).__name__}"
+            )
+        windows[int(n_frames)] = window
+    return windows
+
+
+def frames_before_uncage_from_header(statedict: Mapping | None) -> int | None:
+    """FramesBeforeUncage from a FLIM header, or None when it is missing."""
+    if not isinstance(statedict, Mapping):
+        return None
+    try:
+        n_pre = int(statedict.get("State.Uncaging.FramesBeforeUncage"))
+    except (TypeError, ValueError):
+        return None
+    return n_pre if n_pre >= 1 else None
+
+
+def _gcamp_window_fits(window: GCaMPWindow, n_frames: int) -> None:
+    b0, b1 = window.baseline
+    r0, r1 = window.response
+    if b1 > n_frames or r1 > n_frames or int(window.time_zero) >= n_frames:
+        raise ValueError(
+            f"GCaMP window does not fit in {n_frames} uncaging frames: "
+            f"baseline {b0}:{b1}, response {r0}:{r1}, time_zero {window.time_zero}"
+        )
+
+
+def resolve_gcamp_rule(
+    n_frames: int,
+    statedict: Mapping | None,
+    first_frame_by_nframes: Mapping[int, int],
+    windows: Mapping[int, GCaMPWindow],
+) -> GCaMPRule:
+    """Choose the GCaMP rule for an uncaging length.
+
+    A ``gcamp_windows`` entry wins, including over a built-in length.
+    Otherwise a built-in length keeps the historical first-frame formula.
+    Any other length uses FramesBeforeUncage from the file header with that
+    same formula. Missing header and an out-of-range window raise ValueError.
+    """
+    n_frames = int(n_frames)
+    if n_frames in windows:
+        window = windows[n_frames]
+        if not isinstance(window, GCaMPWindow):
+            raise TypeError(
+                f"gcamp_windows[{n_frames}] must be a GCaMPWindow, got {type(window).__name__}"
+            )
+        _gcamp_window_fits(window, n_frames)
+        return GCaMPRule(kind="window", window=window, source="window")
+    if n_frames in first_frame_by_nframes:
+        return GCaMPRule(
+            kind="builtin",
+            first_unc_frame=int(first_frame_by_nframes[n_frames]),
+            source="dict",
+        )
+    header_n = frames_before_uncage_from_header(statedict)
+    if header_n is not None and header_n < n_frames:
+        return GCaMPRule(kind="builtin", first_unc_frame=header_n, source="header")
+    raise ValueError(
+        f"No GCaMP rule for {n_frames} uncaging frames. "
+        "Add the length to unc_total_frame_first_unc_dict, set gcamp_windows, "
+        "or record State.Uncaging.FramesBeforeUncage on the file."
+    )
+
+
+def gcamp_baseline_mean(unc_df: pd.DataFrame, values: pd.Series, rule: GCaMPRule) -> float:
+    """Mean signal used as F0."""
+    if rule.kind == "window":
+        b0, b1 = rule.window.baseline
+        mask = (unc_df["slice"] >= b0) & (unc_df["slice"] < b1)
+        if not bool(mask.any()):
+            raise ValueError(f"GCaMP baseline frames {b0}:{b1} match no uncaging row")
+    else:
+        mask = unc_df["slice"] < int(rule.first_unc_frame)
+    return float(values[mask].mean())
+
+
+def gcamp_normalize(values: pd.Series, baseline: float, signal: str) -> pd.Series:
+    """Per-frame transient. Intensity is F/F0; lifetime is value minus F0."""
+    if not baseline > 0:
+        return pd.Series(np.nan, index=values.index, dtype=float)
+    if signal == "lifetime":
+        return values - baseline
+    if signal == "intensity":
+        return values / baseline
+    raise ValueError(f"signal must be one of {SIGNALS}, got {signal!r}")
+
+
+def gcamp_summary_value(unc_df: pd.DataFrame, transient: pd.Series, rule: GCaMPRule) -> float:
+    """Summary transient: one frame for the built-in rule, mean of the response window otherwise."""
+    if rule.kind == "window":
+        r0, r1 = rule.window.response
+        mask = (unc_df["slice"] >= r0) & (unc_df["slice"] < r1)
+        if not bool(mask.any()):
+            raise ValueError(f"GCaMP response frames {r0}:{r1} match no uncaging row")
+        return float(transient[mask].mean())
+    first = int(rule.first_unc_frame)
+    if first < 1 or first >= len(transient):
+        raise ValueError(
+            f"GCaMP first frame {first} does not fit in {len(transient)} uncaging rows"
+        )
+    return float(transient.iloc[first])
+
+
+def gcamp_time_zero_elapsed(unc_df: pd.DataFrame, rule: GCaMPRule) -> float:
+    """elapsed_time_sec of the frame aligned to t = 0."""
+    if rule.kind == "window":
+        tz = int(rule.window.time_zero)
+        hit = unc_df.loc[unc_df["slice"] == tz, "elapsed_time_sec"]
+        if hit.empty:
+            raise ValueError(f"GCaMP time_zero frame {tz} is not in the uncaging rows")
+        return float(hit.iloc[0])
+    index = int(rule.first_unc_frame) - 1
+    if index < 0 or index >= len(unc_df):
+        raise ValueError(
+            f"GCaMP first frame {rule.first_unc_frame} does not fit in {len(unc_df)} uncaging rows"
+        )
+    return float(unc_df["elapsed_time_sec"].iloc[index])
 
 
 @dataclass
@@ -77,10 +275,15 @@ class LTPGroupAnalysisConfig:
     from_thorlab_to_coherent_factor: float = 1.0 / 3.0
     roi_name_list: Sequence[str] = ("Spine", "DendriticShaft")
     # nFrames -> 1-based index of the first uncaging frame (FramesBeforeUncage).
-    # 264: unc_30Hz_1s_x4 and the other 264-frame protocols (FramesBeforeUncage = 16).
+    # Lengths listed here keep the historical formula. Other lengths use
+    # FramesBeforeUncage from the file header with that same formula.
     unc_total_frame_first_unc_dict: Mapping[int, int] = field(
-        default_factory=lambda: {33: 2, 55: 5, 80: 8, 144: 8, 264: 16}
+        default_factory=lambda: dict(DEFAULT_UNC_FIRST_FRAME)
     )
+    # Optional per-length override. Empty uses the sidecar saved by the ROI
+    # script (<pkl stem>_gcamp_windows.json). A key here replaces that file's
+    # entry for the same uncaging length. Ranges are 0-based, stop excluded.
+    gcamp_windows: Mapping[int, GCaMPWindow] = field(default_factory=dict)
     # 0 keeps the mean color; 1 fades individual traces to white. Applied to every condition.
     mean_sem_indiv_lightness: float = 0.65
     mean_sem_mean_color: str = "r"
@@ -1240,6 +1443,7 @@ def prepare_ltp_group_tables(cfg: LTPGroupAnalysisConfig) -> tuple[pd.DataFrame,
     from_Thorlab_to_coherent_factor = cfg.from_thorlab_to_coherent_factor
     ROI_name_list = list(cfg.roi_name_list)
     unc_total_frame_first_unc_dict = dict(cfg.unc_total_frame_first_unc_dict)
+    gcamp_windows = gcamp_windows_for_session(df_save_path_1, cfg.gcamp_windows)
 
     assert os.path.exists(powermeter_folder), f"powermeter_folder does not exist: {powermeter_folder}"
     assert os.path.exists(df_save_path_1), f"df_save_path does not exist: {df_save_path_1}"
@@ -1273,14 +1477,18 @@ def prepare_ltp_group_tables(cfg: LTPGroupAnalysisConfig) -> tuple[pd.DataFrame,
     unc_df = combined_df[combined_df['phase'] == 'unc']
     unc_pulse_times_by_file: dict[str, np.ndarray] = {}
     unc_protocol_by_file: dict[str, str] = {}
+    statedict_by_file: dict[str, Mapping] = {}
     for each_file in unc_df["file_path"].unique():
         statedict = unc_df[unc_df["file_path"] == each_file]["statedict"].values[0]
+        statedict_by_file[each_file] = statedict
         unc_protocol_by_file[each_file] = uncaging_protocol_label(statedict)
         uncaging_power = statedict["State.Uncaging.Power"]
         combined_df.loc[combined_df["file_path"] == each_file, "uncaging_power"] = uncaging_power
         fulltimeseries_df.loc[fulltimeseries_df["file_path"] == each_file, "uncaging_power"] = uncaging_power
         n_unc_frames = int(statedict.get("State.Acq.nFrames") or 0)
-        if n_unc_frames in unc_total_frame_first_unc_dict:
+        if n_unc_frames in gcamp_windows:
+            zero_frame_index = int(gcamp_windows[n_unc_frames].time_zero)
+        elif n_unc_frames in unc_total_frame_first_unc_dict:
             zero_frame_index = unc_total_frame_first_unc_dict[n_unc_frames] - 1
         else:
             zero_frame_index = int(statedict.get("State.Uncaging.FramesBeforeUncage") or 1) - 1
@@ -1348,6 +1556,8 @@ def prepare_ltp_group_tables(cfg: LTPGroupAnalysisConfig) -> tuple[pd.DataFrame,
     fulltimeseries_df.loc[:,"aligned_time_sec"] = -999.99
 
     summary_df = pd.DataFrame()
+    gcamp_rule_by_set: dict[str, GCaMPRule] = {}
+    announced_gcamp: set[tuple] = set()
     for each_group in fulltimeseries_df["group"].unique():
         for each_set_label in fulltimeseries_df[fulltimeseries_df["group"] == each_group]["set_label"].unique():
             group_set_id = f"{each_group}_{each_set_label}"
@@ -1358,12 +1568,34 @@ def prepare_ltp_group_tables(cfg: LTPGroupAnalysisConfig) -> tuple[pd.DataFrame,
             each_df.loc[:, "group_set_id"] = group_set_id
 
             # uncaging trigger time is 0 seconds
-            length_of_unc_df = len(each_df[each_df["phase"] == "unc"])
-            if length_of_unc_df in unc_total_frame_first_unc_dict.keys():
-                unc_trigger_time = each_df[each_df["phase"] == "unc"]["elapsed_time_sec"].iloc[unc_total_frame_first_unc_dict[length_of_unc_df] - 1]
-                aligned_values = each_df["elapsed_time_sec"].values - unc_trigger_time
-            else:
-                raise ValueError(f"Length of each df is not in unc_total_frame_first_unc_dict: {length_of_unc_df}")        
+            each_unc_df = each_df[each_df["phase"] == "unc"]
+            length_of_unc_df = len(each_unc_df)
+            unc_file = each_unc_df["file_path"].iloc[0] if length_of_unc_df else None
+            gcamp_rule = resolve_gcamp_rule(
+                length_of_unc_df,
+                statedict_by_file.get(unc_file) if unc_file is not None else None,
+                unc_total_frame_first_unc_dict,
+                gcamp_windows,
+            )
+            gcamp_rule_by_set[group_set_id] = gcamp_rule
+            announce_key = (length_of_unc_df, gcamp_rule.source, gcamp_rule.time_zero_index)
+            if gcamp_rule.source != "dict" and announce_key not in announced_gcamp:
+                announced_gcamp.add(announce_key)
+                if gcamp_rule.source == "header":
+                    print(
+                        f"GCaMP: {length_of_unc_df} uncaging frames, "
+                        f"baseline is the first {gcamp_rule.first_unc_frame} frames "
+                        "(FramesBeforeUncage from the file header)."
+                    )
+                else:
+                    window = gcamp_rule.window
+                    print(
+                        f"GCaMP: {length_of_unc_df} uncaging frames use baseline "
+                        f"{window.baseline[0]}:{window.baseline[1]}, response "
+                        f"{window.response[0]}:{window.response[1]}, time_zero {window.time_zero}."
+                    )
+            unc_trigger_time = gcamp_time_zero_elapsed(each_unc_df, gcamp_rule)
+            aligned_values = each_df["elapsed_time_sec"].values - unc_trigger_time
             each_df.loc[:, "aligned_time_sec"] = aligned_values
             fulltimeseries_df.loc[each_df.index, "aligned_time_sec"] = aligned_values
 
@@ -1378,21 +1610,16 @@ def prepare_ltp_group_tables(cfg: LTPGroupAnalysisConfig) -> tuple[pd.DataFrame,
 
             #transient analysis normalization
             each_unc_df = each_df[each_df["phase"] == "unc"]
-            first_uncaging_frame = unc_total_frame_first_unc_dict[len(each_unc_df)]
+            gcamp_rule = gcamp_rule_by_set[group_set_id]
             for each_ROI_name in ROI_name_list:
                 for each_ch in ['Ch1', 'Ch2']:
                     for each_signal in ['lifetime', 'intensity']:
-                        first_uncaging_frame = unc_total_frame_first_unc_dict[len(each_unc_df)]
-                        before_uncaging_during_unc_phase_signal = each_unc_df[each_unc_df["slice"] < first_uncaging_frame][f"{each_ROI_name}_{each_ch}_{each_signal}"].mean()
-                        if not before_uncaging_during_unc_phase_signal >0 :
-                            transient_normalized_signal = np.nan
-                        else:
-                            if each_signal == "lifetime":
-                                transient_normalized_signal = each_unc_df[f"{each_ROI_name}_{each_ch}_{each_signal}"] - before_uncaging_during_unc_phase_signal
-
-                            elif each_signal == "intensity":
-                                transient_normalized_signal = each_unc_df[f"{each_ROI_name}_{each_ch}_{each_signal}"] / before_uncaging_during_unc_phase_signal    
-                        fulltimeseries_df.loc[each_unc_df.index, f"transient_{each_ROI_name}_{each_ch}_{each_signal}"] = transient_normalized_signal
+                        signal_col = f"{each_ROI_name}_{each_ch}_{each_signal}"
+                        baseline = gcamp_baseline_mean(each_unc_df, each_unc_df[signal_col], gcamp_rule)
+                        transient_normalized_signal = gcamp_normalize(
+                            each_unc_df[signal_col], baseline, each_signal
+                        )
+                        fulltimeseries_df.loc[each_unc_df.index, f"transient_{signal_col}"] = transient_normalized_signal
 
 
             #summary for each group_set_id
@@ -1424,8 +1651,9 @@ def prepare_ltp_group_tables(cfg: LTPGroupAnalysisConfig) -> tuple[pd.DataFrame,
                     each_phase = "unc"
                     for each_signal in ['lifetime', 'intensity']:
                         each_transient_signal_df = fulltimeseries_df.loc[each_unc_df.index, f"transient_{each_ROI_name}_{each_ch}_{each_signal}"]
-                        first_uncaging_frame = unc_total_frame_first_unc_dict[len(each_transient_signal_df)]
-                        representative_transient_signal = each_transient_signal_df.iloc[first_uncaging_frame]
+                        representative_transient_signal = gcamp_summary_value(
+                            each_unc_df, each_transient_signal_df, gcamp_rule
+                        )
                         each_summary_dict[f"transient_{each_ROI_name}_{each_ch}_{each_signal}"] = representative_transient_signal
                         # if each_transient_signal_df.max() > 0:
                         #     print(each_transient_signal_df)
@@ -1518,11 +1746,7 @@ def prepare_ltp_group_tables(cfg: LTPGroupAnalysisConfig) -> tuple[pd.DataFrame,
         else:
             uncaging_power_coherent_mW = uncaging_power_coherent_mW_list[0]
 
-        length_of_unc_df = len(unc_df)
-        if length_of_unc_df in unc_total_frame_first_unc_dict.keys():
-            time_0_nth = unc_total_frame_first_unc_dict[length_of_unc_df] - 1
-        else:
-            raise ValueError(f"Length of each uncaging df is not in unc_total_frame_first_unc_dict: {length_of_unc_df}")
+        time_0_nth = gcamp_rule_by_set[each_group_set_id].time_zero_index
         time_list = [i*average_bin for i in range(-time_0_nth,len(unc_df)-time_0_nth)]
         fulltimeseries_df.loc[unc_df.sort_values("aligned_time_sec").index, "binned_time_sec"] = time_list
 

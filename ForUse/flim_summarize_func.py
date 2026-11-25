@@ -6,6 +6,8 @@ Created on Sat Mar 28 15:44:15 2026
 """
 from __future__ import annotations
 
+import json
+import os
 import sys
 from collections import defaultdict
 
@@ -104,6 +106,57 @@ def reshape_axes_to_2d(axes: Any, n_rows: int, n_cols: int) -> np.ndarray:
         return axes_arr
 
     raise ValueError(f"Unexpected axes array shape: {axes_arr.shape}")
+
+
+def gcamp_windows_json_path(df_save_path: str) -> str:
+    """Sidecar written next to a combined_df pickle by the ROI analysis script."""
+    stem, _ext = os.path.splitext(df_save_path)
+    return stem + "_gcamp_windows.json"
+
+
+def save_gcamp_windows(df_save_path: str, windows: dict) -> str:
+    """Write per-length GCaMP windows beside the combined_df pickle.
+
+    Each value is a GCaMPWindow or a dict with baseline, response, and time_zero.
+    Ranges are 0-based and stop-exclusive. An empty dict clears a previous file.
+    """
+    payload: dict[str, dict] = {}
+    for n_frames, window in windows.items():
+        if hasattr(window, "baseline"):
+            record = {
+                "baseline": [int(window.baseline[0]), int(window.baseline[1])],
+                "response": [int(window.response[0]), int(window.response[1])],
+                "time_zero": None if window.time_zero is None else int(window.time_zero),
+            }
+        else:
+            record = {
+                "baseline": [int(window["baseline"][0]), int(window["baseline"][1])],
+                "response": [int(window["response"][0]), int(window["response"][1])],
+                "time_zero": None if window.get("time_zero") is None else int(window["time_zero"]),
+            }
+        payload[str(int(n_frames))] = record
+    path = gcamp_windows_json_path(df_save_path)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
+        fh.write("\n")
+    return path
+
+
+def load_gcamp_windows(df_save_path: str) -> dict[int, dict]:
+    """Load the GCaMP window sidecar. Missing file returns an empty dict."""
+    path = gcamp_windows_json_path(df_save_path)
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+    loaded: dict[int, dict] = {}
+    for key, record in payload.items():
+        loaded[int(key)] = {
+            "baseline": (int(record["baseline"][0]), int(record["baseline"][1])),
+            "response": (int(record["response"][0]), int(record["response"][1])),
+            "time_zero": None if record.get("time_zero") is None else int(record["time_zero"]),
+        }
+    return loaded
 
 
 def format_respan_path_assignments(df_save_path: str, out_csv_path: str) -> str:

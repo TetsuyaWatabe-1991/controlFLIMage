@@ -136,6 +136,112 @@ def is_rejected(combined_df: pd.DataFrame, group: str, set_label: float, tiff_pa
     return False
 
 
+def _mark_rejected(combined_df: pd.DataFrame, group: str, set_label: float, tiff: str, reason: str) -> str | None:
+    """Set ``reject=1``. Write the flag only when the set was not already rejected.
+
+    An existing flag is left unchanged. Returns a line when the flag is new.
+    """
+    if "reject" not in combined_df.columns:
+        combined_df["reject"] = 0
+    already = is_rejected(combined_df, group, set_label, tiff)
+    combined_df.loc[set_rows(combined_df, group, set_label), "reject"] = 1
+    if already:
+        return None
+    with open(reject_flag_path(tiff), "w", encoding="utf-8") as fh:
+        fh.write(f"Rejected at: {datetime.datetime.now().isoformat()} ({reason})\n")
+    return f"{group} set {set_label:g}: {reason}"
+
+
+def apply_offstack_rejects(combined_df: pd.DataFrame, *, z_plus_minus: int = 1,
+                           min_frames: int | None = None) -> list[str]:
+    """Reject sets whose uncaging plane misses the z volume on many frames.
+
+    Writes the same ``_rejected.flag`` and ``reject`` column as a manual reject.
+    A set that is already rejected keeps its flag text. Returns one line per set
+    newly rejected. Does not clear any reject.
+    """
+    from set_review_panel import OFFSTACK_MIN_FRAMES, uncaging_plane_offstack_count
+
+    if min_frames is None:
+        min_frames = OFFSTACK_MIN_FRAMES
+    if "reject" not in combined_df.columns:
+        combined_df["reject"] = 0
+    newly: list[str] = []
+    for group, set_label, tiff in list_sets(combined_df):
+        info_path = os.path.splitext(tiff)[0] + "_frame_info.csv"
+        if not os.path.exists(info_path):
+            continue
+        try:
+            frame_info = pd.read_csv(info_path)
+        except Exception:
+            continue
+        n_off = uncaging_plane_offstack_count(frame_info, z_plus_minus=z_plus_minus)
+        if n_off < min_frames:
+            continue
+        line = _mark_rejected(
+            combined_df, group, set_label, tiff,
+            f"uncaging plane outside the z-stack on {n_off} pre/post frames, "
+            f"by more than {int(z_plus_minus)} slice(s)",
+        )
+        if line:
+            newly.append(line)
+    return newly
+
+
+def apply_cutoff_rejects(combined_df: pd.DataFrame, *, crop_half: int | None = None) -> list[str]:
+    """Reject sets whose displayed spine crop is largely alignment fill.
+
+    A black edge of the full field is ignored while the crop around the spine
+    stays on tissue. Same flag and ``reject`` column as a manual reject.
+    """
+    import tifffile
+
+    from set_review_panel import CROP_HALF_PX, crop_hits_zero_border
+
+    if crop_half is None:
+        crop_half = CROP_HALF_PX
+    if "reject" not in combined_df.columns:
+        combined_df["reject"] = 0
+    newly: list[str] = []
+    for group, set_label, tiff in list_sets(combined_df):
+        base = os.path.splitext(tiff)[0]
+        info_path = base + "_frame_info.csv"
+        mask_path = base + "_Spine_roi_mask.tif"
+        if not os.path.exists(info_path) or not os.path.exists(tiff) or not os.path.exists(mask_path):
+            continue
+        try:
+            frame_info = pd.read_csv(info_path)
+            stack = tifffile.imread(tiff)
+            masks = tifffile.imread(mask_path) > 0
+        except Exception:
+            continue
+        if masks.ndim == 2:
+            masks = np.repeat(masks[None], len(stack), axis=0)
+        phases = frame_info["phase"].astype(str).tolist() if "phase" in frame_info.columns else []
+        hit = False
+        n = min(len(stack), len(masks), len(phases))
+        for i in range(n):
+            if str(phases[i]).strip().lower() not in ("pre", "post"):
+                continue
+            if crop_hits_zero_border(stack[i], masks[i], crop_half=crop_half):
+                hit = True
+                break
+        if not hit:
+            continue
+        line = _mark_rejected(
+            combined_df, group, set_label, tiff,
+            "aligned image cut off: zero border crosses the spine crop",
+        )
+        if line:
+            newly.append(line)
+    return newly
+
+
+def apply_auto_rejects(combined_df: pd.DataFrame, *, z_plus_minus: int = 1) -> list[str]:
+    """Apply every automatic reject rule. Returns one line per newly rejected set."""
+    return apply_offstack_rejects(combined_df, z_plus_minus=z_plus_minus) + apply_cutoff_rejects(combined_df)
+
+
 class ReviewSession:
     """State and file operations of the viewer (no Qt; tested headless)."""
 
@@ -169,6 +275,12 @@ class ReviewSession:
                 print(f"WARNING: this pkl was analyzed without the time window {time_window_min} min; "
                       "frames outside it are still shown. Re-run the analysis "
                       "(start_with_viewer = False) to remove them.")
+        newly = apply_auto_rejects(self.df, z_plus_minus=z_plus_minus)
+        if newly:
+            atomic_write_pickle(self.df, self.pkl_path)
+            print("auto-rejected:")
+            for line in newly:
+                print(" ", line)
         self.sets = list_sets(self.df)
         self.i = 0
         self._backed_up = False

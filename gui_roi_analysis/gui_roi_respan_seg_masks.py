@@ -791,6 +791,7 @@ def run_tiff_uncaging_roi_respan(
     respan_track_queue_root: str | None = None,
     time_window_min: tuple[float, float] | None = TIME_WINDOW_MIN,
     align_reference: str = "pre1",
+    gcamp_windows: dict | None = None,
 ) -> tuple[str, str] | tuple[None, None]:
     """
     Full ROI quantification for respan highmag data using pre-built seg_masks.
@@ -1149,6 +1150,19 @@ def run_tiff_uncaging_roi_respan(
             uncaging_lifetime_bin_frames=uncaging_lifetime_bin_frames,
         )
 
+        # After quantification, so a rejected set still has its plot. The same
+        # rule runs when the review viewer opens an existing pkl.
+        from set_review_viewer import apply_auto_rejects
+
+        auto_rejected = apply_auto_rejects(combined_df, z_plus_minus=z_plus_minus)
+        if auto_rejected:
+            combined_df.to_pickle(df_save_path)
+            combined_df.to_csv(df_save_path.replace(".pkl", ".csv"))
+            print("auto-rejected:")
+            for line in auto_rejected:
+                print(" ", line)
+                summary.append(f"auto-rejected: {line}")
+
         summary.append(f"df_save_path: {df_save_path}")
         summary.append(f"out_csv_path: {out_csv}")
         summary.append("finished at " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -1158,6 +1172,15 @@ def run_tiff_uncaging_roi_respan(
         summary_path = os.path.join(session_dir, "summary_str_respan.txt")
         with open(summary_path, "w", encoding="utf-8") as fh:
             fh.write(summary_text)
+
+        if gcamp_windows is not None:
+            _foruse = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "ForUse"))
+            if _foruse not in sys.path:
+                sys.path.insert(0, _foruse)
+            from flim_summarize_func import save_gcamp_windows
+
+            gcamp_path = save_gcamp_windows(df_save_path, gcamp_windows)
+            print(f"Saved GCaMP windows: {gcamp_path}")
 
         return df_save_path, out_csv
     except Exception as e:

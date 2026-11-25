@@ -13,6 +13,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+from flim_summarize_func import load_gcamp_windows, save_gcamp_windows  # noqa: E402
 from ltp_group_analysis import (  # noqa: E402
     assign_binned_min_everymin,
     assign_condition,
@@ -41,6 +42,15 @@ from ltp_group_analysis import (  # noqa: E402
     summary_folder_name,
     uncaging_lifetime_mean_sem,
     uncaging_protocol_label,
+    DEFAULT_UNC_FIRST_FRAME,
+    GCaMPWindow,
+    LTPGroupAnalysisConfig,
+    gcamp_baseline_mean,
+    gcamp_normalize,
+    gcamp_summary_value,
+    gcamp_time_zero_elapsed,
+    gcamp_windows_for_session,
+    resolve_gcamp_rule,
     protocol_condition_order,
     protocol_stat_subsets,
     two_line_title,
@@ -466,6 +476,83 @@ def test_uncaging_protocol_split() -> None:
     assert protocol_stat_subsets(["CM", "Celex"], False) == [("", ["CM", "Celex"])]
 
 
+def test_gcamp_rule_keeps_builtin_and_accepts_override() -> None:
+    frames = pd.DataFrame({
+        "slice": list(range(6)),
+        "elapsed_time_sec": [0, 10, 20, 30, 40, 50],
+        "y": [2.0, 4.0, 10.0, 8.0, 6.0, 6.0],
+    })
+    rule = resolve_gcamp_rule(6, {}, {6: 2}, {})
+    assert rule.kind == "builtin" and rule.first_unc_frame == 2 and rule.source == "dict"
+    historical = frames.loc[frames["slice"] < 2, "y"].mean()
+    baseline = gcamp_baseline_mean(frames, frames["y"], rule)
+    assert baseline == float(historical)
+    trace = gcamp_normalize(frames["y"], baseline, "intensity")
+    assert np.allclose(trace.to_numpy(), (frames["y"] / historical).to_numpy())
+    assert gcamp_summary_value(frames, trace, rule) == float((frames["y"] / historical).iloc[2])
+    assert gcamp_time_zero_elapsed(frames, rule) == 10.0
+    life = gcamp_normalize(frames["y"], baseline, "lifetime")
+    assert gcamp_summary_value(frames, life, rule) == float((frames["y"] - historical).iloc[2])
+
+    # A known length ignores a different header. An unknown length uses the header.
+    assert resolve_gcamp_rule(
+        264, {"State.Uncaging.FramesBeforeUncage": 4}, DEFAULT_UNC_FIRST_FRAME, {}
+    ).first_unc_frame == 16
+    header_rule = resolve_gcamp_rule(
+        280, {"State.Uncaging.FramesBeforeUncage": 16}, DEFAULT_UNC_FIRST_FRAME, {}
+    )
+    assert header_rule.source == "header" and header_rule.first_unc_frame == 16
+    try:
+        resolve_gcamp_rule(280, {}, DEFAULT_UNC_FIRST_FRAME, {})
+        raise AssertionError("missing header was accepted")
+    except ValueError:
+        pass
+
+    # An explicit window replaces the built-in rule for that length.
+    window = GCaMPWindow(baseline=(1, 3), response=(3, 5), time_zero=2)
+    assert GCaMPWindow(baseline=(0, 4), response=(4, 5)).time_zero == 3
+    rule_w = resolve_gcamp_rule(6, {}, {6: 2}, {6: window})
+    assert rule_w.source == "window" and rule_w.time_zero_index == 2
+    base_w = gcamp_baseline_mean(frames, frames["y"], rule_w)
+    trace_w = gcamp_normalize(frames["y"], base_w, "intensity")
+    assert abs(base_w - 7.0) < 1e-12
+    assert abs(gcamp_summary_value(frames, trace_w, rule_w) - ((8.0 / 7.0) + (6.0 / 7.0)) / 2) < 1e-12
+    assert gcamp_time_zero_elapsed(frames, rule_w) == 20.0
+    try:
+        GCaMPWindow(baseline=(5, 5), response=(0, 1))
+        raise AssertionError("empty baseline was accepted")
+    except ValueError:
+        pass
+    try:
+        resolve_gcamp_rule(6, {}, {}, {6: GCaMPWindow(baseline=(0, 2), response=(4, 9))})
+        raise AssertionError("window past the last frame was accepted")
+    except ValueError:
+        pass
+
+    cfg = LTPGroupAnalysisConfig(
+        df_save_path="a",
+        out_csv_path="b",
+        acquisition_start_datetime_str="2026-01-01T00:00:00.000",
+        condition_prefix_map={},
+        condition_order=[],
+    )
+    assert cfg.unc_total_frame_first_unc_dict[264] == 16
+    assert cfg.gcamp_windows == {}
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        pkl = os.path.join(td, "combined_df_respan.pkl")
+        saved = save_gcamp_windows(pkl, {
+            280: GCaMPWindow(baseline=(0, 16), response=(18, 20), time_zero=15),
+        })
+        assert os.path.basename(saved) == "combined_df_respan_gcamp_windows.json"
+        raw = load_gcamp_windows(pkl)
+        assert raw[280]["baseline"] == (0, 16) and raw[280]["response"] == (18, 20)
+        merged = gcamp_windows_for_session(pkl, {280: GCaMPWindow(baseline=(13, 17), response=(21, 25))})
+        assert merged[280].baseline == (13, 17)
+        from_file = gcamp_windows_for_session(pkl, {})
+        assert from_file[280].response == (18, 20) and from_file[280].time_zero == 15
+
+
 def test_assign_uncaging_frame_bins() -> None:
     rows = []
     for k, (sid, shift) in enumerate((("a", 0.0), ("b", 0.4))):
@@ -546,6 +633,7 @@ def main() -> int:
         test_exclude_delta_lifetime,
         test_uncaging_lifetime_mean_sem,
         test_uncaging_protocol_split,
+        test_gcamp_rule_keeps_builtin_and_accepts_override,
         test_assign_uncaging_frame_bins,
         test_rab_calf_from_group_names,
         test_rab_calf_from_file_path,
